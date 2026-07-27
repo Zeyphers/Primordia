@@ -51,8 +51,11 @@ public final class CreatureAnimator {
 	 */
 	private static final float TAIL_COUNTER_LEAN = 0.65f;
 
-	/** Widest the jaw swings open, in radians, on top of whatever gap the bind pose already has. */
-	private static final float JAW_GAPE = 0.62f;
+	/**
+	 * Fraction of the baked gape a creature holds at rest, so the mouth is not sealed shut.
+	 * Animals close their jaws; they do not clamp them.
+	 */
+	private static final float JAW_REST_SLACK = 0.06f;
 
 	/** Share of terrain pitch taken by rigid body rotation; the remainder bends the spine. */
 	private static final float ROOT_PITCH_SHARE = 0.55f;
@@ -596,10 +599,11 @@ public final class CreatureAnimator {
 			default -> 0f;
 		};
 
-		// Panting while moving, slow breathing at rest.
-		float ambient = ctx.speed > IDLE_SPEED
+		// Panting while moving, slow breathing at rest, over a floor that keeps the mouth from
+		// clamping perfectly shut.
+		float ambient = JAW_REST_SLACK + (ctx.speed > IDLE_SPEED
 				? 0.10f + 0.07f * (float) Math.sin(ctx.time * 6.5)
-				: 0.025f + 0.025f * (float) Math.sin(ctx.time * 1.5);
+				: 0.02f + 0.02f * (float) Math.sin(ctx.time * 1.5));
 
 		// Snapping shut is far faster than opening — a jaw closes under muscle and gravity
 		// together, and easing both ways at one rate makes every bite look languid.
@@ -607,10 +611,14 @@ public final class CreatureAnimator {
 		float rate = goal < jawOpen ? 26f : 14f;
 		jawOpen = MathX.damp(jawOpen, goal, rate, dt);
 
-		// Negative: the bind rotation takes local +Y onto the hinge-to-chin direction, which leaves
-		// local +X pointing to the creature's left, so a positive rotation about it lifts the chin
-		// into the skull. Opening is the other way.
-		q0.identity().rotateX(-jawOpen * JAW_GAPE);
+		// The bind pose gapes and rest closes it, not the other way round. Baked shut there is no
+		// seam in the mesh for the mouth to open along, so the plan bakes the mandible well clear
+		// of the skull and the resting pose is a rotation back up to meet it — which means the
+		// default state is a *closing* rotation, and opening is simply less of one.
+		//
+		// Positive lifts the chin: the bind rotation takes local +Y onto the hinge-to-chin
+		// direction, leaving local +X pointing to the creature's left.
+		q0.identity().rotateX(plan.jawRestAngle * (1f - jawOpen));
 		skeleton.setLocalRotation(jaw, q0);
 		skeleton.updateBoneWorld(jaw);
 	}

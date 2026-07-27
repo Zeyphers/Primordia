@@ -26,6 +26,15 @@ public final class BodyPlan {
 	public final int headBone;
 	/** Hinged mandible, child of {@link #headBone}. Always present; every creature has a mouth. */
 	public final int jawBone;
+	/**
+	 * Rotation about the jaw's own X that brings the mandible up flush with the skull, in radians.
+	 * <p>
+	 * The mouth is <b>baked open</b> and closed by the animator, not the reverse. Baking it shut
+	 * would leave no seam for the mesher to resolve and the two surfaces would come out welded, so
+	 * the bind pose gapes and the resting pose is this rotation applied. It is stored rather than
+	 * assumed because it depends on how far ajar the plan chose to bake.
+	 */
+	public final float jawRestAngle;
 
 	/** Bind-pose height of the hip above the ground plane (y = 0). */
 	public final float hipHeight;
@@ -45,11 +54,25 @@ public final class BodyPlan {
 	 */
 	public final float minLimbRadius;
 
+	/**
+	 * Radius of the smallest feature of any kind, limbs included. This is what the mesher sizes
+	 * its cells against.
+	 * <p>
+	 * Kept apart from {@link #minLimbRadius} because the two answer different questions. That one
+	 * is a statement about limbs — it bounds the blend radius, and a creature whose legs are too
+	 * slender is a bad creature. This one is a statement about sampling, and a tooth being finer
+	 * than a leg says nothing about the leg. Folding teeth into the limb figure made every
+	 * toothed creature look like it had failed the slenderness invariant.
+	 */
+	public final float minFeatureRadius;
+
 	public BodyPlan(Genome genome, BoneDef[] bones, SdfBlob[] blobs, LimbChain[] legs, LimbChain[] arms,
 	                BodyPalette palette, float blendRadius, int rootBone, int headBone, int jawBone,
-	                float hipHeight, Vector3f boundsMin, Vector3f boundsMax, float bodyLength, float mass,
-	                float minLimbRadius) {
+	                float jawRestAngle, float hipHeight, Vector3f boundsMin, Vector3f boundsMax,
+	                float bodyLength, float mass, float minLimbRadius, float minFeatureRadius) {
+		this.minFeatureRadius = minFeatureRadius;
 		this.jawBone = jawBone;
+		this.jawRestAngle = jawRestAngle;
 		this.genome = genome;
 		this.bones = bones;
 		this.blobs = blobs;

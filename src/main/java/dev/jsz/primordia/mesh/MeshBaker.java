@@ -245,9 +245,9 @@ public final class MeshBaker {
 	private static int resolutionFor(BodyPlan plan, int requested) {
 		float span = Math.max(plan.boundsMax.x - plan.boundsMin.x,
 				Math.max(plan.boundsMax.y - plan.boundsMin.y, plan.boundsMax.z - plan.boundsMin.z));
-		if (plan.minLimbRadius <= 1e-5f || span <= 1e-5f) return requested;
+		if (plan.minFeatureRadius <= 1e-5f || span <= 1e-5f) return requested;
 
-		int needed = (int) Math.ceil(span / (plan.minLimbRadius * 0.9f));
+		int needed = (int) Math.ceil(span / (plan.minFeatureRadius * 0.9f));
 		// Never below the tier's own resolution, never far above it, never past the ceiling.
 		int ceiling = Math.min(Math.round(requested * 1.8f), LodTier.maxResolution());
 		return Math.max(requested, Math.min(needed, ceiling));

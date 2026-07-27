@@ -128,7 +128,10 @@ public enum Gene {
 	/** 0 = legs spread evenly along the spine, 1 = all pairs packed onto the front segment. */
 	LEG_CLUSTERING(0.18f),
 	/** How far the mid joint rides above the hip. High values give the arachnid stance. */
-	LEG_ARCH(0.25f);
+	LEG_ARCH(0.25f),
+
+	/** Broad crushing jaw against a narrow snatching one. */
+	JAW_WIDTH(0.5f);
 
 	public static final Gene[] VALUES = values();
 	public static final int COUNT = VALUES.length;

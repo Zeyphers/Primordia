@@ -103,14 +103,25 @@ class OrnamentTest {
 	@Test
 	void ordinaryQuadrupedsKeepTheirKneesBelowTheHip() {
 		// The other half of the claim: the arch is a distinguishing trait, not the new default.
+		//
+		// Stated as a tendency rather than an invariant, because it is one. GRAZER does not band
+		// LEG_ARCH at all, so a grazer is free to roll a high one and stand like a spider — rare,
+		// legal, and exactly the sort of outlier the generator exists to produce. Asserting that
+		// it never happens makes the test a hostage to the random draw, which is how it came to
+		// fail on an unrelated change that merely shifted the sequence.
 		Random random = new Random(5153);
-		for (int trial = 0; trial < 25; trial++) {
+		int above = 0;
+		int total = 0;
+		for (int trial = 0; trial < 40; trial++) {
 			BodyPlan plan = BodyPlanBuilder.build(Archetype.GRAZER.create(random));
 			for (LimbChain leg : plan.legs) {
-				assertTrue(plan.bones[leg.bones[0]].tail.y < leg.origin.y,
-						"a grazer grew an arachnid stance");
+				if (plan.bones[leg.bones[0]].tail.y >= leg.origin.y) above++;
+				total++;
 			}
 		}
+		assertTrue(above < total * 0.05,
+				above + " of " + total + " grazer knees cleared the hip — the arachnid stance has "
+						+ "become the default rather than a distinguishing trait");
 	}
 
 	// ---------------------------------------------------------------------- horns

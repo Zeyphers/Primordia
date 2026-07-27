@@ -82,7 +82,15 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 
 		Vec3d camera = MinecraftClient.getInstance().gameRenderer.getCamera().getPos();
 		double distanceSq = camera.squaredDistanceTo(entity.getX(), entity.getY(), entity.getZ());
-		int tier = BUDGET.allocate(distanceSq);
+		// Test specimens render at full detail regardless of distance or crowding, for two
+		// reasons. Comparison: a grid whose near rows are finely meshed and whose far rows are
+		// coarse cannot be used to judge a change, because half the difference on screen is the
+		// LOD and not the generator. Animation: IK only runs on the closer tiers, so on a grid
+		// sixty blocks deep most of the specimens would stand with their legs frozen in the bind
+		// pose no matter what the walk flag said — which is exactly what "the walk command
+		// doesn't work" looked like. Thirty creatures at near detail is the cost of the rig, and
+		// the quality presets are there to pay it.
+		int tier = entity.isPosing() ? LodTier.NEAR : BUDGET.allocate(distanceSq);
 
 		MeshData mesh = resolveMesh(genome, tier);
 		if (mesh == null || mesh.quadCount == 0) {
@@ -138,8 +146,22 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 		double dx = entity.getX() - entity.prevX;
 		double dz = entity.getZ() - entity.prevZ;
 		context.speed = (float) Math.sqrt(dx * dx + dz * dz) * 20f;
+		// A posed specimen is not moving, so the measured speed is zero and the gait would never
+		// run. Feeding the animator a nominal walking speed cycles the legs on the spot, which is
+		// the whole point of the test rig — you cannot judge a walk cycle by chasing it.
+		if (entity.isPosing()) {
+			context.speed = entity.isPoseWalking() ? CreatureEntity.POSE_WALK_SPEED : 0f;
+		}
 		context.turnRate = MathHelper.wrapDegrees(entity.bodyYaw - entity.prevBodyYaw)
 				* MathHelper.RADIANS_PER_DEGREE * 20f;
+
+		// Steering intent, only while someone is actually driving. Measured against the body
+		// rather than the head so it survives the head easing that riding already applies.
+		context.riderSteer = 0f;
+		if (entity.getControllingPassenger() instanceof net.minecraft.entity.LivingEntity rider) {
+			context.riderSteer = MathHelper.wrapDegrees(rider.getYaw() - yaw)
+					* MathHelper.RADIANS_PER_DEGREE;
+		}
 
 		context.time = (entity.age + tickDelta) / 20f;
 		context.airborne = !entity.isOnGround();
@@ -155,22 +177,67 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 		context.activityProgress = entity.clientActivityProgress(activity, tickDelta);
 	}
 
+	/**
+	 * Texture coordinates of a quad's four corners.
+	 * <p>
+	 * The texture is flat white, so <i>visually</i> any UV would do — but every vertex sharing one
+	 * UV is not visually neutral under a shader pack. Iris derives each face's tangent from its UV
+	 * deltas, and a quad whose four corners have identical UVs has a zero-area UV triangle: the
+	 * determinant is zero, tangent generation falls back to an axis picked per face from the face
+	 * normal, and that fallback flips direction between neighbouring quads. Any pack doing
+	 * normal-mapped lighting then shades each quad off a different tangent basis, which is what
+	 * draws the mesh's own quad grid onto the creature. Giving every quad a real, non-degenerate
+	 * UV square makes the tangent well-defined and consistent with the quad's own edges.
+	 * <p>
+	 * Kept to a small window in the middle of the texture rather than most of it. Shader packs
+	 * treat the distance from a vertex to {@code mc_midTexCoord} as the sprite's half-size and
+	 * feed it into parallax and generated-normal sampling; a quad claiming to be 60% of the
+	 * texture wide reads as an enormous sprite and skews those. Two texels of a 16×16 image is
+	 * ample for a stable tangent and unremarkable to everything downstream.
+	 */
+	private static final float UV_LO = 7f / 16f;
+	private static final float UV_HI = 9f / 16f;
+
+	/** Block-light coordinate of full brightness: 15 levels, stored shifted left by four. */
+	private static final int FULL_BLOCK_LIGHT = 15 << 4;
+
 	private void emit(MeshData mesh, MatrixStack.Entry entry, VertexConsumer consumer, int light) {
 		float[] positions = SKINNED.positions();
 		float[] normals = SKINNED.normals();
 		float[] colors = mesh.colors;
+		float[] emissive = mesh.emissive;
 		int[] quads = mesh.quads;
 		int overlay = OverlayTexture.DEFAULT_UV;
 
 		for (int i = 0; i < quads.length; i++) {
-			int p = quads[i] * 3;
+			int v = quads[i];
+			int p = v * 3;
+
+			// Corners run a, b, c, d around the quad, so the UV square does too.
+			int corner = i & 3;
+			float u = (corner == 1 || corner == 2) ? UV_HI : UV_LO;
+			float t = corner >= 2 ? UV_HI : UV_LO;
+
 			consumer.vertex(entry, positions[p], positions[p + 1], positions[p + 2])
 					.color(colors[p], colors[p + 1], colors[p + 2], 1f)
-					// A flat white texture means any UV works; the centre avoids edge bleeding.
-					.texture(0.5f, 0.5f)
+					.texture(u, t)
 					.overlay(overlay)
-					.light(light)
+					.light(emissiveLight(light, emissive[v]))
 					.normal(entry, normals[p], normals[p + 1], normals[p + 2]);
 		}
+	}
+
+	/**
+	 * Raises the block-light half of a packed lightmap coordinate toward full brightness, leaving
+	 * the sky half alone. Lifting only block light is what makes a light organ read as glowing at
+	 * night — which is when it should — without blowing the creature out to white at noon.
+	 */
+	private static int emissiveLight(int light, float emissive) {
+		if (emissive <= 0.02f) return light;
+		if (!dev.jsz.primordia.client.config.PrimordiaConfig.get().emissiveGlow) return light;
+		int block = light & 0xFFFF;
+		int sky = (light >>> 16) & 0xFFFF;
+		int lit = Math.round(MathHelper.lerp(Math.min(emissive, 1f), block, FULL_BLOCK_LIGHT));
+		return (sky << 16) | Math.max(block, lit);
 	}
 }

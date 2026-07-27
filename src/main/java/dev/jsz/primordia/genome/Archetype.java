@@ -32,9 +32,16 @@ public enum Archetype {
 	/** Huge bipedal predator: massive jaws, vestigial arms, counterweight tail. */
 	APEX,
 	/** Long-limbed, light-boned, built purely for speed. */
-	SPRINTER;
+	SPRINTER,
+	/** Two-part body, four pairs of clustered high-kneed legs, eight eyes. Spider-shaped. */
+	ARACHNID,
+	/** Broad, flat, heavily armoured; stalked eyes, big claws, a paddle tail. */
+	CRUSTACEAN;
 
 	public static final Archetype[] VALUES = values();
+
+	/** Chance an {@link #ARACHNID} founder rolls the giant size band instead of the usual one. */
+	public static final float GIANT_CHANCE = 0.03f;
 
 	/**
 	 * Rolls a founder genome for this archetype. Constrained loci are drawn from the archetype's
@@ -65,6 +72,15 @@ public enum Archetype {
 				band(v, Gene.LEG_SEGMENTS, 0.6f, 1f, random);
 				band(v, Gene.LEG_SPLAY, 0.65f, 1f, random);         // sprawling
 				band(v, Gene.LEG_LENGTH, 0.15f, 0.45f, random);
+				// Legs run the full length of the body, the knees stay low, and the trunk stays
+				// one piece. All three are what separate this from ARACHNID, which packs the same
+				// leg count onto a front segment over high knees, with its mass in an abdomen
+				// behind them. Spread is pinned to the bottom of the range rather than merely
+				// biased low: with four pairs on a body this short, the legs of an insectoid are
+				// nearly touching already, and any clustering at all closes the gap entirely.
+				band(v, Gene.LEG_CLUSTERING, 0f, 0.06f, random);
+				band(v, Gene.LEG_ARCH, 0f, 0.30f, random);
+				band(v, Gene.BODY_SEGMENTATION, 0f, 0.40f, random);
 				band(v, Gene.SIZE, 0.02f, 0.28f, random);
 				band(v, Gene.TORSO_GIRTH, 0.1f, 0.4f, random);
 				band(v, Gene.SPINE_SEGMENTS, 0.6f, 1f, random);     // segmented body
@@ -140,6 +156,70 @@ public enum Archetype {
 				band(v, Gene.LEG_THICKNESS, 0.2f, 0.5f, random);
 				band(v, Gene.FEAR, 0.6f, 1f, random);
 				band(v, Gene.TAIL_LENGTH, 0.5f, 0.85f, random);
+			}
+			case ARACHNID -> {
+				// The three genes that make this shape rather than "insect with long legs":
+				// everything clustered on the front segment, the mass carried in a separate
+				// abdomen behind it, and the mid joint riding above the hip.
+				band(v, Gene.LEG_CLUSTERING, 0.82f, 1f, random);
+				band(v, Gene.BODY_SEGMENTATION, 0.80f, 1f, random);
+				band(v, Gene.LEG_ARCH, 0.85f, 1f, random);
+				band(v, Gene.ABDOMEN_SIZE, 0.55f, 0.95f, random);
+
+				band(v, Gene.LEG_PAIRS, 0.80f, 1f, random);        // four pairs
+				band(v, Gene.LEG_SEGMENTS, 0.6f, 1f, random);      // three segments
+				band(v, Gene.LEG_SPLAY, 0.80f, 1f, random);
+				band(v, Gene.LEG_LENGTH, 0.45f, 0.75f, random);
+				band(v, Gene.LEG_THICKNESS, 0.10f, 0.35f, random); // spindly
+				// A spider leg is not digitigrade: the second joint bends the same way as the
+				// first, which is what lets the whole limb tent up over the body instead of
+				// folding into an S and dropping the knee back down.
+				band(v, Gene.DIGITIGRADE, 0f, 0.30f, random);
+				// Roughly one arachnid in thirty comes out enormous. Kept this rare on purpose:
+				// a giant is only frightening if the other twenty-nine were not, and the overall
+				// height cap in BodyPlanBuilder still applies, so it cannot run away entirely.
+				if (random.nextFloat() < GIANT_CHANCE) {
+					band(v, Gene.SIZE, 0.78f, 0.96f, random);
+					// Scaled-up spindles would snap under their own weight, and read as wire at
+					// that size; a giant needs proportionally heavier legs.
+					band(v, Gene.LEG_THICKNESS, 0.45f, 0.75f, random);
+				} else {
+					band(v, Gene.SIZE, 0.15f, 0.45f, random);
+				}
+				band(v, Gene.TORSO_LENGTH, 0.10f, 0.35f, random);  // compact cephalothorax
+				band(v, Gene.TORSO_GIRTH, 0.35f, 0.65f, random);
+				band(v, Gene.SPINE_SEGMENTS, 0f, 0.30f, random);
+				band(v, Gene.NECK_LENGTH, 0f, 0.10f, random);
+				band(v, Gene.TAIL_LENGTH, 0f, 0.10f, random);
+				band(v, Gene.HEAD_SIZE, 0.20f, 0.50f, random);
+				band(v, Gene.EYE_STYLE, 0.68f, 0.82f, random);     // the eight-eye cluster
+				band(v, Gene.EYE_SIZE, 0.45f, 0.85f, random);
+				band(v, Gene.ARM_PAIRS, 0.45f, 0.80f, random);     // one pair of pedipalps
+				band(v, Gene.ARM_LENGTH, 0.10f, 0.30f, random);
+				band(v, Gene.BLEND_SMOOTHNESS, 0f, 0.25f, random); // hard-edged, chitinous
+				band(v, Gene.HORN_TYPE, 0f, 0.30f, random);        // no horns on a spider
+				band(v, Gene.DIET, 0.70f, 1f, random);
+			}
+			case CRUSTACEAN -> {
+				band(v, Gene.LEG_PAIRS, 0.55f, 1f, random);        // three or four pairs
+				band(v, Gene.LEG_CLUSTERING, 0.55f, 0.85f, random);
+				band(v, Gene.LEG_ARCH, 0.55f, 0.85f, random);
+				band(v, Gene.LEG_SPLAY, 0.70f, 1f, random);
+				band(v, Gene.LEG_LENGTH, 0.20f, 0.45f, random);
+				band(v, Gene.SIZE, 0.15f, 0.45f, random);
+				band(v, Gene.TORSO_GIRTH, 0.70f, 1f, random);      // broad carapace
+				band(v, Gene.TORSO_LENGTH, 0.15f, 0.40f, random);
+				band(v, Gene.NECK_LENGTH, 0f, 0.15f, random);
+				band(v, Gene.EYE_STYLE, 0.52f, 0.64f, random);     // eyes on stalks
+				band(v, Gene.ARMOR, 0.70f, 1f, random);
+				band(v, Gene.ARMOR_COVERAGE, 0.70f, 1f, random);
+				band(v, Gene.CLAWS, 0.70f, 1f, random);
+				band(v, Gene.ARM_PAIRS, 0.86f, 1f, random);        // two pairs, the front ones claws
+				band(v, Gene.ARM_LENGTH, 0.40f, 0.70f, random);
+				band(v, Gene.TAIL_SHAPE, 0.22f, 0.38f, random);    // flat paddle
+				band(v, Gene.TAIL_LENGTH, 0.30f, 0.60f, random);
+				band(v, Gene.BLEND_SMOOTHNESS, 0f, 0.25f, random);
+				band(v, Gene.HORN_TYPE, 0f, 0.30f, random);
 			}
 			default -> {
 			}

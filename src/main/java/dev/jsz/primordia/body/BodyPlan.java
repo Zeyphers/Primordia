@@ -24,6 +24,8 @@ public final class BodyPlan {
 
 	public final int rootBone;
 	public final int headBone;
+	/** Hinged mandible, child of {@link #headBone}. Always present; every creature has a mouth. */
+	public final int jawBone;
 
 	/** Bind-pose height of the hip above the ground plane (y = 0). */
 	public final float hipHeight;
@@ -44,9 +46,10 @@ public final class BodyPlan {
 	public final float minLimbRadius;
 
 	public BodyPlan(Genome genome, BoneDef[] bones, SdfBlob[] blobs, LimbChain[] legs, LimbChain[] arms,
-	                BodyPalette palette, float blendRadius, int rootBone, int headBone, float hipHeight,
-	                Vector3f boundsMin, Vector3f boundsMax, float bodyLength, float mass,
+	                BodyPalette palette, float blendRadius, int rootBone, int headBone, int jawBone,
+	                float hipHeight, Vector3f boundsMin, Vector3f boundsMax, float bodyLength, float mass,
 	                float minLimbRadius) {
+		this.jawBone = jawBone;
 		this.genome = genome;
 		this.bones = bones;
 		this.blobs = blobs;

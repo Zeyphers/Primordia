@@ -3,5 +3,7 @@
 	"item.primordia.genome_scanner": "Genome Scanner",
 	"commands.primordia.spawned": "Spawned creature %s (seed %s)",
 	"commands.primordia.cleared": "Removed %s creature(s)",
-	"commands.primordia.no_target": "No creature found nearby"
+	"commands.primordia.no_target": "No creature found nearby",
+	"category.primordia": "Primordia",
+	"key.primordia.settings": "Open settings"
 }

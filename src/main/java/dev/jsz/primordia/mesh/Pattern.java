@@ -2,6 +2,7 @@ package dev.jsz.primordia.mesh;
 
 import dev.jsz.primordia.body.BodyPalette;
 import dev.jsz.primordia.body.Feature;
+import dev.jsz.primordia.body.GlowRegion;
 import dev.jsz.primordia.util.MathX;
 import dev.jsz.primordia.util.Noise;
 import org.joml.Vector3f;
@@ -17,15 +18,35 @@ import org.joml.Vector3f;
  * animal read as an animal), then feature overrides for eyes, jaws and plates.
  */
 public final class Pattern {
+	/** Keratin: horn, tusk and claw sheath all sit near this rather than the body colour. */
+	private static final Vector3f KERATIN = new Vector3f(0.86f, 0.82f, 0.71f);
+
 	private Pattern() {
 	}
 
-	public static void colorAt(float x, float y, float z, float nx, float ny, float nz,
-	                           Feature feature, BodyPalette palette, Noise noise, Vector3f dest) {
+	/**
+	 * Writes the vertex colour into {@code dest} and returns the vertex's <b>emissive</b> weight
+	 * in [0,1] — 0 for ordinary flesh, 1 for a light organ. The renderer lifts the block-light
+	 * coordinate by that weight, which is how a glowing creature stays on the same single render
+	 * layer as every other one.
+	 */
+	public static float colorAt(float x, float y, float z, float nx, float ny, float nz,
+	                            Feature feature, BodyPalette palette, Noise noise, Vector3f dest) {
+		// A dedicated light organ is emissive whatever the glow region says — it is the organ.
+		if (feature == Feature.GLOW) {
+			dest.set(palette.glow);
+			return Math.max(palette.glowStrength, 0.85f);
+		}
 		// Eyes bypass everything: they must stay readable against any body colour.
 		if (feature == Feature.EYE) {
 			dest.set(palette.eye);
-			return;
+			if (palette.glowStrength > 0f
+					&& (palette.glowRegion == GlowRegion.EYES
+					|| palette.glowRegion == GlowRegion.WHOLE_BODY)) {
+				dest.lerp(palette.glow, 0.65f);
+				return palette.glowStrength;
+			}
+			return 0f;
 		}
 
 		float s = palette.patternScale;
@@ -72,11 +93,43 @@ public final class Pattern {
 			case EYE_STALK -> dest.mul(0.82f);
 			case PLATE -> dest.lerp(palette.secondary, 0.75f).mul(0.80f);
 			case TAIL -> dest.mul(0.92f);
+			// Horn and tusk are dead keratin, so they read as bone rather than as skin — which
+			// is exactly what makes them look grown onto the animal instead of painted on it.
+			case HORN -> dest.lerp(KERATIN, 0.55f).mul(0.92f);
+			case TUSK -> dest.lerp(KERATIN, 0.78f);
+			case BEAK -> dest.lerp(palette.secondary, 0.45f).mul(0.72f);
+			case EAR -> dest.mul(0.88f);
+			// Frills and fins are thin membrane: they catch more light and show more of the
+			// display colour than the hide around them.
+			case FRILL -> dest.lerp(palette.secondary, 0.55f).mul(1.06f);
+			case FIN -> dest.lerp(palette.secondary, 0.45f).mul(0.96f);
+			case ABDOMEN -> dest.mul(0.95f);
 			default -> {
 			}
 		}
 
+		// Bioluminescence, applied last so it survives the feature tints above.
+		float emissive = 0f;
+		if (palette.glowStrength > 0f) {
+			float region = switch (palette.glowRegion) {
+				case EYES -> 0f;
+				case MARKINGS -> MathX.smoothstep(MathX.remap(m, 0.55f, 0.90f, 0f, 1f));
+				case BELLY -> 1f - upness;
+				case DORSAL -> feature == Feature.SPINE || feature == Feature.PLATE
+						? 1f
+						: MathX.smoothstep(MathX.remap(ny, 0.25f, 0.85f, 0f, 1f));
+				case EXTREMITIES -> switch (feature) {
+					case FOOT, HAND, CLAWS, TAIL, FIN -> 1f;
+					default -> 0f;
+				};
+				case WHOLE_BODY -> 0.55f;
+			};
+			emissive = MathX.clamp01(region * palette.glowStrength);
+			if (emissive > 0f) dest.lerp(palette.glow, emissive * 0.75f);
+		}
+
 		dest.set(MathX.clamp01(dest.x), MathX.clamp01(dest.y), MathX.clamp01(dest.z));
+		return emissive;
 	}
 
 	/** Soft threshold at 0.5, kept slightly gradual so patterns do not alias on a coarse mesh. */

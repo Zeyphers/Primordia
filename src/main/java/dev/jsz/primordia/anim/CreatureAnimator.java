@@ -40,6 +40,20 @@ public final class CreatureAnimator {
 	private static final float SETTLE_RATE_STANCE = 30f;
 	/** How fast a foot settles when the creature stops walking. Softer, so stopping looks relaxed. */
 	private static final float SETTLE_RATE_STOP = 12f;
+	/** How much of a rider's steering angle the spine bends into. */
+	private static final float RIDER_STEER_BEND = 0.85f;
+	/** Ceiling on that bend, so a rider spinning on the spot cannot fold the animal in half. */
+	private static final float RIDER_STEER_LIMIT = 0.75f;
+	/**
+	 * Tail counter-bend as a fraction of the spine's lean. Under one: the tail trails the turn as
+	 * a counterweight rather than mirroring it, which is what a real animal's tail does going into
+	 * a corner — swing it as hard the other way and the creature reads as hinged in the middle.
+	 */
+	private static final float TAIL_COUNTER_LEAN = 0.65f;
+
+	/** Widest the jaw swings open, in radians, on top of whatever gap the bind pose already has. */
+	private static final float JAW_GAPE = 0.62f;
+
 	/** Share of terrain pitch taken by rigid body rotation; the remainder bends the spine. */
 	private static final float ROOT_PITCH_SHARE = 0.55f;
 	/** Fraction of its full length a limb reaches before the solver starts stretching it. */
@@ -68,8 +82,12 @@ public final class CreatureAnimator {
 	private float lastTime = Float.NaN;
 	/** Damped state, so the body settles instead of snapping. */
 	private float bodyPitch, bodyRoll, bodyRise, lateralBend, tailLag;
+	/** Smoothed steering intent, shared between the spine and the tail that counterweights it. */
+	private float riderLean;
 	/** Damped behavioural offsets, layered onto the locomotion pose by the axial passes. */
 	private float activityHeadPitch, activityHeadYaw, activityTailYaw;
+	/** Jaw opening in [0,1], smoothed. 0 is the bind pose, 1 is gape. */
+	private float jawOpen;
 	private float activityArmSwing, activityLunge, activityCrouch;
 
 	// Scratch, reused every frame.
@@ -133,6 +151,8 @@ public final class CreatureAnimator {
 		updateBody(ctx, dt);
 		updateSpine(ctx, dt);
 		updateNeckAndHead(ctx);
+		// After the head: the jaw hangs off it, so its parent has to be posed first.
+		updateJaw(ctx, dt);
 		updateTail(ctx, dt);
 
 		skeleton.updateWorld();
@@ -478,8 +498,19 @@ public final class CreatureAnimator {
 	private void updateSpine(AnimationContext ctx, float dt) {
 		if (spineBones.length == 0) return;
 		// Bend into turns, and add a small travelling wave so the torso is never rigid.
-		float targetBend = MathX.clamp(ctx.turnRate * 0.35f, -0.6f, 0.6f);
+		//
+		// A rider's steering counts for far more than the measured turn rate. Turn rate is a
+		// record of motion that has already happened, so a mount driven by it alone only starts
+		// to bend once it is already coming round — the rider sees their input answered a beat
+		// late, which reads as a stiff animal rather than a responsive one. Steering intent leads
+		// the turn instead: the body leans into the corner as it is asked for.
+		float targetBend = MathX.clamp(ctx.turnRate * 0.35f, -0.6f, 0.6f)
+				+ MathX.clamp(ctx.riderSteer * RIDER_STEER_BEND, -RIDER_STEER_LIMIT, RIDER_STEER_LIMIT);
+		targetBend = MathX.clamp(targetBend, -1.1f, 1.1f);
+		// Damped rather than applied directly, so the arc is smooth however sharply the rider
+		// flicks the mouse.
 		lateralBend = MathX.damp(lateralBend, targetBend, 6f, dt);
+		riderLean = MathX.damp(riderLean, ctx.riderSteer, 5f, dt);
 
 		// Only a mild extra sway in water. A land animal dog-paddling does not undulate like a fish;
 		// the earlier strong wave read as a swimming lizard rather than a struggling quadruped.
@@ -533,6 +564,57 @@ public final class CreatureAnimator {
 		skeleton.updateBoneWorld(bone);
 	}
 
+	/**
+	 * Swings the mandible.
+	 * <p>
+	 * The jaw's local axis runs from hinge to chin, so opening is a rotation about the bone's own
+	 * X — the same axis its bind rotation was built around, which is why this stays a single
+	 * angle rather than needing a full aim.
+	 * <p>
+	 * Ambient breathing is layered under the behavioural opening rather than replaced by it. A
+	 * mouth that is perfectly still whenever the creature is not biting reads as a dead prop, and
+	 * the cost of avoiding that is one sine wave.
+	 */
+	private void updateJaw(AnimationContext ctx, float dt) {
+		int jaw = plan.jawBone;
+		if (jaw < 0 || jaw >= plan.bones.length) return;
+
+		float target = switch (ctx.activity) {
+			// Open on the wind-up, snap shut as the strike lands. Biting with a closed mouth and
+			// opening afterwards is the single most obviously wrong thing a jaw can do.
+			case BITE -> {
+				float p = MathX.clamp01(ctx.activityProgress);
+				yield p < 0.45f
+						? MathX.smoothstep(p / 0.45f)
+						: Math.max(0f, 1f - (p - 0.45f) / 0.30f);
+			}
+			// Chewing: a fast shallow cycle rather than a gape.
+			case GRAZE -> 0.18f + 0.14f * (float) Math.sin(ctx.time * 9.0);
+			// Mouth shut through a charge or a stomp; an open jaw would read as a bite.
+			case RAM, STOMP -> 0f;
+			case CLAW, TAIL_SLAM -> 0.12f * strikeCurve(MathX.clamp01(ctx.activityProgress));
+			default -> 0f;
+		};
+
+		// Panting while moving, slow breathing at rest.
+		float ambient = ctx.speed > IDLE_SPEED
+				? 0.10f + 0.07f * (float) Math.sin(ctx.time * 6.5)
+				: 0.025f + 0.025f * (float) Math.sin(ctx.time * 1.5);
+
+		// Snapping shut is far faster than opening — a jaw closes under muscle and gravity
+		// together, and easing both ways at one rate makes every bite look languid.
+		float goal = MathX.clamp01(target + ambient);
+		float rate = goal < jawOpen ? 26f : 14f;
+		jawOpen = MathX.damp(jawOpen, goal, rate, dt);
+
+		// Negative: the bind rotation takes local +Y onto the hinge-to-chin direction, which leaves
+		// local +X pointing to the creature's left, so a positive rotation about it lifts the chin
+		// into the skull. Opening is the other way.
+		q0.identity().rotateX(-jawOpen * JAW_GAPE);
+		skeleton.setLocalRotation(jaw, q0);
+		skeleton.updateBoneWorld(jaw);
+	}
+
 	private void updateTail(AnimationContext ctx, float dt) {
 		if (tailBones.length == 0) return;
 		// The tail lags the body's turn, then overshoots slightly as it catches up. In water it
@@ -543,8 +625,10 @@ public final class CreatureAnimator {
 		tailLag = MathX.damp(tailLag, lagTarget, ctx.swimming ? 6f : 4f, dt);
 
 		// Weight shift counterbalance: as the body sways or rolls to one side, the tail swings
-		// to the opposite side to maintain physical equilibrium.
-		float rollCounterbalance = -bodyRoll * 1.5f;
+		// to the opposite side to maintain physical equilibrium. A steered turn is the largest
+		// weight shift there is, so the tail swings out against it — the same reason a cat's tail
+		// goes wide on a corner.
+		float rollCounterbalance = -bodyRoll * 1.5f - riderLean * TAIL_COUNTER_LEAN;
 		float stepSway = ctx.speed > IDLE_SPEED ? -0.18f * (float) Math.sin(gaitPhase * Math.PI * 2.0) : 0f;
 
 		for (int i = 0; i < tailBones.length; i++) {

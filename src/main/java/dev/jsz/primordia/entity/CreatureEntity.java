@@ -9,9 +9,12 @@ import dev.jsz.primordia.body.LimbChain;
 import dev.jsz.primordia.ecology.FoodSurvey;
 import dev.jsz.primordia.entity.goal.CreatureAttackGoal;
 import dev.jsz.primordia.entity.goal.CreatureTemptGoal;
+import dev.jsz.primordia.entity.goal.DefendOwnerGoal;
 import dev.jsz.primordia.entity.goal.FleeLargerCreatureGoal;
+import dev.jsz.primordia.entity.goal.FollowOwnerGoal;
 import dev.jsz.primordia.entity.goal.GrazeGoal;
 import dev.jsz.primordia.entity.goal.LeaveWaterGoal;
+import dev.jsz.primordia.entity.goal.StayGoal;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.genome.Mutation;
@@ -86,6 +89,31 @@ public class CreatureEntity extends PathAwareEntity {
 			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.OPTIONAL_UUID);
 	private static final TrackedData<Boolean> CLIMBING =
 			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+	private static final TrackedData<Boolean> DOMESTICATED =
+			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+	private static final TrackedData<Boolean> SITTING =
+			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+	/** Test-rig flag: hold position as a display specimen. See {@code /primordia test}. */
+	private static final TrackedData<Boolean> POSING =
+			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+	/** Whether a posed specimen plays its walk cycle or stands. Toggled by {@code /primordia test walk}. */
+	private static final TrackedData<Boolean> POSE_WALKING =
+			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+
+	/** Walking speed reported to the animator by a posed creature, in blocks per second. */
+	public static final float POSE_WALK_SPEED = 2.2f;
+
+	/**
+	 * Chance that taming a creature also domesticates it, and the smaller per-feed chance for one
+	 * that is already tamed.
+	 * <p>
+	 * Deliberately low. A domesticated creature is a permanent combat companion, so if taming
+	 * reliably produced one there would be no reason to ever tame a second creature — and the
+	 * feeding path exists so the trait is still reachable for animals tamed before the roll, and
+	 * for a player who wants a particular genome rather than whichever one happened to win.
+	 */
+	private static final float DOMESTICATION_ON_TAME_CHANCE = 0.12f;
+	private static final float DOMESTICATION_ON_FEED_CHANCE = 0.08f;
 
 	/** Speed below which the creature is considered standing rather than walking, in blocks/tick. */
 	private static final double WALK_THRESHOLD_SQ = 0.0015 * 0.0015;
@@ -174,11 +202,42 @@ public class CreatureEntity extends PathAwareEntity {
 		super(type, world);
 	}
 
+	/**
+	 * Gate on the world populating itself with creatures. Commands are unaffected — {@code
+	 * /primordia spawn} and {@code /primordia test} call {@code world.spawnEntity} directly and
+	 * never consult this — so a flat world is still perfectly usable as a test bed, it just stops
+	 * generating its own population.
+	 */
 	public static boolean canSpawn(EntityType<CreatureEntity> type, net.minecraft.world.ServerWorldAccess world,
 	                               net.minecraft.entity.SpawnReason spawnReason, net.minecraft.util.math.BlockPos pos,
 	                               net.minecraft.util.math.random.Random random) {
+		if (isWorldGenerated(spawnReason) && isFlatWorld(world)) return false;
 		net.minecraft.block.BlockState state = world.getBlockState(pos.down());
 		return state.isSolidBlock(world, pos.down()) && pos.getY() >= world.getBottomY() + 4;
+	}
+
+	/** True for the spawn reasons the world produces on its own, as opposed to a player asking. */
+	private static boolean isWorldGenerated(net.minecraft.entity.SpawnReason reason) {
+		return reason == net.minecraft.entity.SpawnReason.NATURAL
+				|| reason == net.minecraft.entity.SpawnReason.CHUNK_GENERATION
+				|| reason == net.minecraft.entity.SpawnReason.SPAWNER;
+	}
+
+	/**
+	 * Superflat and debug worlds are build spaces, not ecosystems.
+	 * <p>
+	 * A superflat is the worst possible case for a ground-spawning mob: solid, flat, fully lit
+	 * ground to the horizon, with no water, cliffs or cave mouths to break up the candidate
+	 * positions. Essentially every block passes the spawn test, so the spawner saturates its cap
+	 * the instant the world loads and the player arrives standing inside a herd. Suppressing it
+	 * outright is the difference between a flat world you can test in and one you have to clear
+	 * before you can see anything.
+	 */
+	private static boolean isFlatWorld(net.minecraft.world.ServerWorldAccess world) {
+		net.minecraft.world.gen.chunk.ChunkGenerator generator =
+				world.toServerWorld().getChunkManager().getChunkGenerator();
+		return generator instanceof net.minecraft.world.gen.chunk.FlatChunkGenerator
+				|| generator instanceof net.minecraft.world.gen.chunk.DebugChunkGenerator;
 	}
 
 	@Override
@@ -223,6 +282,10 @@ public class CreatureEntity extends PathAwareEntity {
 		builder.add(TAMED, false);
 		builder.add(SADDLED, false);
 		builder.add(OWNER, Optional.empty());
+		builder.add(DOMESTICATED, false);
+		builder.add(SITTING, false);
+		builder.add(POSING, false);
+		builder.add(POSE_WALKING, true);
 		builder.add(CLIMBING, false);
 	}
 
@@ -242,6 +305,75 @@ public class CreatureEntity extends PathAwareEntity {
 
 	public boolean isOwner(PlayerEntity player) {
 		return player.getUuid().equals(getOwnerUuid());
+	}
+
+	/**
+	 * A tamed creature that has also bonded: it follows its owner, fights alongside them, and can
+	 * be told to stay. Strictly a superset of tamed — nothing is domesticated without being tamed.
+	 */
+	public boolean isDomesticated() {
+		return dataTracker.get(DOMESTICATED);
+	}
+
+	public boolean isSitting() {
+		return dataTracker.get(SITTING);
+	}
+
+	/**
+	 * A posed creature is a specimen on a stand: it holds its position and plays the walk cycle
+	 * without going anywhere, so a whole population can be inspected side by side. Nothing spawns
+	 * this way naturally — only {@code /primordia test} sets it.
+	 */
+	public boolean isPosing() {
+		return dataTracker.get(POSING);
+	}
+
+	/** Whether a posed specimen is playing its walk cycle rather than standing still. */
+	public boolean isPoseWalking() {
+		return dataTracker.get(POSE_WALKING);
+	}
+
+	public void setPoseWalking(boolean walking) {
+		dataTracker.set(POSE_WALKING, walking);
+	}
+
+	/** Freezes the creature in place as an animated display specimen. */
+	public void setPosing(boolean posing) {
+		dataTracker.set(POSING, posing);
+		setAiDisabled(posing);
+		setInvulnerable(posing);
+		setPersistent();
+		if (posing) {
+			setSilent(true);
+			getNavigation().stop();
+			setTarget(null);
+		}
+	}
+
+	public void setSitting(boolean sitting) {
+		dataTracker.set(SITTING, sitting);
+	}
+
+	/** The owning player if they are loaded in this world, otherwise null. */
+	public LivingEntity getOwner() {
+		UUID uuid = getOwnerUuid();
+		return uuid == null ? null : getWorld().getPlayerByUuid(uuid);
+	}
+
+	/**
+	 * Rolls for domestication and reports whether it took. Announces itself loudly when it does —
+	 * this is a rare outcome the player would otherwise have no way of noticing.
+	 */
+	private boolean rollDomestication(PlayerEntity player, float chance) {
+		if (isDomesticated() || getRandom().nextFloat() >= chance) return false;
+
+		dataTracker.set(DOMESTICATED, true);
+		((ServerWorld) getWorld()).spawnParticles(ParticleTypes.HAPPY_VILLAGER,
+				getX(), getBodyY(1.0), getZ(), 18, 0.5, 0.5, 0.5, 0.15);
+		playSound(SoundEvents.ENTITY_WOLF_HOWL, 0.7f, 1.0f);
+		player.sendMessage(Text.literal("The creature bonds with you — it will fight at your side. "
+				+ "Sneak and interact to make it stay.").formatted(Formatting.GOLD), false);
+		return true;
 	}
 
 	/** The food this creature can be bribed with; stable across a lineage. */
@@ -276,6 +408,7 @@ public class CreatureEntity extends PathAwareEntity {
 						getX(), getBodyY(0.9), getZ(), 7, 0.4, 0.4, 0.4, 0.1);
 				player.sendMessage(Text.literal("The creature accepts you.")
 						.formatted(Formatting.GREEN), true);
+				rollDomestication(player, DOMESTICATION_ON_TAME_CHANCE);
 			} else {
 				((ServerWorld) getWorld()).spawnParticles(ParticleTypes.SMOKE,
 						getX(), getBodyY(0.9), getZ(), 5, 0.3, 0.3, 0.3, 0.02);
@@ -284,9 +417,26 @@ public class CreatureEntity extends PathAwareEntity {
 		}
 
 		// Tamed from here on.
+
+		// Sneak-interact toggles staying. It is on the sneak variant because a plain interact is
+		// already spoken for by feeding, saddling and mounting.
+		if (isDomesticated() && isOwner(player) && player.shouldCancelInteraction()) {
+			if (getWorld().isClient()) return ActionResult.SUCCESS;
+			setSitting(!isSitting());
+			getNavigation().stop();
+			setTarget(null);
+			player.sendMessage(Text.literal(isSitting()
+					? "The creature settles down to wait."
+					: "The creature falls in behind you.").formatted(Formatting.GREEN), true);
+			return ActionResult.CONSUME;
+		}
+
 		if (stack.isOf(getFavouriteFood()) && loveTimer <= 0) {
 			if (getWorld().isClient()) return ActionResult.SUCCESS;
 			stack.decrementUnlessCreative(1, player);
+			// A tamed creature can still bond later, so animals tamed before this trait existed
+			// are not permanently shut out of it.
+			if (isOwner(player)) rollDomestication(player, DOMESTICATION_ON_FEED_CHANCE);
 			loveTimer = 600;
 			playMatingCall();
 			((ServerWorld) getWorld()).spawnParticles(ParticleTypes.HEART,
@@ -405,6 +555,8 @@ public class CreatureEntity extends PathAwareEntity {
 	@Override
 	protected void initGoals() {
 		goalSelector.add(0, new SwimGoal(this));
+		// Above everything: told to stay means stay.
+		goalSelector.add(0, new StayGoal(this));
 
 		// Prey bolt when hurt. Higher priority than fighting: a skittish animal should be running
 		// before it considers anything else.
@@ -418,6 +570,9 @@ public class CreatureEntity extends PathAwareEntity {
 		goalSelector.add(2, new CreatureTemptGoal(this, 1.15));
 		goalSelector.add(2, new FleeLargerCreatureGoal(this, 1.35));
 		goalSelector.add(3, new CreatureAttackGoal(this, 1.15));
+		// Below fighting, above foraging: a companion should finish the fight before it wanders
+		// back to heel, but should not stop to graze while its owner walks away.
+		goalSelector.add(4, new FollowOwnerGoal(this, 1.25, 10f, 3f, 20f));
 		// Above wandering: a creature in water should commit to getting out rather than keep
 		// picking random destinations across the lake.
 		goalSelector.add(3, new LeaveWaterGoal(this, 1.1));
@@ -426,11 +581,20 @@ public class CreatureEntity extends PathAwareEntity {
 		goalSelector.add(6, new LookAtEntityGoal(this, PlayerEntity.class, 8.0f));
 		goalSelector.add(7, new LookAroundGoal(this));
 
-		// Anything not skittish hits back at whatever hit it — including the player.
-		targetSelector.add(1, new RevengeGoal(this) {
+		// Fighting for the owner outranks the creature's own grudges.
+		targetSelector.add(1, new DefendOwnerGoal(this));
+
+		// Anything not skittish hits back at whatever hit it — including the player, but never
+		// its own owner: a companion that mauls you for a misclick is not a companion.
+		targetSelector.add(2, new RevengeGoal(this) {
 			@Override
 			public boolean canStart() {
-				return getTemperament().retaliates() && super.canStart();
+				if (!getTemperament().retaliates()) return false;
+				if (isDomesticated() && getAttacker() instanceof PlayerEntity player
+						&& isOwner(player)) {
+					return false;
+				}
+				return super.canStart();
 			}
 		});
 
@@ -438,19 +602,29 @@ public class CreatureEntity extends PathAwareEntity {
 		targetSelector.add(2, new ActiveTargetGoal<>(this, CreatureEntity.class, 10, true, false,
 				other -> {
 					if (!(other instanceof CreatureEntity prey) || prey == this) return false;
+					// Never the owner's other animals — a pack that eats itself is not a pack.
+					if (isDomesticated() && prey.isDomesticated()
+							&& getOwnerUuid() != null && getOwnerUuid().equals(prey.getOwnerUuid())) {
+						return false;
+					}
 					BodyPlan mine = getBodyPlan();
 					BodyPlan theirs = prey.getBodyPlan();
 					if (mine == null || theirs == null) return false;
 					return theirs.mass < mine.mass * 0.85f;
 				}));
 
-		// Hunters attack vanilla passive animals (Cows, Sheep, Pigs, Chickens, Rabbits, Horses, etc.)
+		// Hunters attack vanilla passive animals (Cows, Sheep, Pigs, Chickens, Rabbits, Horses,
+		// etc.). Bonded creatures do not go looking: a companion that clears out the farm it is
+		// walking past is a liability, so they fight what their owner fights and nothing else.
 		targetSelector.add(2, new ActiveTargetGoal<>(this, net.minecraft.entity.passive.AnimalEntity.class, 10, true, false,
-				animal -> getTemperament().huntsUnprovoked() || (getGenome() != null && getGenome().raw(Gene.DIET) > 0.45f)));
+				animal -> !isDomesticated()
+						&& (getTemperament().huntsUnprovoked()
+						|| (getGenome() != null && getGenome().raw(Gene.DIET) > 0.45f))));
 
-		// Committed predators treat the player as prey without being provoked first.
-		targetSelector.add(3, new ActiveTargetGoal<>(this, PlayerEntity.class, 10, true, false,
-				target -> getTemperament().huntsUnprovoked()));
+		// Committed predators treat the player as prey without being provoked first. A bonded
+		// creature never does, whatever its disposition says.
+		targetSelector.add(4, new ActiveTargetGoal<>(this, PlayerEntity.class, 10, true, false,
+				target -> getTemperament().huntsUnprovoked() && !isDomesticated()));
 	}
 
 	@Override
@@ -789,6 +963,10 @@ public class CreatureEntity extends PathAwareEntity {
 		super.writeCustomDataToNbt(nbt);
 		nbt.putString("Genome", dataTracker.get(GENOME_CODE));
 		nbt.putBoolean("Tamed", isTamed());
+		nbt.putBoolean("Domesticated", isDomesticated());
+		nbt.putBoolean("Sitting", isSitting());
+		nbt.putBoolean("Posing", isPosing());
+		nbt.putBoolean("PoseWalking", isPoseWalking());
 		nbt.putBoolean("Saddled", isSaddled());
 		UUID owner = getOwnerUuid();
 		if (owner != null) {
@@ -806,6 +984,13 @@ public class CreatureEntity extends PathAwareEntity {
 			}
 		}
 		dataTracker.set(TAMED, nbt.getBoolean("Tamed"));
+		// Domestication is a strict superset of taming; an untamed creature cannot be bonded.
+		dataTracker.set(DOMESTICATED, nbt.getBoolean("Domesticated") && nbt.getBoolean("Tamed"));
+		dataTracker.set(SITTING, nbt.getBoolean("Sitting"));
+		if (nbt.getBoolean("Posing")) setPosing(true);
+		// Absent on grids saved before the walk toggle existed, and false is the wrong default
+		// there — those were spawned walking.
+		dataTracker.set(POSE_WALKING, !nbt.contains("PoseWalking") || nbt.getBoolean("PoseWalking"));
 		dataTracker.set(SADDLED, nbt.getBoolean("Saddled"));
 		dataTracker.set(OWNER, nbt.containsUuid("Owner")
 				? Optional.of(nbt.getUuid("Owner"))

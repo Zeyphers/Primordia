@@ -240,16 +240,10 @@ public final class BodySdf {
 				group = blobGroup[b];
 			}
 
-			boolean isAttachedFeature = false;
-			if (part >= capsuleCount) {
-				int b = part - capsuleCount;
-				int feat = blobFeature[b];
-				if (feat == dev.jsz.primordia.body.Feature.EYE.ordinal() || feat == dev.jsz.primordia.body.Feature.EYE_STALK.ordinal()
-						|| feat == dev.jsz.primordia.body.Feature.CLAWS.ordinal() || feat == dev.jsz.primordia.body.Feature.SPINE.ordinal()
-						|| feat == dev.jsz.primordia.body.Feature.PLATE.ordinal() || feat == dev.jsz.primordia.body.Feature.HAND.ordinal()) {
-					isAttachedFeature = true;
-				}
-			}
+			// Surface detail — horns, eyes, claws, plates — unions hard so it keeps a crisp base
+			// instead of melting into the flesh it is mounted on. See Feature#isSurfaceDetail.
+			boolean isAttachedFeature = part >= capsuleCount
+					&& Feature.VALUES[blobFeature[part - capsuleCount]].isSurfaceDetail();
 
 			if (!groupTouched[group]) {
 				groupTouched[group] = true;
@@ -338,7 +332,7 @@ public final class BodySdf {
 				bestFeature = feature;
 			}
 		}
-		return Feature.values()[bestFeature];
+		return Feature.VALUES[bestFeature];
 	}
 
 	private float capsuleDistance(int index, float px, float py, float pz) {

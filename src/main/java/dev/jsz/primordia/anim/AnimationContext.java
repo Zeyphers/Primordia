@@ -28,6 +28,17 @@ public final class AnimationContext {
 	/** LOD tier from {@link dev.jsz.primordia.mesh.LodTier}. */
 	public int tier;
 
+	/**
+	 * Where a controlling rider is steering, in radians relative to the body: negative for left,
+	 * positive for right, zero when nobody is driving.
+	 * <p>
+	 * Distinct from {@link #turnRate}, which only reports turning that has <i>already happened</i>.
+	 * A mount that bends only once it is already turning reads as unresponsive, because the rider
+	 * sees the reaction a beat after their own input. Steering is the intent, so the body can lean
+	 * into a turn as it is asked for rather than after the fact.
+	 */
+	public float riderSteer;
+
 	/** What the creature is doing, driving the behavioural animation layer. */
 	public dev.jsz.primordia.entity.CreatureActivity activity =
 			dev.jsz.primordia.entity.CreatureActivity.IDLE;

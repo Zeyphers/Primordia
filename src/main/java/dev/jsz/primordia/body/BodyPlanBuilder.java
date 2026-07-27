@@ -38,6 +38,27 @@ public final class BodyPlanBuilder {
 	/** How much of its base radius a tail retains at the tip. */
 	private static final float TAIL_TIP_TAPER = 0.42f;
 
+	/**
+	 * How far the jaw is tilted open in the bind pose, as a slope away from the head direction.
+	 * <p>
+	 * Not cosmetic: the mesh is polygonised once in bind pose, so this gap is the only thing that
+	 * puts two separable surfaces where the mouth is. Baked shut, the mandible and the skull come
+	 * out of the mesher as one welded lump and no amount of animation can part them.
+	 */
+	private static final float JAW_BIND_OPEN = 0.13f;
+
+	/** Spine parameter the front-most pair of legs attaches at. */
+	private static final float FOREMOST_LEG_U = 0.88f;
+	/** Spine parameter the rear-most pair reaches at maximum clustering. */
+	private static final float HINDMOST_LEG_U = 0.62f;
+	/**
+	 * Required hip-to-hip spacing between adjacent leg pairs, in multiples of the leg radius.
+	 * Two capsules of radius r are exactly touching at 2r, so this is a 15% clearance margin.
+	 */
+	private static final float LEG_PITCH = 2.3f;
+	/** Most of the torso length the hips may be spread over, before legs are thinned instead. */
+	private static final float MAX_LEG_SPAN = 0.45f;
+
 	private BodyPlanBuilder() {
 	}
 
@@ -85,6 +106,37 @@ public final class BodyPlanBuilder {
 		// finer than the thinnest limb, so halving the minimum limb radius doubles grid resolution.
 		float legThickness = Math.max(girth * g.range(Gene.LEG_THICKNESS, 0.42f, 1.0f), size * 0.060f);
 		float armThickness = Math.max(girth * g.range(Gene.ARM_THICKNESS, 0.26f, 0.6f), size * 0.040f);
+
+		// ---- fit the legs into the room the body actually has -------------------
+		// Legs have to be spaced further apart along the body than they are thick. When they are
+		// not, their capsules genuinely intersect, and the union of two overlapping solids is one
+		// solid — neither the per-limb blend groups nor any amount of sampling resolution can pull
+		// them back apart afterwards. That is what welded the legs of clustered, many-legged
+		// creatures into a continuous sheet: an arachnid was carrying 55 mm-radius legs on hips
+		// 33 mm apart, so every same-side pair interpenetrated by construction.
+		//
+		// Two levers, applied in that order. Spreading the hips back down the body costs only the
+		// clustered look, so it goes first but is capped — spreading them the full length of the
+		// torso would turn every spider into a centipede. Whatever crowding is left is then paid
+		// for by thinning the legs, which is what a real arachnid does: the reason a spider can
+		// carry eight legs on a body that short is that they are wire-thin.
+		int legPairs = g.discrete(Gene.LEG_PAIRS, 1, 4);
+		// Clustering pulls the rearmost pair forward. Without it, every many-legged creature runs
+		// its legs the whole length of the body — a centipede — and packing them onto the front
+		// segment, which is what a spider does, is simply not in the space.
+		float rearmostU = MathX.lerp(0.12f, HINDMOST_LEG_U, g.raw(Gene.LEG_CLUSTERING));
+		if (legPairs > 1) {
+			float gaps = legPairs - 1;
+			float needed = LEG_PITCH * legThickness * gaps;
+			if ((FOREMOST_LEG_U - rearmostU) * torsoLength < needed) {
+				float span = Math.min(needed, MAX_LEG_SPAN * torsoLength);
+				rearmostU = FOREMOST_LEG_U - span / torsoLength;
+				// Floored against the hip height rather than against zero: past roughly this
+				// ratio a leg stops reading as a limb and reads as a wire, and ThinLimbTest
+				// holds the other end of the same trade.
+				legThickness = Math.max(span / (LEG_PITCH * gaps), hipHeight * 0.05f);
+			}
+		}
 		// Must account for the narrowest geometry actually emitted, which is the toe bone's far
 		// radius — the leg's own taper times the foot's additional narrowing. Measuring against the
 		// untapered thickness would leave the blend radius wider than the thinnest real feature.
@@ -148,8 +200,74 @@ public final class BodyPlanBuilder {
 
 		addHeadDetail(g, blobs, headBone, cursor, headTail, headDir, headSize);
 
+		// ---- jaw --------------------------------------------------------------
+		// A hinged bone of its own rather than a lump of mass welded under the skull, for two
+		// reasons that both come from how this pipeline works.
+		//
+		// The mesh is polygonised once in bind pose and only ever skinned afterwards, so a mouth
+		// that is fused shut when it is baked can never open: there is no seam to open along, and
+		// rotating the jaw would stretch one continuous surface rather than part it. The jaw is
+		// therefore baked slightly ajar, which is what puts a real gap in the geometry.
+		//
+		// And it takes a blend group of its own, so the SDF unions mandible and cranium with a
+		// hard minimum instead of a smooth one. Smooth-unioned they fair into a single mass and
+		// the mouth line disappears; kept apart, the seam *is* the mouth.
+		Vector3f headRight = new Vector3f(0f, 1f, 0f).cross(headDir, new Vector3f());
+		if (headRight.lengthSquared() < 1e-6f) headRight.set(1f, 0f, 0f);
+		headRight.normalize();
+		Vector3f headUp = new Vector3f(headDir).cross(headRight).normalize().mul(-1f);
+
+		float jawMass = g.range(Gene.JAW_SIZE, 0.35f, 1.15f);
+		// Hinged back near the ear, not at the snout: a jaw pivoting from the front of the face
+		// opens like a drawbridge instead of a mouth.
+		Vector3f jawHinge = new Vector3f(cursor).lerp(headTail, 0.20f)
+				.fma(-headSize * 0.14f, headUp);
+		Vector3f jawDir = new Vector3f(headDir).fma(-JAW_BIND_OPEN, headUp).normalize();
+		float jawLength = headLength * 0.80f;
+		Vector3f jawTail = new Vector3f(jawHinge).fma(jawLength, jawDir);
+
+		int jawBone = bones.size();
+		bones.add(new BoneDef("jaw", headBone, jawHinge, jawTail,
+				Math.max(headSize * 0.24f * jawMass, blendRadius * 1.3f),
+				Math.max(headSize * 0.15f * jawMass, blendRadius * 1.15f),
+				Feature.JAW, true, nextBlendGroup++));
+		// The mandible's own bulk, carried on the jaw bone so it swings with it.
+		blobs.add(new SdfBlob(jawBone, new Vector3f(jawHinge).lerp(jawTail, 0.52f),
+				new Vector3f(headSize * 0.30f * jawMass, headSize * 0.19f * jawMass,
+						jawLength * 0.44f),
+				Feature.JAW, false));
+
+		// ---- abdomen ----------------------------------------------------------
+		// A high BODY_SEGMENTATION splits the trunk into a cephalothorax and a separate abdomen
+		// joined by a narrow waist. This is the structural difference between "an animal that
+		// happens to have eight legs" and a spider: the mass sits *behind* the legs rather than
+		// being strung out between them, and the legs all hang off the front segment.
+		boolean segmented = g.expresses(Gene.BODY_SEGMENTATION, 0.62f);
+		int abdomenBone = -1;
+		Vector3f abdomenRear = null;
+		if (segmented) {
+			float abdomenR = girth * g.range(Gene.ABDOMEN_SIZE, 1.05f, 2.30f);
+			// The abdomen hangs behind and below the hip, so its vertical radius is capped against
+			// the hip height — an abdomen that ploughs through the floor reads as broken, not heavy.
+			float abdomenRy = Math.min(abdomenR * 0.80f, spinePts[0].y * 0.92f);
+			// The waist is the one place on a segmented body where the blend radius could swallow
+			// the geometry outright, so it is floored against it rather than against the girth alone.
+			float waist = Math.max(girth * 0.26f, blendRadius * 1.35f);
+
+			Vector3f abdomenStart = new Vector3f(spinePts[0]);
+			Vector3f abdomenCenter = new Vector3f(abdomenStart)
+					.add(0f, 0f, -(abdomenR * 0.95f + torsoLength * 0.08f));
+			abdomenBone = bones.size();
+			bones.add(new BoneDef("abdomen", rootBone, abdomenStart, abdomenCenter,
+					waist, Math.max(abdomenR * 0.45f, waist), Feature.BODY, true));
+			blobs.add(new SdfBlob(abdomenBone, new Vector3f(abdomenCenter),
+					new Vector3f(abdomenR * 0.88f, abdomenRy, abdomenR * 1.05f), Feature.ABDOMEN, false));
+			abdomenRear = new Vector3f(abdomenCenter).add(0f, 0f, -abdomenR * 0.80f);
+		}
+
 		// ---- tail -------------------------------------------------------------
 		float tailLength = size * g.biased(Gene.TAIL_LENGTH, 0f, 2.0f, 1.3f);
+		TailShape tailShape = TailShape.of(g);
 		if (tailLength > 0.08f * size) {
 			int tailSegments = g.discrete(Gene.TAIL_SEGMENTS, 1, 6);
 			// Floored like the limbs. A tail is long and finely tapered, so it is the geometry most
@@ -159,13 +277,18 @@ public final class BodyPlanBuilder {
 			// its own terms; the blend-relative one matters because BLEND_SMOOTHNESS ranges wider
 			// than the tail thickness gene does, so a heavily-blended creature could otherwise have
 			// its entire tail — base included, not just the tip — absorbed into the smooth union.
+			// Flat and finned tails thin the capsule first: a wide blob unioned with a
+			// full-thickness round capsule gives a round tail with side flanges, not a flat one.
 			float tailRadius = Math.max(
-					Math.max(girth * g.range(Gene.TAIL_THICKNESS, 0.18f, 0.60f), size * 0.045f),
+					Math.max(girth * g.range(Gene.TAIL_THICKNESS, 0.18f, 0.60f) * tailShape.capsuleScale(),
+							size * 0.045f),
 					blendRadius * 1.15f);
 			float tailTip = Math.max(tailRadius * TAIL_TIP_TAPER, blendRadius * 1.05f);
 			float tailSeg = tailLength / tailSegments;
-			int tailParent = rootBone;
-			Vector3f tCursor = new Vector3f(spinePts[0]);
+			// On a segmented body the tail grows off the back of the abdomen rather than the
+			// pelvis, which is what turns a spider into a scorpion.
+			int tailParent = segmented ? abdomenBone : rootBone;
+			Vector3f tCursor = new Vector3f(segmented ? abdomenRear : spinePts[0]);
 			for (int i = 0; i < tailSegments; i++) {
 				// Droop increases along the tail so it hangs rather than sticking out rigidly.
 				float droop = MathX.lerp(0.05f, 0.55f, (float) i / Math.max(1, tailSegments - 1));
@@ -177,32 +300,70 @@ public final class BodyPlanBuilder {
 				float r1 = MathX.lerp(tailRadius, tailTip, (float) (i + 1) / tailSegments);
 				bones.add(new BoneDef("tail" + i, tailParent, new Vector3f(tCursor), next, r0, r1, Feature.TAIL, true));
 				tailParent = bones.size() - 1;
+				addTailShape(g, blobs, tailShape, tailParent, tCursor, next, (r0 + r1) * 0.5f,
+						i == tailSegments - 1);
 				tCursor = next;
 			}
 		}
 
 		// ---- legs -------------------------------------------------------------
-		int legPairs = g.discrete(Gene.LEG_PAIRS, 1, 4);
+		// legPairs and rearmostU are settled earlier, alongside leg thickness: the three are
+		// mutually constrained and have to be reconciled before the blend radius is derived.
 		int legSegments = g.discrete(Gene.LEG_SEGMENTS, 2, 3);
 		float splay = g.range(Gene.LEG_SPLAY, 0.05f, 0.70f);
 		float footSize = size * g.range(Gene.FOOT_SIZE, 0.04f, 0.17f);
 		float digitigrade = g.raw(Gene.DIGITIGRADE);
 		float pairPhase = g.range(Gene.GAIT_OFFSET, 0f, 0.5f);
+		// Biased hard toward zero. A mid joint riding above the hip is the arachnid tell, and a
+		// trait that the median creature has is not a tell — it is just the default silhouette.
+		float legArch = g.biased(Gene.LEG_ARCH, 0f, 1f, 2.6f);
+
+		// Feet fan forward and back along the body instead of every leg reaching straight out to
+		// the side. Hip spacing alone only separates the limbs where they meet the body; parallel
+		// legs stay exactly as close for their whole length, so the fan is what keeps them apart
+		// out at the ankle where they are longest and most visible. It is also just what a
+		// many-legged animal does — the front pair reaches ahead, the rear pair trails behind.
+		float fanReach = legPairs == 1 ? 0f
+				: Math.max(hipHeight * 0.35f, LEG_PITCH * 0.55f * legThickness * (legPairs - 1));
 
 		for (int pair = 0; pair < legPairs; pair++) {
 			// u = 1 at the shoulder, decreasing toward the pelvis.
-			float u = legPairs == 1 ? 0.4f : MathX.lerp(0.88f, 0.12f, (float) pair / (legPairs - 1));
+			float u = legPairs == 1 ? 0.4f
+					: MathX.lerp(FOREMOST_LEG_U, rearmostU, (float) pair / (legPairs - 1));
+			// +1 for the front-most pair through to -1 for the rear-most.
+			float fanBias = legPairs == 1 ? 0f : 1f - 2f * ((float) pair / (legPairs - 1));
 			int attach = MathX.clamp((int) (u * spineSegments), 0, spineSegments - 1);
 			Vector3f spineAt = sampleSpine(spinePts, u);
 			float rAt = torsoRadius(girth, taper, u);
 
 			for (int s = -1; s <= 1; s += 2) {
+				// Arched limbs stand wider. A leg that tents up over the body has to put its foot
+				// further out to reach the ground at all, and the sprawl is half of what makes an
+				// arachnid read as one — the same span on straight legs is just a tall animal.
+				float stance = splay * (1f + 0.85f * legArch);
 				Vector3f hip = new Vector3f(s * rAt * 0.85f, spineAt.y - rAt * 0.35f, spineAt.z);
-				Vector3f foot = new Vector3f(hip.x + s * (rAt * 0.25f + hipHeight * splay), 0f, hip.z);
+				Vector3f foot = new Vector3f(hip.x + s * (rAt * 0.25f + hipHeight * stance), 0f,
+						hip.z + fanBias * fanReach);
 
-				// Front limbs bend backward at the elbow, hind limbs forward at the knee.
+				// Front limbs bend backward at the elbow, hind limbs forward at the knee. The
+				// arch component lifts the bend out of the horizontal plane, so the knee rises
+				// above the hip and the leg reaches down to the foot from a high corner.
+				//
+				// That opposed convention is right for a quadruped and actively wrong for an
+				// arachnid: it bows the middle pairs of a many-legged creature *toward* each
+				// other, and at the bend scale a high arch asks for, the two bulges meet in mid
+				// air. Arched limbs therefore bow the way their foot already fans — knee forward
+				// on the legs reaching forward — so the whole set radiates instead of converging.
+				// Past two pairs the opposed convention has nothing to describe anyway: "elbow
+				// versus knee" is a fact about quadrupeds, and a creature with six or eight legs
+				// has no forelimbs and hindlimbs, just legs. Those always radiate.
 				boolean front = pair < legPairs / 2f;
-				Vector3f pole = new Vector3f(s * 0.2f, 0f, front ? -1f : 1f).normalize();
+				float radial = Math.max(MathX.clamp01(legArch), legPairs > 2 ? 0.75f : 0f);
+				float poleZ = MathX.lerp(front ? -1f : 1f, fanBias, radial);
+				Vector3f pole = new Vector3f(s * (0.2f + 0.7f * legArch), legArch * 1.5f, poleZ);
+				// A pole that has collapsed to nothing gives the solver no bend hint at all.
+				if (pole.lengthSquared() < 1e-6f) pole.set(s * 0.2f, 0f, front ? -1f : 1f);
+				pole.normalize();
 
 				float phase = (pair * pairPhase + (s > 0 ? 0.5f : 0f)) % 1f;
 				// Every limb gets its own blend group, left and right included — a creature's own
@@ -210,7 +371,8 @@ public final class BodyPlanBuilder {
 				int group = nextBlendGroup++;
 				LimbChain chain = buildLimb(bones, "leg" + pair + (s > 0 ? "R" : "L"), attach, hip, foot, pole,
 						legSegments, legThickness,
-						legSegments >= 3 ? digitigrade : 0f, s, pair, phase, true, group);
+						legSegments >= 3 ? digitigrade : 0f, s, pair, phase, true, group,
+						1f + 2.4f * legArch);
 				legs.add(chain);
 
 				// Toe geometry: a short forward-pointing bone parented to the last leg bone.
@@ -242,7 +404,7 @@ public final class BodyPlanBuilder {
 							shoulder.y - armLength * 0.8f, shoulder.z + armLength * 0.45f);
 					Vector3f pole = new Vector3f(s * 0.25f, 0f, -1f).normalize();
 					arms.add(buildLimb(bones, "arm" + pair + (s > 0 ? "R" : "L"), attach, shoulder, hand, pole,
-							2, armThickness, 0f, s, pair, 0f, false, nextBlendGroup++));
+							2, armThickness, 0f, s, pair, 0f, false, nextBlendGroup++, 1f));
 				}
 			}
 		}
@@ -262,12 +424,41 @@ public final class BodyPlanBuilder {
 		}
 
 		if (g.expresses(Gene.ARMOR_COVERAGE, 0.42f)) {
-			// Dorsal armor plates along flanks and shoulders
-			float plateSize = girth * 0.55f;
-			for (int i = 0; i < spineSegments; i += 2) {
-				Vector3f pos = new Vector3f(0f, spinePts[i].y + spineRadii[i] * 0.85f, spinePts[i].z);
-				blobs.add(new SdfBlob(Math.min(i, spineSegments - 1), pos,
-						new Vector3f(plateSize * 0.9f, plateSize * 0.35f, plateSize * 0.7f), Feature.PLATE, false));
+			// A continuous armoured back rather than a row of discs. Three things make the
+			// difference: one blob per spine segment instead of every other one, each long enough
+			// along Z to overlap its neighbours, and centres sunk most of the way into the body so
+			// what surfaces is a broad thickening of the hide. Placed proud of the back and spaced
+			// out, the same blobs read as dinner plates glued to the spine.
+			float segmentLength = torsoLength / spineSegments;
+			for (int i = 0; i < spineSegments; i++) {
+				float u = (i + 0.5f) / spineSegments;
+				Vector3f at = sampleSpine(spinePts, u);
+				float r = torsoRadius(girth, taper, u);
+				blobs.add(new SdfBlob(Math.min(i, spineSegments - 1),
+						new Vector3f(0f, at.y + r * 0.42f, at.z),
+						new Vector3f(r * 0.95f, r * 0.58f, segmentLength * 0.80f),
+						Feature.PLATE, false));
+			}
+		}
+
+		// ---- light organs -----------------------------------------------------
+		// Discrete photophores down the flanks, for the strongly bioluminescent only. Weaker
+		// glow genotypes light existing geometry instead (see BodyPalette / Pattern) rather than
+		// growing organs, so the trait fades in smoothly instead of popping into existence.
+		if (g.expresses(Gene.BIOLUMINESCENCE, 0.78f)) {
+			// Set into the flank rather than stuck onto it. Sunk this far the pod barely changes
+			// the silhouette, but it still wins the nearest-part test that decides vertex colour,
+			// so what the player sees is a glowing patch in the skin rather than a bead on a
+			// string. Photophores are part of the animal; they should not read as jewellery.
+			float podRadius = Math.max(girth * 0.16f, blendRadius * 1.2f);
+			for (int i = 1; i < spineSegments; i++) {
+				float u = (float) i / spineSegments;
+				float r = torsoRadius(girth, taper, u);
+				for (int s = -1; s <= 1; s += 2) {
+					blobs.add(new SdfBlob(Math.min(i, spineSegments - 1),
+							new Vector3f(s * r * 0.68f, spinePts[i].y - r * 0.18f, spinePts[i].z),
+							new Vector3f(podRadius), Feature.GLOW, false));
+				}
 			}
 		}
 
@@ -371,7 +562,7 @@ public final class BodyPlanBuilder {
 
 		return new BodyPlan(g, boneArray, blobArray,
 				legs.toArray(new LimbChain[0]), arms.toArray(new LimbChain[0]),
-				new BodyPalette(g), blendRadius, rootBone, headBone, hipHeight,
+				new BodyPalette(g), blendRadius, rootBone, headBone, jawBone, hipHeight,
 				min, max, bodyLength, mass, minLimbRadius);
 	}
 
@@ -399,9 +590,13 @@ public final class BodyPlanBuilder {
 	                                   Vector3f origin, Vector3f effector, Vector3f pole,
 	                                   int segments, float thickness, float sCurve,
 	                                   int side, int pairIndex, float phase, boolean weightBearing,
-	                                   int blendGroup) {
+	                                   int blendGroup, float bendScale) {
 		float reach = origin.distance(effector);
-		float bend = reach * (LIMB_SLACK - 1f) * 2.2f;
+		// The default bulge is only enough to give IK somewhere to bend. An arachnid leg needs
+		// far more than that — the mid joint has to clear the hip, not merely bow slightly
+		// toward the pole — so arched limbs scale the control-point offset up rather than just
+		// tilting the pole, which on its own moves the joint by a few percent of the reach.
+		float bend = reach * (LIMB_SLACK - 1f) * 2.2f * bendScale;
 
 		Vector3f c1 = new Vector3f(origin).fma(bend, pole);
 		Vector3f c2 = new Vector3f(effector).fma(bend * (1f - 2f * sCurve), pole);
@@ -473,12 +668,15 @@ public final class BodyPlanBuilder {
 				new Vector3f(headSize * 0.58f * bulge, headSize * 0.55f * bulge, headSize * 0.62f * bulge),
 				Feature.HEAD, false));
 
-		// Jaw: mass slung under the front of the head.
-		float jaw = g.range(Gene.JAW_SIZE, 0.35f, 1.15f);
-		Vector3f jawPos = new Vector3f(headStart).lerp(headEnd, 0.68f).fma(-headSize * 0.30f * jaw, trueUp);
-		blobs.add(new SdfBlob(headBone, jawPos,
-				new Vector3f(headSize * 0.34f * jaw, headSize * 0.26f * jaw, headSize * 0.55f * jaw),
-				Feature.JAW, false));
+		// Upper jaw: the muzzle above the mouth line, and part of the skull. The mandible below it
+		// is a hinged bone of its own so that it can actually move — see the jaw section of build.
+		float muzzle = g.range(Gene.JAW_SIZE, 0.35f, 1.15f);
+		Vector3f muzzlePos = new Vector3f(headStart).lerp(headEnd, 0.66f)
+				.fma(-headSize * 0.05f * muzzle, trueUp);
+		blobs.add(new SdfBlob(headBone, muzzlePos,
+				new Vector3f(headSize * 0.30f * muzzle, headSize * 0.21f * muzzle,
+						headSize * 0.52f * muzzle),
+				Feature.HEAD, false));
 
 		// Head Crest / Hair Tufts
 		if (g.expresses(Gene.FUR_CREST, 0.45f)) {
@@ -488,33 +686,285 @@ public final class BodyPlanBuilder {
 					new Vector3f(hairSize * 0.35f, hairSize * 0.85f, hairSize * 0.6f), Feature.HAIR, false));
 		}
 
-		// Eyes: Standard, Eye Stalks, Compound Eyes, or Multi-pair
-		float eyeStyle = g.raw(Gene.EYE_STYLE);
-		float eyeRoll = g.raw(Gene.EYE_COUNT);
-		int eyePairs = (eyeStyle > 0.82f || eyeRoll > 0.85f) ? 2 : 1;
+		addSnoutDetail(g, blobs, headBone, headStart, headEnd, headDir, right, trueUp, headSize);
+		addFrill(g, blobs, headBone, headStart, headDir, trueUp, headSize);
+		addEars(g, blobs, headBone, headStart, headEnd, right, trueUp, headSize);
+		addHorns(g, blobs, headBone, headStart, headEnd, headDir, right, trueUp, headSize);
+		addEyes(g, blobs, headBone, headStart, headEnd, right, trueUp, headSize);
+	}
+
+	/**
+	 * Adds the blobs that give a tail its cross-section, called once per tail segment.
+	 * {@code last} marks the tip segment, which is where club and fan shapes put their mass.
+	 */
+	private static void addTailShape(Genome g, List<SdfBlob> blobs, TailShape shape, int bone,
+	                                 Vector3f head, Vector3f tail, float radius, boolean last) {
+		if (shape == TailShape.ROUND) return;
+
+		Vector3f mid = new Vector3f(head).lerp(tail, 0.5f);
+		float halfLength = Math.max(head.distance(tail) * 0.5f, radius);
+		float depth = g.range(Gene.TAIL_FIN_DEPTH, 1.35f, 3.10f);
+
+		switch (shape) {
+			case FLAT -> blobs.add(new SdfBlob(bone, mid,
+					new Vector3f(radius * depth, radius * 0.55f, halfLength), Feature.FIN, false));
+			case FIN -> blobs.add(new SdfBlob(bone,
+					new Vector3f(mid).add(0f, radius * depth * 0.30f, 0f),
+					new Vector3f(radius * 0.50f, radius * depth, halfLength), Feature.FIN, false));
+			case CLUB -> {
+				if (last) {
+					blobs.add(new SdfBlob(bone, new Vector3f(tail),
+							new Vector3f(radius * 2.10f, radius * 1.85f, radius * 2.10f),
+							Feature.PLATE, false));
+				}
+			}
+			case FAN -> {
+				if (last) {
+					blobs.add(new SdfBlob(bone, new Vector3f(mid).lerp(tail, 0.65f),
+							new Vector3f(radius * depth * 1.15f, radius * 0.50f, halfLength * 1.40f),
+							Feature.FIN, false));
+				}
+			}
+			default -> {
+			}
+		}
+	}
+
+	/** Beak sheath and tusks — the two ways a jaw can advertise what it eats. */
+	private static void addSnoutDetail(Genome g, List<SdfBlob> blobs, int headBone,
+	                                   Vector3f headStart, Vector3f headEnd, Vector3f headDir,
+	                                   Vector3f right, Vector3f trueUp, float headSize) {
+		if (g.expresses(Gene.SNOUT_TYPE, 0.68f)) {
+			float beak = headSize * g.range(Gene.SNOUT_TYPE, 0.50f, 1.05f);
+			// Two beads: the base takes the width of the jaw, the tip pinches down to a point.
+			blobs.add(new SdfBlob(headBone, new Vector3f(headEnd).fma(beak * 0.18f, headDir),
+					new Vector3f(headSize * 0.20f, headSize * 0.22f, beak * 0.34f), Feature.BEAK, false));
+			blobs.add(new SdfBlob(headBone,
+					new Vector3f(headEnd).fma(beak * 0.52f, headDir).fma(-headSize * 0.06f, trueUp),
+					new Vector3f(headSize * 0.10f, headSize * 0.11f, beak * 0.26f), Feature.BEAK, false));
+		}
+
+		if (g.expresses(Gene.TUSKS, 0.62f)) {
+			float tuskLength = headSize * g.range(Gene.TUSKS, 0.40f, 1.05f);
+			float tuskRadius = headSize * 0.105f;
+			for (int s = -1; s <= 1; s += 2) {
+				Vector3f base = new Vector3f(headStart).lerp(headEnd, 0.74f)
+						.fma(s * headSize * 0.24f, right)
+						.fma(-headSize * 0.20f, trueUp);
+				// Three beads curving forward then up, so a tusk sweeps rather than spikes.
+				for (int i = 0; i < 3; i++) {
+					float t = (i + 1) / 3f;
+					Vector3f p = new Vector3f(base)
+							.fma(tuskLength * t, headDir)
+							.fma(tuskLength * 0.50f * t * t, trueUp);
+					blobs.add(new SdfBlob(headBone, p,
+							new Vector3f(tuskRadius * (1f - 0.22f * i)), Feature.TUSK, false));
+				}
+			}
+		}
+	}
+
+	/** A neck frill: a thin disc standing up behind the skull. */
+	private static void addFrill(Genome g, List<SdfBlob> blobs, int headBone, Vector3f headStart,
+	                             Vector3f headDir, Vector3f trueUp, float headSize) {
+		if (!g.expresses(Gene.FRILL, 0.62f)) return;
+		float frill = headSize * g.range(Gene.FRILL, 1.15f, 2.50f);
+		Vector3f pos = new Vector3f(headStart)
+				.fma(-headSize * 0.12f, headDir)
+				.fma(headSize * 0.30f, trueUp);
+		blobs.add(new SdfBlob(headBone, pos,
+				new Vector3f(frill * 0.85f, frill * 0.78f, headSize * 0.15f), Feature.FRILL, false));
+	}
+
+	private static void addEars(Genome g, List<SdfBlob> blobs, int headBone, Vector3f headStart,
+	                            Vector3f headEnd, Vector3f right, Vector3f trueUp, float headSize) {
+		EarType type = EarType.of(g);
+		if (type == EarType.NONE) return;
+		float ear = headSize * g.range(Gene.EAR_SIZE, 0.35f, 1.20f);
+
+		for (int s = -1; s <= 1; s += 2) {
+			Vector3f anchor = new Vector3f(headStart).lerp(headEnd, 0.18f)
+					.fma(s * headSize * 0.42f, right)
+					.fma(headSize * 0.26f, trueUp);
+			switch (type) {
+				case ROUND -> blobs.add(new SdfBlob(headBone, anchor,
+						new Vector3f(ear * 0.16f, ear * 0.52f, ear * 0.48f), Feature.EAR, false));
+				case UPRIGHT -> {
+					// Two beads so the ear tapers to a point instead of reading as a paddle.
+					for (int i = 0; i < 2; i++) {
+						Vector3f p = new Vector3f(anchor)
+								.fma(ear * (0.45f + 0.60f * i), trueUp)
+								.fma(s * ear * 0.10f * i, right);
+						blobs.add(new SdfBlob(headBone, p,
+								new Vector3f(ear * 0.14f, ear * (0.45f - 0.14f * i), ear * (0.26f - 0.08f * i)),
+								Feature.EAR, false));
+					}
+				}
+				case DROOPING -> {
+					for (int i = 0; i < 2; i++) {
+						Vector3f p = new Vector3f(anchor)
+								.fma(-ear * (0.35f + 0.55f * i), trueUp)
+								.fma(s * ear * 0.14f, right);
+						blobs.add(new SdfBlob(headBone, p,
+								new Vector3f(ear * 0.13f, ear * 0.42f, ear * 0.30f), Feature.EAR, false));
+					}
+				}
+				case FANNED -> blobs.add(new SdfBlob(headBone,
+						new Vector3f(anchor).fma(s * ear * 0.38f, right),
+						new Vector3f(ear * 0.70f, ear * 0.52f, ear * 0.12f), Feature.EAR, false));
+				default -> {
+				}
+			}
+		}
+	}
+
+	/**
+	 * Horns, antlers and casques. All of them are chains of tapering beads attached to the head
+	 * bone, so they follow head tracking for free and cost nothing in the skeleton.
+	 * <p>
+	 * {@link HornType#NONE} takes the bottom 40% of the locus deliberately: a fauna in which every
+	 * animal is horned reads as noise, and the structures only mean something if they are rare.
+	 */
+	private static void addHorns(Genome g, List<SdfBlob> blobs, int headBone, Vector3f headStart,
+	                             Vector3f headEnd, Vector3f headDir, Vector3f right, Vector3f trueUp,
+	                             float headSize) {
+		HornType type = HornType.of(g);
+		if (type == HornType.NONE) return;
+		float length = headSize * g.range(Gene.HORN_SIZE, 0.40f, 1.75f);
+		float baseRadius = headSize * 0.16f;
+
+		if (type == HornType.NASAL) {
+			growHorn(blobs, headBone,
+					new Vector3f(headStart).lerp(headEnd, 0.80f).fma(headSize * 0.18f, trueUp),
+					new Vector3f(trueUp).fma(0.45f, headDir).normalize(), null,
+					length, baseRadius * 1.30f, 5);
+			return;
+		}
+		if (type == HornType.CREST) {
+			// A blade on the midline: tall, and thin across the skull.
+			int beads = 5;
+			for (int i = 0; i < beads; i++) {
+				float t = i / (float) (beads - 1);
+				float rise = headSize * 0.34f
+						+ length * 0.50f * (float) Math.sin(Math.PI * (0.22f + 0.62f * t));
+				Vector3f p = new Vector3f(headStart).lerp(headEnd, 0.14f + 0.46f * t).fma(rise, trueUp);
+				blobs.add(new SdfBlob(headBone, p,
+						new Vector3f(headSize * 0.09f, length * 0.40f, headSize * 0.28f),
+						Feature.HORN, false));
+			}
+			return;
+		}
+
+		// Paired types. A second, smaller pair behind the first is uncommon but striking.
+		int pairs = g.expresses(Gene.HORN_PAIRS, 0.74f) ? 2 : 1;
+		for (int pair = 0; pair < pairs; pair++) {
+			float along = type == HornType.BROW ? 0.42f - pair * 0.15f : 0.16f + pair * 0.19f;
+			float lateral = type == HornType.BROW ? 0.40f : 0.36f;
+			float scale = 1f - pair * 0.30f;
+
+			for (int s = -1; s <= 1; s += 2) {
+				Vector3f base = new Vector3f(headStart).lerp(headEnd, along)
+						.fma(s * headSize * lateral, right)
+						.fma(headSize * 0.24f, trueUp);
+				Vector3f dir = switch (type) {
+					case BROW -> new Vector3f(trueUp).mul(0.85f).fma(0.55f, headDir)
+							.fma(s * 0.25f, right).normalize();
+					case CURVED -> new Vector3f(trueUp).mul(0.75f).fma(-0.55f, headDir)
+							.fma(s * 0.45f, right).normalize();
+					default -> new Vector3f(trueUp).mul(0.90f).fma(-0.40f, headDir)
+							.fma(s * 0.35f, right).normalize();
+				};
+				// The curl is what separates a ram's horn from a straight spike: the chain is
+				// pulled increasingly off its own axis as it grows.
+				Vector3f curl = type == HornType.CURVED
+						? new Vector3f(headDir).mul(-0.90f).fma(-0.50f, trueUp).normalize()
+						: null;
+
+				growHorn(blobs, headBone, base, dir, curl, length * scale, baseRadius * scale, 5);
+
+				if (type == HornType.ANTLER) {
+					Vector3f tineDir = new Vector3f(dir).fma(s * 0.90f, right)
+							.fma(0.50f, headDir).normalize();
+					Vector3f tineBase = new Vector3f(base).fma(length * 0.45f * scale, dir);
+					growHorn(blobs, headBone, tineBase, tineDir, null,
+							length * 0.50f * scale, baseRadius * 0.60f * scale, 3);
+				}
+			}
+		}
+	}
+
+	/** Lays a tapering chain of beads from {@code base} along {@code dir}, optionally curling. */
+	private static void growHorn(List<SdfBlob> blobs, int bone, Vector3f base, Vector3f dir,
+	                             Vector3f curl, float length, float baseRadius, int beads) {
+		for (int i = 0; i < beads; i++) {
+			float t = (i + 0.5f) / beads;
+			Vector3f p = new Vector3f(base).fma(length * t, dir);
+			if (curl != null) p.fma(length * 0.55f * t * t, curl);
+			// Floored so the tip stays wide enough for the mesher to resolve at all.
+			float r = Math.max(baseRadius * (1f - 0.78f * t), baseRadius * 0.20f);
+			blobs.add(new SdfBlob(bone, p, new Vector3f(r), Feature.HORN, false));
+		}
+	}
+
+	private static void addEyes(Genome g, List<SdfBlob> blobs, int headBone, Vector3f headStart,
+	                            Vector3f headEnd, Vector3f right, Vector3f trueUp, float headSize) {
+		EyeStyle style = EyeStyle.of(g);
 		float eyeRadius = headSize * g.range(Gene.EYE_SIZE, 0.09f, 0.24f);
 		float spacing = g.range(Gene.EYE_SPACING, 0.45f, 0.95f);
 
+		if (style == EyeStyle.CLUSTER) {
+			// Eight eyes in two rows across the front of the face, the outer and lower ones
+			// smaller. This one layout does more to say "arachnid" than the legs do.
+			for (int row = 0; row < 2; row++) {
+				for (int col = 0; col < 2; col++) {
+					float along = 0.30f + row * 0.15f;
+					float lateral = (0.16f + col * 0.30f) * spacing;
+					float scale = (1f - row * 0.22f) * (1f - col * 0.30f);
+					Vector3f base = new Vector3f(headStart).lerp(headEnd, along)
+							.fma(headSize * (0.24f - row * 0.10f), trueUp);
+					for (int s = -1; s <= 1; s += 2) {
+						blobs.add(new SdfBlob(headBone,
+								new Vector3f(base).fma(s * headSize * lateral, right),
+								new Vector3f(eyeRadius * 1.15f * scale), Feature.EYE, false));
+					}
+				}
+			}
+			return;
+		}
+
+		// Every other style can still run to a second pair, which is how a six-eyed creature
+		// that is not an arachnid happens.
+		int eyePairs = g.expresses(Gene.EYE_COUNT, 0.85f) ? 2 : 1;
 		for (int i = 0; i < eyePairs; i++) {
 			float along = 0.30f + i * 0.16f;
 			Vector3f base = new Vector3f(headStart).lerp(headEnd, along).fma(headSize * 0.18f, trueUp);
 			for (int s = -1; s <= 1; s += 2) {
 				Vector3f pos = new Vector3f(base).fma(s * headSize * 0.42f * spacing, right);
-				
-				if (eyeStyle >= 0.30f && eyeStyle < 0.60f) {
-					// Eye Stalks: Extruded stalk from head to eye bulb
-					Vector3f stalkMid = new Vector3f(pos).fma(headSize * 0.20f, trueUp);
-					Vector3f eyeBulb = new Vector3f(pos).fma(headSize * 0.40f, trueUp);
-					blobs.add(new SdfBlob(headBone, stalkMid,
-							new Vector3f(eyeRadius * 0.45f, headSize * 0.22f, eyeRadius * 0.45f), Feature.EYE_STALK, false));
-					blobs.add(new SdfBlob(headBone, eyeBulb, new Vector3f(eyeRadius * 1.1f), Feature.EYE, false));
-				} else if (eyeStyle >= 0.60f && eyeStyle < 0.85f) {
-					// Compound Eyes: Large faceted dome eyes
-					Vector3f compoundRadii = new Vector3f(eyeRadius * 1.6f, eyeRadius * 1.4f, eyeRadius * 2.1f);
-					blobs.add(new SdfBlob(headBone, pos, compoundRadii, Feature.EYE, false));
-				} else {
-					// Standard Eyes
-					blobs.add(new SdfBlob(headBone, pos, new Vector3f(eyeRadius), Feature.EYE, false));
+				switch (style) {
+					case STALKED -> {
+						Vector3f stalkMid = new Vector3f(pos).fma(headSize * 0.20f, trueUp);
+						Vector3f bulb = new Vector3f(pos).fma(headSize * 0.40f, trueUp);
+						blobs.add(new SdfBlob(headBone, stalkMid,
+								new Vector3f(eyeRadius * 0.45f, headSize * 0.22f, eyeRadius * 0.45f),
+								Feature.EYE_STALK, false));
+						blobs.add(new SdfBlob(headBone, bulb,
+								new Vector3f(eyeRadius * 1.10f), Feature.EYE, false));
+					}
+					case COMPOUND -> blobs.add(new SdfBlob(headBone, pos,
+							new Vector3f(eyeRadius * 1.60f, eyeRadius * 1.40f, eyeRadius * 2.10f),
+							Feature.EYE, false));
+					case WIDE -> blobs.add(new SdfBlob(headBone, pos,
+							new Vector3f(eyeRadius * 1.25f, eyeRadius * 0.72f, eyeRadius * 1.55f),
+							Feature.EYE, false));
+					case HOODED -> {
+						blobs.add(new SdfBlob(headBone, pos, new Vector3f(eyeRadius), Feature.EYE, false));
+						// The brow is the whole point: without it a hooded eye is just a small one.
+						blobs.add(new SdfBlob(headBone, new Vector3f(pos).fma(eyeRadius * 1.15f, trueUp),
+								new Vector3f(eyeRadius * 0.85f, eyeRadius * 0.45f, eyeRadius * 1.45f),
+								Feature.PLATE, false));
+					}
+					default -> blobs.add(new SdfBlob(headBone, pos,
+							new Vector3f(eyeRadius), Feature.EYE, false));
 				}
 			}
 		}

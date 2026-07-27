@@ -22,8 +22,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  * while a bake is in flight and the renderer simply skips that creature for a frame or two.
  */
 public final class GenomeMeshCache {
-	/** Distinct (genome, LOD) meshes held before eviction begins. */
-	private static final int MAX_ENTRIES = 384;
+	/**
+	 * Distinct (genome, LOD) meshes held before eviction begins. Raised by the higher quality
+	 * presets: holding more creatures on screen at fine detail is pointless if the cache is too
+	 * small to keep their meshes, since they then rebake continuously as they cycle through it.
+	 */
+	private static volatile int maxEntries = 384;
+
+	public static void setMaxEntries(int entries) {
+		maxEntries = Math.max(32, entries);
+		evictIfNeeded();
+	}
 
 	private record Key(Genome genome, int lod) {
 	}
@@ -79,7 +88,7 @@ public final class GenomeMeshCache {
 	}
 
 	private static void evictIfNeeded() {
-		while (READY.size() > MAX_ENTRIES) {
+		while (READY.size() > maxEntries) {
 			Key evict = ORDER.poll();
 			if (evict == null) break;
 			READY.remove(evict);

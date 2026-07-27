@@ -16,10 +16,10 @@ Nothing about a creature is authored. There are no models, no textures, no anima
 meshed, coloured, and walks with full procedural IK. Taming, saddling, and riding work. Predation,
 diet-based temperament, foraging, and breeding are functional.
 
-**Verified:** compiles clean against Minecraft 1.21.1, and all 47 tests pass — covering genome
+**Verified:** compiles clean against Minecraft 1.21.1, and all 63 tests pass — covering genome
 serialisation, body-plan generation over hundreds of random genomes, bind-pose skinning
-correctness, IK convergence, mesh validity, knee stability, limb separation, and archetype
-coverage.
+correctness, IK convergence, mesh validity, knee stability, limb separation and intersection,
+archetype coverage, ornament reachability, and the hinged jaw.
 
 **Current deployed version:** `primordia-0.1.2.jar` in Modrinth App profile.
 
@@ -214,6 +214,16 @@ The suite fuzzes hundreds of random genomes against the invariants that have no 
 - **`GenomeTest`** — serialisation round-trips, malformed codes degrade to null rather than
   throwing, mutation never escapes [0,1], and offspring really are closer to their parents than to
   strangers.
+- **`JawTest`** — the mandible is a hinged bone parented to the skull, in a blend group of its
+  own, baked slightly ajar so there is a seam to open along, and it swings *down*. The sign of
+  that rotation is one character and a jaw closing up into the braincase looks, from most camera
+  angles, merely odd — so the test measures the hinge in the skull's own frame rather than in
+  world space, where head pitch would swamp it.
+- **`OrnamentTest`** — every horn type, tail shape and glow region is reachable from some genome
+  and meshes. These traits have no invariant of their own to break — a hornless creature is
+  perfectly valid — so the thing worth testing is that no branch of the generator is unreachable,
+  which nothing else in the suite would notice. It also pins the arachnid body plan: eight legs
+  clustered on a front segment, an abdomen behind them, and knees above the hip.
 
 ---
 

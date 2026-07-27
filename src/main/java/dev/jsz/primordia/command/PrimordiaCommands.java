@@ -7,6 +7,13 @@ import com.mojang.brigadier.context.CommandContext;
 import dev.jsz.primordia.genome.Archetype;
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BodyPlanCache;
+import dev.jsz.primordia.body.BoneDef;
+import dev.jsz.primordia.body.EarType;
+import dev.jsz.primordia.body.EyeStyle;
+import dev.jsz.primordia.body.Feature;
+import dev.jsz.primordia.body.HornType;
+import dev.jsz.primordia.body.SdfBlob;
+import dev.jsz.primordia.body.TailShape;
 import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
@@ -61,6 +68,19 @@ public final class PrimordiaCommands {
 																IntegerArgumentType.getInteger(ctx, "count"),
 																StringArgumentType.getString(ctx, "archetype"),
 																LongArgumentType.getLong(ctx, "seed")))))))
+						.then(CommandManager.literal("test")
+								.executes(ctx -> spawnTestGrid(ctx, null, false))
+								.then(CommandManager.literal("reload")
+										.executes(ctx -> spawnTestGrid(ctx, null, true)))
+								// "walk" means walk, not "flip whatever it is doing" — an imperative
+								// that sometimes stops the thing it names is a trap.
+								.then(CommandManager.literal("walk")
+										.executes(ctx -> setTestWalk(ctx, true)))
+								.then(CommandManager.literal("stand")
+										.executes(ctx -> setTestWalk(ctx, false)))
+								.then(CommandManager.argument("seed", LongArgumentType.longArg())
+										.executes(ctx -> spawnTestGrid(ctx,
+												LongArgumentType.getLong(ctx, "seed"), true))))
 						.then(CommandManager.literal("clear")
 								.executes(ctx -> clear(ctx, 32))
 								.then(CommandManager.argument("radius", IntegerArgumentType.integer(1, 256))
@@ -138,6 +158,138 @@ public final class PrimordiaCommands {
 		return spawned;
 	}
 
+	/**
+	 * Where the last test grid was laid out, so {@code reload} can re-roll it without moving it.
+	 * Held in memory only: losing it across a restart just means the next grid is placed at the
+	 * player again, which is the same thing a first {@code /primordia test} does anyway.
+	 */
+	private static Vec3d gridAnchor;
+	private static float gridAnchorYaw;
+	private static net.minecraft.registry.RegistryKey<net.minecraft.world.World> gridAnchorWorld;
+
+	/** The three points on the SIZE locus the test grid samples: runt, median, giant. */
+	private static final float[] TEST_SIZES = {0.12f, 0.50f, 0.92f};
+	private static final String[] TEST_SIZE_NAMES = {"small", "mid", "large"};
+	/** Blocks between neighbouring specimens. Wide enough for a large one not to overlap its row. */
+	private static final double TEST_COLUMN_SPACING = 7.0;
+	private static final double TEST_ROW_SPACING = 6.0;
+	/** How far ahead of the player the near edge of the grid sits. */
+	private static final double TEST_GRID_OFFSET = 8.0;
+
+	/**
+	 * Lays out one specimen of every archetype at three sizes, walking on the spot, in a grid in
+	 * front of the player. Re-running clears the previous grid first, so it is safe to spam while
+	 * iterating on the generator — which is the whole point: comparing a change against the
+	 * previous build is impossible if you cannot get the same set of animals side by side.
+	 * <p>
+	 * A null seed re-rolls; passing one reproduces an exact grid.
+	 */
+	private static int spawnTestGrid(CommandContext<ServerCommandSource> ctx, Long seed, boolean inPlace) {
+		ServerCommandSource source = ctx.getSource();
+		ServerWorld world = source.getWorld();
+
+		// Clear the previous grid wherever it was, so reloading never leaves a stale population
+		// behind to be mistaken for the new one.
+		int removed = 0;
+		for (CreatureEntity old : nearby(source, 128)) {
+			if (old.isPosing()) {
+				old.discard();
+				removed++;
+			}
+		}
+
+		// Reloading re-rolls the specimens without moving the exhibit. Laying the new set down at
+		// wherever the player happens to be standing means every reload is viewed from a different
+		// angle and distance, which is precisely what you cannot afford when the point is to
+		// compare one set against the last.
+		boolean reuse = inPlace && gridAnchor != null && gridAnchorWorld == world.getRegistryKey();
+		Vec3d origin = reuse ? gridAnchor : source.getPosition();
+		float yaw = reuse ? gridAnchorYaw : source.getRotation().y;
+		gridAnchor = origin;
+		gridAnchorYaw = yaw;
+		gridAnchorWorld = world.getRegistryKey();
+
+		long actualSeed = seed == null ? System.nanoTime() : seed;
+		Random random = new Random(actualSeed);
+
+		double forwardX = -Math.sin(Math.toRadians(yaw));
+		double forwardZ = Math.cos(Math.toRadians(yaw));
+		double rightX = -forwardZ;
+		double rightZ = forwardX;
+		// Specimens face the player rather than away.
+		float facing = yaw + 180f;
+
+		int spawned = 0;
+		for (int row = 0; row < Archetype.VALUES.length; row++) {
+			Archetype archetype = Archetype.VALUES[row];
+			for (int col = 0; col < TEST_SIZES.length; col++) {
+				// One genome per cell, then the size locus is overwritten so the three in a row
+				// are the same animal at three scales rather than three unrelated ones.
+				Genome genome = archetype.create(random).with(Gene.SIZE, TEST_SIZES[col]);
+
+				CreatureEntity creature = PrimordiaEntities.CREATURE.create(world);
+				if (creature == null) continue;
+
+				double along = TEST_GRID_OFFSET + row * TEST_ROW_SPACING;
+				double across = (col - (TEST_SIZES.length - 1) / 2.0) * TEST_COLUMN_SPACING;
+				double x = origin.x + forwardX * along + rightX * across;
+				double z = origin.z + forwardZ * along + rightZ * across;
+
+				creature.refreshPositionAndAngles(x, origin.y, z, facing, 0f);
+				creature.setGenome(genome);
+				creature.setCustomName(Text.literal(
+						archetype.name().toLowerCase() + " · " + TEST_SIZE_NAMES[col]));
+				creature.setCustomNameVisible(true);
+				world.spawnEntity(creature);
+				// After spawning: setPosing stops the navigator, which has to exist first.
+				creature.setPosing(true);
+				spawned++;
+			}
+		}
+
+		int finalSpawned = spawned;
+		int finalRemoved = removed;
+		source.sendFeedback(() -> Text.literal(String.format(
+						"Test grid: %d specimens (%d archetypes × %d sizes), cleared %d — seed %d",
+						finalSpawned, Archetype.VALUES.length, TEST_SIZES.length,
+						finalRemoved, actualSeed))
+				.formatted(Formatting.AQUA), false);
+		source.sendFeedback(() -> Text.literal("  reload re-rolls in place · walk / stand · "
+				+ "/primordia test " + actualSeed + " restores this set")
+				.formatted(Formatting.DARK_GRAY), false);
+		return spawned;
+	}
+
+	/**
+	 * Starts or stops the walk cycle on every specimen in the test grid. A null {@code walking}
+	 * flips whatever the grid is currently doing.
+	 * <p>
+	 * Worth having both states: a walk cycle is what you want for judging gait and foot placement,
+	 * and a still pose is what you want for judging silhouette, proportions and where the mesh
+	 * creases — each hides problems that the other makes obvious.
+	 */
+	private static int setTestWalk(CommandContext<ServerCommandSource> ctx, boolean walking) {
+		ServerCommandSource source = ctx.getSource();
+		List<CreatureEntity> posed = nearby(source, 128).stream()
+				.filter(CreatureEntity::isPosing)
+				.toList();
+
+		if (posed.isEmpty()) {
+			source.sendError(Text.literal("No test grid nearby — run /primordia test first"));
+			return 0;
+		}
+
+		for (CreatureEntity creature : posed) {
+			creature.setPoseWalking(walking);
+		}
+
+		source.sendFeedback(() -> Text.literal(walking
+						? "Test grid walking (" + posed.size() + " specimens)"
+						: "Test grid standing (" + posed.size() + " specimens)")
+				.formatted(Formatting.AQUA), false);
+		return posed.size();
+	}
+
 	private static int clear(CommandContext<ServerCommandSource> ctx, int radius) {
 		ServerCommandSource source = ctx.getSource();
 		List<CreatureEntity> found = nearby(source, radius);
@@ -175,8 +327,45 @@ public final class PrimordiaCommands {
 				"  diet %.2f · speed %.2f · aggression %.2f · social %.2f · mutability %.2f",
 				genome.raw(Gene.DIET), genome.raw(Gene.SPEED), genome.raw(Gene.AGGRESSION),
 				genome.raw(Gene.SOCIABILITY), genome.raw(Gene.MUTABILITY))), false);
+		source.sendFeedback(() -> Text.literal("  " + describeAnatomy(genome, plan))
+				.formatted(Formatting.GRAY), false);
 		source.sendFeedback(() -> Text.literal("  " + genome.encode()).formatted(Formatting.DARK_GRAY), false);
 		return 1;
+	}
+
+	/**
+	 * One line naming the ornament traits the creature actually expresses. Absent traits are
+	 * omitted rather than printed as "none", so the line reads as a description of this animal
+	 * instead of a checklist that is mostly empty.
+	 */
+	private static String describeAnatomy(Genome genome, BodyPlan plan) {
+		StringBuilder out = new StringBuilder();
+		out.append(EyeStyle.of(genome).name().toLowerCase()).append(" eyes");
+
+		HornType horns = HornType.of(genome);
+		if (horns != HornType.NONE) out.append(" · ").append(horns.name().toLowerCase()).append(" horns");
+
+		EarType ears = EarType.of(genome);
+		if (ears != EarType.NONE) out.append(" · ").append(ears.name().toLowerCase()).append(" ears");
+
+		boolean hasTail = false;
+		for (BoneDef bone : plan.bones) {
+			if (bone.feature == Feature.TAIL) hasTail = true;
+		}
+		if (hasTail) out.append(" · ").append(TailShape.of(genome).name().toLowerCase()).append(" tail");
+
+		for (SdfBlob blob : plan.blobs) {
+			if (blob.feature() == Feature.ABDOMEN) {
+				out.append(" · segmented body");
+				break;
+			}
+		}
+		if (plan.palette.glowStrength > 0f) {
+			out.append(String.format(" · %s glow %.0f%%",
+					plan.palette.glowRegion.name().toLowerCase().replace('_', ' '),
+					plan.palette.glowStrength * 100f));
+		}
+		return out.toString();
 	}
 
 	private static int breed(CommandContext<ServerCommandSource> ctx) {

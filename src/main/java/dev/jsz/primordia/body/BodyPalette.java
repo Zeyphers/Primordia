@@ -27,6 +27,13 @@ public final class BodyPalette {
 	/** Strength of the dark-back / pale-belly gradient. */
 	public final float countershading;
 
+	/** Emitted colour of a bioluminescent creature. Meaningless when {@link #glowStrength} is 0. */
+	public final Vector3f glow;
+	/** 0 for a creature that does not glow at all; otherwise how brightly it does. */
+	public final float glowStrength;
+	/** Which parts light up. Only consulted when {@link #glowStrength} is above zero. */
+	public final GlowRegion glowRegion;
+
 	public BodyPalette(Genome genome) {
 		float hue = genome.raw(Gene.HUE);
 		// Secondary hue sits somewhere on the wheel relative to the primary, so
@@ -46,6 +53,15 @@ public final class BodyPalette {
 		this.patternScale = genome.biased(Gene.PATTERN_SCALE, 0.8f, 9f, 1.6f);
 		this.patternContrast = genome.range(Gene.PATTERN_CONTRAST, 0f, 0.95f);
 		this.countershading = genome.range(Gene.COUNTERSHADING, 0f, 0.85f);
+
+		// Bioluminescence is a threshold trait: below the cut a creature does not glow at all,
+		// and above it the strength ramps from faint to full rather than switching on at maximum.
+		float lumen = genome.raw(Gene.BIOLUMINESCENCE);
+		this.glowStrength = lumen < 0.55f ? 0f : MathX.remap(lumen, 0.55f, 1f, 0.35f, 1f);
+		this.glowRegion = GlowRegion.VALUES[
+				genome.discrete(Gene.GLOW_REGION, 0, GlowRegion.VALUES.length - 1)];
+		// Always saturated and bright: a dim, desaturated "glow" just reads as a stain.
+		this.glow = hsvToRgb(genome.raw(Gene.GLOW_HUE), 0.78f, 1f, new Vector3f());
 	}
 
 	public static Vector3f hsvToRgb(float h, float s, float v, Vector3f dest) {

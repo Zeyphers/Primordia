@@ -15,6 +15,9 @@
 		],
 		"client": [
 			"dev.jsz.primordia.PrimordiaClient"
+		],
+		"modmenu": [
+			"dev.jsz.primordia.client.config.PrimordiaModMenu"
 		]
 	},
 	"mixins": [
@@ -25,5 +28,8 @@
 		"minecraft": "~1.21.1",
 		"java": ">=21",
 		"fabric-api": "*"
+	},
+	"suggests": {
+		"modmenu": "*"
 	}
 }

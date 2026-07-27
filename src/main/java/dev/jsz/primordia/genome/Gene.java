@@ -98,7 +98,37 @@ public enum Gene {
 	SPINE_STYLE(0.5f),
 	FUR_CREST(0.5f),
 	ARMOR_COVERAGE(0.5f),
-	EYE_STYLE(0.5f);
+	EYE_STYLE(0.5f),
+
+	// ---- cranial ornament -------------------------------------------------
+	// Horn type is structural (a lineage keeps its horns); horn size is a display trait and
+	// drifts fast, which is what lets sexual selection run away with it over generations.
+	HORN_TYPE(0.30f),
+	HORN_SIZE(0.65f),
+	HORN_PAIRS(0.18f),
+	EAR_TYPE(0.40f),
+	EAR_SIZE(0.6f),
+	FRILL(0.45f),
+	SNOUT_TYPE(0.35f),
+	TUSKS(0.4f),
+
+	// ---- tail shape -------------------------------------------------------
+	TAIL_SHAPE(0.30f),
+	TAIL_FIN_DEPTH(0.55f),
+
+	// ---- bioluminescence --------------------------------------------------
+	BIOLUMINESCENCE(0.45f),
+	GLOW_REGION(0.55f),
+	GLOW_HUE(0.85f),
+
+	// ---- body architecture ------------------------------------------------
+	/** 0 = one continuous trunk, 1 = cephalothorax and abdomen joined by a narrow waist. */
+	BODY_SEGMENTATION(0.12f),
+	ABDOMEN_SIZE(0.4f),
+	/** 0 = legs spread evenly along the spine, 1 = all pairs packed onto the front segment. */
+	LEG_CLUSTERING(0.18f),
+	/** How far the mid joint rides above the hip. High values give the arachnid stance. */
+	LEG_ARCH(0.25f);
 
 	public static final Gene[] VALUES = values();
 	public static final int COUNT = VALUES.length;

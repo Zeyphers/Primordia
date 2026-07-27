@@ -19,6 +19,11 @@ public final class MeshData {
 	public final float[] normals;
 	/** 3 floats per vertex, linear RGB in [0,1]. */
 	public final float[] colors;
+	/**
+	 * 1 float per vertex in [0,1]: how much this vertex ignores world light and emits its own.
+	 * Zero for every vertex on a creature that is not bioluminescent.
+	 */
+	public final float[] emissive;
 	/** 4 bone indices per vertex. */
 	public final int[] boneIndices;
 	/** 4 weights per vertex, summing to 1. */
@@ -32,12 +37,13 @@ public final class MeshData {
 	/** Bind-pose bounding box, used for frustum culling and collision box sizing. */
 	public final float minX, minY, minZ, maxX, maxY, maxZ;
 
-	public MeshData(float[] positions, float[] normals, float[] colors,
+	public MeshData(float[] positions, float[] normals, float[] colors, float[] emissive,
 	                int[] boneIndices, float[] boneWeights, int[] quads,
 	                float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
 		this.positions = positions;
 		this.normals = normals;
 		this.colors = colors;
+		this.emissive = emissive;
 		this.boneIndices = boneIndices;
 		this.boneWeights = boneWeights;
 		this.quads = quads;

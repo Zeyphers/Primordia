@@ -12,7 +12,24 @@ import org.joml.Vector3f;
  * what lets {@link GenomeMeshCache} run it on a worker thread.
  */
 public final class MeshBaker {
+	/**
+	 * How much of each vertex normal comes from the analytic SDF gradient rather than from
+	 * averaged face normals. Exposed as a setting because it is the one knob that visibly trades
+	 * "smooth but softer" against "crisper but faceted", and which of those looks right depends
+	 * on the shader pack doing the lighting.
+	 */
+	private static volatile float gradientWeight = 0.75f;
+
 	private MeshBaker() {
+	}
+
+	/** Set from the client's quality settings; callers must flush the mesh cache afterwards. */
+	public static void setGradientWeight(float weight) {
+		gradientWeight = Math.max(0f, Math.min(1f, weight));
+	}
+
+	public static float gradientWeight() {
+		return gradientWeight;
 	}
 
 	public static MeshData bake(BodyPlan plan, int resolution) {
@@ -22,13 +39,14 @@ public final class MeshBaker {
 
 		int vertexCount = net.vertexCount();
 		if (vertexCount == 0) {
-			return new MeshData(new float[0], new float[0], new float[0], new int[0], new float[0], new int[0],
-					0f, 0f, 0f, 0f, 0f, 0f);
+			return new MeshData(new float[0], new float[0], new float[0], new float[0],
+					new int[0], new float[0], new int[0], 0f, 0f, 0f, 0f, 0f, 0f);
 		}
 
 		float[] positions = net.positions();
 		float[] normals = net.normals();
 		float[] colors = new float[vertexCount * 3];
+		float[] emissive = new float[vertexCount];
 
 		Noise noise = new Noise(plan.genome.seed());
 		Vector3f rgb = new Vector3f();
@@ -39,7 +57,7 @@ public final class MeshBaker {
 			int p = v * 3;
 			float x = positions[p], y = positions[p + 1], z = positions[p + 2];
 			Feature feature = sdf.featureAt(x, y, z);
-			Pattern.colorAt(x, y, z, normals[p], normals[p + 1], normals[p + 2],
+			emissive[v] = Pattern.colorAt(x, y, z, normals[p], normals[p + 1], normals[p + 2],
 					feature, plan.palette, noise, rgb);
 			colors[p] = rgb.x;
 			colors[p + 1] = rgb.y;
@@ -57,8 +75,14 @@ public final class MeshBaker {
 		float[] boneWeights = new float[vertexCount * SkinBinder.MAX_INFLUENCES];
 		SkinBinder.bind(plan, positions, vertexCount, boneIndices, boneWeights);
 
-		// Smooth vertex normals by accumulating area-weighted face normals across connected quads
-		// and blending with the SDF gradient. This eliminates flat-shading facets under Iris / Sodium shaders.
+		// Accumulate area-weighted face normals across the quads sharing each vertex, then blend
+		// them with the SDF gradient.
+		//
+		// The blend is weighted toward the gradient, not away from it. The gradient is the true
+		// normal of the field this mesh approximates, whereas averaged face normals are derived
+		// from the faceted approximation itself and so carry the facets they are meant to hide.
+		// The face term is kept only as a stabiliser: the field has genuine creases where blend
+		// groups meet under a hard minimum, and central differences are noisy right on them.
 		float[] smoothNormals = new float[vertexCount * 3];
 		int[] quads = net.quads();
 		for (int i = 0; i < quads.length; i += 4) {
@@ -85,9 +109,10 @@ public final class MeshBaker {
 			float fnLen = (float) Math.sqrt(fnx * fnx + fny * fny + fnz * fnz);
 			if (fnLen > 1e-6f) {
 				fnx /= fnLen; fny /= fnLen; fnz /= fnLen;
-				float nx = normals[p] * 0.40f + fnx * 0.60f;
-				float ny = normals[p + 1] * 0.40f + fny * 0.60f;
-				float nz = normals[p + 2] * 0.40f + fnz * 0.60f;
+				float g = gradientWeight;
+				float nx = normals[p] * g + fnx * (1f - g);
+				float ny = normals[p + 1] * g + fny * (1f - g);
+				float nz = normals[p + 2] * g + fnz * (1f - g);
 				float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
 				if (len > 1e-6f) {
 					normals[p] = nx / len;
@@ -97,7 +122,7 @@ public final class MeshBaker {
 			}
 		}
 
-		return new MeshData(positions, normals, colors, boneIndices, boneWeights, quads,
+		return new MeshData(positions, normals, colors, emissive, boneIndices, boneWeights, quads,
 				minX, minY, minZ, maxX, maxY, maxZ);
 	}
 
@@ -121,7 +146,7 @@ public final class MeshBaker {
 
 		int needed = (int) Math.ceil(span / (plan.minLimbRadius * 0.9f));
 		// Never below the tier's own resolution, never far above it, never past the ceiling.
-		int ceiling = Math.min(Math.round(requested * 1.8f), LodTier.MAX_RESOLUTION);
+		int ceiling = Math.min(Math.round(requested * 1.8f), LodTier.maxResolution());
 		return Math.max(requested, Math.min(needed, ceiling));
 	}
 }

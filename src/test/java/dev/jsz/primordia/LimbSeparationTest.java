@@ -105,6 +105,82 @@ class LimbSeparationTest {
 		assertTrue(checkedPairs >= 2, "not enough separated leg pairs were examined: " + checkedPairs);
 	}
 
+	/**
+	 * Smallest gap between the capsule surfaces of two limbs. Negative means they physically
+	 * interpenetrate. Sampled along one limb and projected onto the other, which is coarse but
+	 * more than enough to catch gross intersection.
+	 */
+	private static float limbGap(BodyPlan plan, LimbChain a, LimbChain b) {
+		float best = Float.MAX_VALUE;
+		for (int ia : a.bones) {
+			for (int ib : b.bones) {
+				BoneDef x = plan.bones[ia];
+				BoneDef y = plan.bones[ib];
+				for (int i = 0; i <= 8; i++) {
+					float tx = i / 8f;
+					float px = x.head.x + (x.tail.x - x.head.x) * tx;
+					float py = x.head.y + (x.tail.y - x.head.y) * tx;
+					float pz = x.head.z + (x.tail.z - x.head.z) * tx;
+					float rx = x.radiusHead + (x.radiusTail - x.radiusHead) * tx;
+
+					float ty = dev.jsz.primordia.util.MathX.projectOntoSegment(px, py, pz,
+							y.head.x, y.head.y, y.head.z, y.tail.x, y.tail.y, y.tail.z);
+					float qx = y.head.x + (y.tail.x - y.head.x) * ty;
+					float qy = y.head.y + (y.tail.y - y.head.y) * ty;
+					float qz = y.head.z + (y.tail.z - y.head.z) * ty;
+					float ry = y.radiusHead + (y.radiusTail - y.radiusHead) * ty;
+
+					float dx = px - qx, dy = py - qy, dz = pz - qz;
+					best = Math.min(best, (float) Math.sqrt(dx * dx + dy * dy + dz * dz) - rx - ry);
+				}
+			}
+		}
+		return best;
+	}
+
+	/**
+	 * The failure mode underneath all of the above: limbs that physically intersect.
+	 * <p>
+	 * Blend groups stop two <i>nearby</i> limbs being smoothed into one another, and the sampling
+	 * resolution floor stops a thin limb falling between samples — but neither can do anything
+	 * about two capsules that genuinely overlap, because the union of two overlapping solids is
+	 * one solid. Clustered, many-legged creatures used to be built that way by construction: an
+	 * arachnid carried 55 mm-radius legs on hips 33 mm apart, and every same-side pair on every
+	 * creature intersected. In game the legs looked welded into a single sheet.
+	 */
+	@Test
+	void limbsDoNotPhysicallyIntersectEachOther() {
+		Random random = new Random(9090);
+		// A shared hip joint is not webbing, so allow a hair of overlap where limbs meet the
+		// body. Anything past this is two legs passing through each other out in open air.
+		for (Archetype archetype : Archetype.VALUES) {
+			int intersecting = 0;
+			int pairs = 0;
+			float worst = Float.MAX_VALUE;
+
+			for (int trial = 0; trial < 20; trial++) {
+				BodyPlan plan = BodyPlanBuilder.build(archetype.create(random));
+				float tolerance = plan.blendRadius * 1.5f;
+
+				for (int a = 0; a < plan.legs.length; a++) {
+					for (int b = a + 1; b < plan.legs.length; b++) {
+						if (plan.legs[a].side != plan.legs[b].side) continue;
+						pairs++;
+						float gap = limbGap(plan, plan.legs[a], plan.legs[b]);
+						worst = Math.min(worst, gap);
+						if (gap < -tolerance) intersecting++;
+					}
+				}
+			}
+			// A handful of near-touching hips is tolerable; a body plan where it is the norm is
+			// the regression this guards.
+			assertTrue(intersecting <= pairs * 0.1,
+					archetype + ": " + intersecting + " of " + pairs
+							+ " same-side leg pairs interpenetrate (worst gap " + worst
+							+ ") — the legs will mesh as one webbed sheet");
+		}
+	}
+
 	@Test
 	void everyLimbGetsItsOwnBlendGroup() {
 		Random random = new Random(2324);

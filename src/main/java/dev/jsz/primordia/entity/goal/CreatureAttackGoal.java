@@ -26,7 +26,10 @@ public class CreatureAttackGoal extends MeleeAttackGoal {
 
 	@Override
 	public boolean canStart() {
-		return creature.getDietGroup().hunts() && super.canStart();
+		// A bonded creature fights whatever its owner is fighting regardless of what it eats.
+		// Gating this on diet would mean a domesticated herbivore follows its owner into a fight
+		// and then stands there, which reads as broken rather than as herbivorous.
+		return (creature.isDomesticated() || creature.getDietGroup().hunts()) && super.canStart();
 	}
 
 	@Override

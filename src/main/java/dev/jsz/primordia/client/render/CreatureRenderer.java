@@ -151,6 +151,18 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 		// the whole point of the test rig — you cannot judge a walk cycle by chasing it.
 		if (entity.isPosing()) {
 			context.speed = entity.isPoseWalking() ? CreatureEntity.POSE_WALK_SPEED : 0f;
+			// A specimen that never moves never sends a movement packet, so the client has no
+			// reason to believe it is standing on anything and reports it airborne. The gait
+			// refuses to run in mid-air — correctly, for a falling creature — which is why the
+			// grid stood still no matter what the walk flag said.
+			context.airborne = false;
+			// Its head yaw is never driven either, so it sits at whatever the tracker last had
+			// while the body faces the player: the difference is a large angle, and the animator
+			// clamps it to the limit, which is every specimen craning hard left or right.
+			context.lookYaw = 0f;
+			context.lookPitch = 0f;
+			context.turnRate = 0f;
+			context.riderSteer = 0f;
 		}
 		context.turnRate = MathHelper.wrapDegrees(entity.bodyYaw - entity.prevBodyYaw)
 				* MathHelper.RADIANS_PER_DEGREE * 20f;

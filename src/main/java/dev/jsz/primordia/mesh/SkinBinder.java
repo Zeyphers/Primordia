@@ -56,6 +56,7 @@ public final class SkinBinder {
 				float d = Math.max(0f, (float) Math.sqrt(dx * dx + dy * dy + dz * dz) - radius);
 				float w = 1f / ((d + SOFTNESS) * (d + SOFTNESS));
 
+
 				// Insertion sort into the top-N list.
 				for (int i = 0; i < MAX_INFLUENCES; i++) {
 					if (w > bestWeight[i]) {

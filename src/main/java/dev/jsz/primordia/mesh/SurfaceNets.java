@@ -182,10 +182,18 @@ public final class SurfaceNets {
 	/**
 	 * Appends the quad formed by four adjacent cells, if all four actually produced a vertex.
 	 * <p>
-	 * Rather than deriving the winding from the edge axis and sign (easy to get subtly wrong in
-	 * one of six cases), the quad's geometric normal is compared against the averaged SDF
-	 * gradient and the order is reversed when they disagree. That is one cross product per quad
-	 * and it cannot produce inside-out geometry.
+	 * The quad's geometric normal is compared against the averaged SDF gradient and the order is
+	 * reversed when they disagree, rather than being derived from the edge axis and crossing sign.
+	 * <p>
+	 * The axis-and-sign rule is exact about <i>topological</i> winding and that turns out not to
+	 * be the useful question. These are dual vertices: each sits wherever its own cell placed it,
+	 * so across a thin limb or a crease the four can be near-collinear and the quad's geometric
+	 * normal — the one the GPU rasterises from, and the only one {@code gl_FrontFacing} knows
+	 * about — can genuinely oppose the surface even when the topology is right. Aligning against
+	 * the field is what keeps the rasterised facing and the shading normal on the same side.
+	 * <p>
+	 * {@link MeshBaker} re-checks this against the final smoothed normals afterwards, because
+	 * smoothing can rotate a vertex normal past the point where this decision still holds.
 	 */
 	private static void emitQuad(IntList out, int[] cellVertex, int cellsX, int cellsY,
 	                             float[] pos, float[] nrm, boolean flipHint,

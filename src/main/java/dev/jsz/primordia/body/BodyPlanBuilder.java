@@ -45,7 +45,7 @@ public final class BodyPlanBuilder {
 	 * puts two separable surfaces where the mouth is. Baked shut, the mandible and the skull come
 	 * out of the mesher as one welded lump and no amount of animation can part them.
 	 */
-	private static final float JAW_BIND_OPEN = 0.13f;
+	private static final float JAW_BIND_OPEN = 0.34f;
 
 	/** Spine parameter the front-most pair of legs attaches at. */
 	private static final float FOREMOST_LEG_U = 0.88f;
@@ -195,8 +195,12 @@ public final class BodyPlanBuilder {
 		Vector3f headDir = new Vector3f(0f, (float) Math.sin(headPitch) - 0.15f, (float) Math.cos(headPitch)).normalize();
 		Vector3f headTail = new Vector3f(cursor).fma(headLength, headDir);
 		int headBone = bones.size();
+		// Slimmer than the whole skull: this capsule is the braincase and upper jaw only, and it
+		// has to leave room under itself for the mandible to sit clear of it. At the old 0.55 the
+		// jaw was swallowed whole inside the head's own surface, so there was no mouth to open
+		// and rotating the bone just dragged the face with it.
 		bones.add(new BoneDef("head", parent, new Vector3f(cursor), headTail,
-				headSize * 0.55f, headSize * 0.30f, Feature.HEAD, true));
+				headSize * 0.42f, headSize * 0.22f, Feature.HEAD, true));
 
 		addHeadDetail(g, blobs, headBone, cursor, headTail, headDir, headSize);
 
@@ -220,22 +224,26 @@ public final class BodyPlanBuilder {
 		float jawMass = g.range(Gene.JAW_SIZE, 0.35f, 1.15f);
 		// Hinged back near the ear, not at the snout: a jaw pivoting from the front of the face
 		// opens like a drawbridge instead of a mouth.
-		Vector3f jawHinge = new Vector3f(cursor).lerp(headTail, 0.20f)
-				.fma(-headSize * 0.14f, headUp);
+		Vector3f jawHinge = new Vector3f(cursor).lerp(headTail, 0.18f)
+				.fma(-headSize * 0.26f, headUp);
 		Vector3f jawDir = new Vector3f(headDir).fma(-JAW_BIND_OPEN, headUp).normalize();
 		float jawLength = headLength * 0.80f;
 		Vector3f jawTail = new Vector3f(jawHinge).fma(jawLength, jawDir);
 
 		int jawBone = bones.size();
+		int jawGroup = nextBlendGroup++;
 		bones.add(new BoneDef("jaw", headBone, jawHinge, jawTail,
-				Math.max(headSize * 0.24f * jawMass, blendRadius * 1.3f),
-				Math.max(headSize * 0.15f * jawMass, blendRadius * 1.15f),
-				Feature.JAW, true, nextBlendGroup++));
+				Math.max(headSize * 0.20f * jawMass, blendRadius * 1.3f),
+				Math.max(headSize * 0.13f * jawMass, blendRadius * 1.15f),
+				Feature.JAW, true, jawGroup));
 		// The mandible's own bulk, carried on the jaw bone so it swings with it.
 		blobs.add(new SdfBlob(jawBone, new Vector3f(jawHinge).lerp(jawTail, 0.52f),
-				new Vector3f(headSize * 0.30f * jawMass, headSize * 0.19f * jawMass,
+				new Vector3f(headSize * 0.26f * jawMass, headSize * 0.15f * jawMass,
 						jawLength * 0.44f),
 				Feature.JAW, false));
+
+		addTeeth(g, blobs, headBone, jawBone, cursor, headTail, headDir, headRight, headUp,
+				jawHinge, jawTail, headSize);
 
 		// ---- abdomen ----------------------------------------------------------
 		// A high BODY_SEGMENTATION splits the trunk into a cephalothorax and a separate abdomen
@@ -726,6 +734,47 @@ public final class BodyPlanBuilder {
 				}
 			}
 			default -> {
+			}
+		}
+	}
+
+	/**
+	 * Teeth along both jaw lines: the upper row on the skull, the lower on the mandible, so they
+	 * part when the mouth opens.
+	 * <p>
+	 * Count and length come from diet. A herbivore gets a dense row of short blunt teeth and a
+	 * carnivore a sparser row of long ones, which reads at a glance and is the only cue that says
+	 * what an animal eats before it does anything.
+	 */
+	private static void addTeeth(Genome g, List<SdfBlob> blobs, int headBone, int jawBone,
+	                             Vector3f headStart, Vector3f headEnd, Vector3f headDir,
+	                             Vector3f right, Vector3f up, Vector3f jawHinge, Vector3f jawTail,
+	                             float headSize) {
+		float carnivory = g.raw(Gene.DIET);
+		int perSide = carnivory > 0.55f ? 3 : 5;
+		float toothLength = headSize * MathX.lerp(0.07f, 0.20f, carnivory);
+		float toothRadius = headSize * MathX.lerp(0.055f, 0.040f, carnivory);
+
+		for (int i = 0; i < perSide; i++) {
+			// Skip the very back of the jaw line: teeth there would sit inside the cheek.
+			float along = MathX.lerp(0.42f, 0.92f, (i + 0.5f) / perSide);
+			float lateral = headSize * 0.17f;
+
+			for (int s = -1; s <= 1; s += 2) {
+				// Upper row hangs from the skull, pointing down.
+				Vector3f upper = new Vector3f(headStart).lerp(headEnd, along)
+						.fma(s * lateral, right)
+						.fma(-headSize * 0.20f, up);
+				blobs.add(new SdfBlob(headBone, new Vector3f(upper).fma(-toothLength * 0.5f, up),
+						new Vector3f(toothRadius, toothLength, toothRadius), Feature.TOOTH, false));
+
+				// Lower row stands on the mandible, pointing up. Anchored to the jaw's own axis so
+				// it swings with it rather than staying behind in the skull.
+				Vector3f lower = new Vector3f(jawHinge).lerp(jawTail, along)
+						.fma(s * lateral * 0.92f, right)
+						.fma(headSize * 0.06f, up);
+				blobs.add(new SdfBlob(jawBone, new Vector3f(lower).fma(toothLength * 0.5f, up),
+						new Vector3f(toothRadius, toothLength, toothRadius), Feature.TOOTH, false));
 			}
 		}
 	}

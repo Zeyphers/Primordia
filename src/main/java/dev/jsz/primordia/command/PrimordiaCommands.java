@@ -236,6 +236,13 @@ public final class PrimordiaCommands {
 				double z = origin.z + forwardZ * along + rightZ * across;
 
 				creature.refreshPositionAndAngles(x, origin.y, z, facing, 0f);
+				// Head and body have to be set to the same facing explicitly. refreshPositionAndAngles
+				// only sets the body, and a specimen with AI disabled never runs the head easing that
+				// would otherwise bring the two together.
+				creature.setHeadYaw(facing);
+				creature.setBodyYaw(facing);
+				creature.prevHeadYaw = facing;
+				creature.prevBodyYaw = facing;
 				creature.setGenome(genome);
 				creature.setCustomName(Text.literal(
 						archetype.name().toLowerCase() + " · " + TEST_SIZE_NAMES[col]));

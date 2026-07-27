@@ -11,6 +11,7 @@ import dev.jsz.primordia.genome.Archetype;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.mesh.LodTier;
 import dev.jsz.primordia.sdf.BodySdf;
+import dev.jsz.primordia.util.MathX;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
@@ -58,21 +59,42 @@ class JawTest {
 		}
 	}
 
+	/**
+	 * The mouth has to be genuinely hollow between the jaw and the skull above it.
+	 * <p>
+	 * An earlier version of this test sampled a single point a fixed distance above the chin and
+	 * passed while the mandible was in fact swallowed whole inside the head capsule — the sample
+	 * had simply landed outside the creature entirely, in front of the face. Sampling <i>along</i>
+	 * the mouth line and requiring open air somewhere between the two surfaces is the thing that
+	 * actually distinguishes a mouth from a lump.
+	 */
 	@Test
 	void theJawIsBakedAjarRatherThanFused() {
 		Random random = new Random(1213);
-		for (int trial = 0; trial < 40; trial++) {
+		int fused = 0;
+
+		for (int trial = 0; trial < 60; trial++) {
 			BodyPlan plan = BodyPlanBuilder.build(Genome.random(random));
 			BoneDef jaw = plan.bones[plan.jawBone];
 			BodySdf sdf = new BodySdf(plan);
 
-			// Midway between the jaw's own axis and the muzzle above it there has to be open air,
-			// or the two were baked as one solid and the mouth cannot part.
-			Vector3f chin = new Vector3f(jaw.head).lerp(jaw.tail, 0.75f);
-			Vector3f above = new Vector3f(chin).add(0f, jaw.radiusTail * 2.2f, 0f);
-			assertTrue(sdf.eval(above.x, above.y, above.z) > 0f,
-					"no gap above the jaw at trial " + trial + " — mouth is fused shut");
+			// Walk the front half of the jaw line, where a mouth is open even when shut.
+			boolean foundGap = false;
+			for (int i = 0; i <= 6 && !foundGap; i++) {
+				float along = MathX.lerp(0.55f, 1.0f, i / 6f);
+				Vector3f onJaw = new Vector3f(jaw.head).lerp(jaw.tail, along);
+				float radius = MathX.lerp(jaw.radiusHead, jaw.radiusTail, along);
+				// Step upward off the mandible toward the muzzle looking for daylight.
+				for (int step = 1; step <= 8 && !foundGap; step++) {
+					float h = radius * (1.0f + step * 0.45f);
+					if (sdf.eval(onJaw.x, onJaw.y + h, onJaw.z) > 0f) foundGap = true;
+				}
+			}
+			if (!foundGap) fused++;
 		}
+
+		assertEquals(0, fused, fused + " of 60 creatures baked with the mandible fused into the "
+				+ "skull — those mouths can never open, however the jaw bone is animated");
 	}
 
 	/**
@@ -118,6 +140,78 @@ class JawTest {
 					archetype + ": the jaw barely moved — off-axis swing went from "
 							+ rest.length() + " to " + open.length());
 		}
+	}
+
+	/**
+	 * Opening the mouth must move the mandible, not the face.
+	 * <p>
+	 * This is the failure the geometry alone cannot catch. The jaw bone can hinge perfectly and
+	 * the mesh still deform wrongly, because skin weights are assigned by distance to a bone and
+	 * the mandible is the one bone that swings while sitting inside another part's silhouette:
+	 * cheek and braincase vertices are as near to it as its own surface is. Weighted purely by
+	 * distance they follow it, and what the player sees is the whole head stretching vertically
+	 * rather than a jaw dropping.
+	 */
+	@Test
+	void openingTheJawMovesTheJawAndNotTheSkull() {
+		Random random = new Random(1216);
+		for (Archetype archetype : Archetype.VALUES) {
+			BodyPlan plan = BodyPlanBuilder.build(archetype.create(random));
+			var mesh = dev.jsz.primordia.mesh.MeshBaker.bake(plan, 34);
+
+			// Posed by hand rather than through an activity. Every activity that opens the mouth
+			// also moves the head — a bite pitches the skull, a charge drops it further — so two
+			// activities differ by neck as well as jaw, and comparing them measures both. Setting
+			// the one bone leaves the jaw as the only thing that changed.
+			var skinned = new dev.jsz.primordia.mesh.SkinnedMesh();
+
+			var shutSkeleton = new dev.jsz.primordia.skeleton.Skeleton(plan);
+			shutSkeleton.resetPose();
+			shutSkeleton.updateWorld();
+			shutSkeleton.updateSkinMatrices();
+			skinned.skin(mesh, shutSkeleton);
+			float[] shut = skinned.positions().clone();
+
+			var openSkeleton = new dev.jsz.primordia.skeleton.Skeleton(plan);
+			openSkeleton.resetPose();
+			openSkeleton.setLocalRotation(plan.jawBone, new org.joml.Quaternionf().rotateX(-0.6f));
+			openSkeleton.updateWorld();
+			openSkeleton.updateSkinMatrices();
+			skinned.skin(mesh, openSkeleton);
+			float[] gaping = skinned.positions();
+
+			BoneDef jaw = plan.bones[plan.jawBone];
+			BoneDef skull = plan.bones[plan.headBone];
+			Vector3f chin = new Vector3f(jaw.head).lerp(jaw.tail, 0.9f);
+			// Top of the braincase: as far from the mouth as anything on the head gets.
+			Vector3f crown = new Vector3f(skull.head).lerp(skull.tail, 0.3f)
+					.add(0f, skull.radiusHead * 0.9f, 0f);
+
+			float chinMoved = biggestShiftNear(mesh, shut, gaping, chin, jaw.radiusTail * 2f);
+			float crownMoved = biggestShiftNear(mesh, shut, gaping, crown, skull.radiusHead * 0.6f);
+
+			assertTrue(chinMoved > jaw.length() * 0.05f,
+					archetype + ": the chin barely moved when the mouth opened: " + chinMoved);
+			assertTrue(crownMoved < chinMoved * 0.35f,
+					archetype + ": the top of the skull moved " + crownMoved + " against the chin's "
+							+ chinMoved + " — the jaw is dragging the whole head with it");
+		}
+	}
+
+	/** Largest displacement between two skinned poses, among vertices near a point. */
+	private static float biggestShiftNear(dev.jsz.primordia.mesh.MeshData mesh,
+	                                      float[] a, float[] b, Vector3f around, float radius) {
+		float worst = 0f;
+		for (int v = 0; v < mesh.vertexCount; v++) {
+			int p = v * 3;
+			float dx = mesh.positions[p] - around.x;
+			float dy = mesh.positions[p + 1] - around.y;
+			float dz = mesh.positions[p + 2] - around.z;
+			if (dx * dx + dy * dy + dz * dz > radius * radius) continue;
+			float mx = a[p] - b[p], my = a[p + 1] - b[p + 1], mz = a[p + 2] - b[p + 2];
+			worst = Math.max(worst, (float) Math.sqrt(mx * mx + my * my + mz * mz));
+		}
+		return worst;
 	}
 
 	@Test

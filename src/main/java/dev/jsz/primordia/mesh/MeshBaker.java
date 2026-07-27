@@ -122,8 +122,111 @@ public final class MeshBaker {
 			}
 		}
 
+		alignWindingToNormals(positions, normals, quads);
+
 		return new MeshData(positions, normals, colors, emissive, boneIndices, boneWeights, quads,
 				minX, minY, minZ, maxX, maxY, maxZ);
+	}
+
+	/**
+	 * Reverses any quad whose rasterised facing disagrees with the normals it carries.
+	 * <p>
+	 * Two different normals decide how a quad looks. The GPU derives {@code gl_FrontFacing} from
+	 * the screen-space winding of the triangle — its geometry. The shader lights it from the
+	 * interpolated vertex normal. Where those disagree, a shader pack that negates the normal on
+	 * back faces lights the quad inside-out, and because creatures draw on a no-cull layer it is
+	 * not culled away but drawn wrong: a hard facet in a smooth surface. Vanilla never notices,
+	 * because it shades entities straight from the vertex normal without consulting facing — which
+	 * is exactly why this only ever appeared with shaders on.
+	 * <p>
+	 * {@link SurfaceNets} already aligns winding against the raw field gradient, but the normal
+	 * smoothing above runs afterwards and can rotate a vertex normal past the point where that
+	 * decision still holds. This is the same test applied to the normals actually shipped, so the
+	 * two are consistent by construction rather than by argument.
+	 */
+	private static void alignWindingToNormals(float[] positions, float[] normals, int[] quads) {
+		for (int i = 0; i < quads.length; i += 4) {
+			int a = quads[i], b = quads[i + 1], c = quads[i + 2], d = quads[i + 3];
+
+			// Newell's method rather than one corner's cross product. These quads are not planar
+			// — the four dual vertices sit independently — and a normal taken from three of the
+			// four corners does not simply negate when the order is reversed, so a flip decided
+			// that way can fail to take. Newell sums every edge, so reversing the order negates
+			// it exactly and one pass is enough.
+			float gx = 0f, gy = 0f, gz = 0f;
+			int[] loop = {a, b, c, d};
+			for (int k = 0; k < 4; k++) {
+				int p = loop[k];
+				int q = loop[(k + 1) & 3];
+				float px = positions[p * 3], py = positions[p * 3 + 1], pz = positions[p * 3 + 2];
+				float qx = positions[q * 3], qy = positions[q * 3 + 1], qz = positions[q * 3 + 2];
+				gx += (py - qy) * (pz + qz);
+				gy += (pz - qz) * (px + qx);
+				gz += (px - qx) * (py + qy);
+			}
+
+			float nx = normals[a * 3] + normals[b * 3] + normals[c * 3] + normals[d * 3];
+			float ny = normals[a * 3 + 1] + normals[b * 3 + 1] + normals[c * 3 + 1] + normals[d * 3 + 1];
+			float nz = normals[a * 3 + 2] + normals[b * 3 + 2] + normals[c * 3 + 2] + normals[d * 3 + 2];
+
+			// A zero-area quad has no facing to get wrong and covers no pixels either way.
+			if (gx * nx + gy * ny + gz * nz < 0f) {
+				quads[i] = d;
+				quads[i + 1] = c;
+				quads[i + 2] = b;
+				quads[i + 3] = a;
+			}
+
+			// Winding fixes the quad as a whole; the GPU still rasterises it as two triangles,
+			// split (a,b,c) and (a,c,d). A quad bent sharply enough — over a knuckle, along a
+			// limb crease — can have one half facing the wrong way whichever way the loop is
+			// wound, and no flip can help because the two halves disagree with each other.
+			//
+			// Rotating the vertex list by one moves the split onto the other diagonal. It is a
+			// cyclic permutation, so the winding it just settled is preserved, and it costs
+			// nothing: choose whichever diagonal leaves both halves agreeing with the shading.
+			if (!bothHalvesAgree(positions, quads, i, nx, ny, nz)) {
+				int a0 = quads[i];
+				quads[i] = quads[i + 1];
+				quads[i + 1] = quads[i + 2];
+				quads[i + 2] = quads[i + 3];
+				quads[i + 3] = a0;
+				// If the other diagonal is no better, the first one was no worse — put it back so
+				// the choice stays deterministic rather than depending on which ran last.
+				if (!bothHalvesAgree(positions, quads, i, nx, ny, nz)) {
+					int a1 = quads[i + 3];
+					quads[i + 3] = quads[i + 2];
+					quads[i + 2] = quads[i + 1];
+					quads[i + 1] = quads[i];
+					quads[i] = a1;
+				}
+			}
+		}
+	}
+
+	/** True when both triangles the GPU splits this quad into face the way its normals point. */
+	private static boolean bothHalvesAgree(float[] positions, int[] quads, int base,
+	                                       float nx, float ny, float nz) {
+		int a = quads[base], b = quads[base + 1], c = quads[base + 2], d = quads[base + 3];
+		return triangleAgrees(positions, a, b, c, nx, ny, nz)
+				&& triangleAgrees(positions, a, c, d, nx, ny, nz);
+	}
+
+	private static boolean triangleAgrees(float[] positions, int a, int b, int c,
+	                                      float nx, float ny, float nz) {
+		float e1x = positions[b * 3] - positions[a * 3];
+		float e1y = positions[b * 3 + 1] - positions[a * 3 + 1];
+		float e1z = positions[b * 3 + 2] - positions[a * 3 + 2];
+		float e2x = positions[c * 3] - positions[a * 3];
+		float e2y = positions[c * 3 + 1] - positions[a * 3 + 1];
+		float e2z = positions[c * 3 + 2] - positions[a * 3 + 2];
+
+		float gx = e1y * e2z - e1z * e2y;
+		float gy = e1z * e2x - e1x * e2z;
+		float gz = e1x * e2y - e1y * e2x;
+		// Slivers cover no pixels, so their facing is not observable.
+		if (gx * gx + gy * gy + gz * gz < 1e-18f) return true;
+		return gx * nx + gy * ny + gz * nz >= 0f;
 	}
 
 	/**

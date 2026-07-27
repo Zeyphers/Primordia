@@ -1,0 +1,101 @@
+package dev.jsz.primordia.mesh;
+
+import dev.jsz.primordia.Primordia;
+import dev.jsz.primordia.body.BodyPlan;
+import dev.jsz.primordia.body.BodyPlanCache;
+import dev.jsz.primordia.genome.Genome;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/**
+ * Baked meshes, keyed by (genome, LOD). Two creatures with the same genome share one mesh, so a
+ * herd of forty siblings costs a single bake.
+ * <p>
+ * Baking is <b>never</b> done on the render thread — a bake is tens of milliseconds, which would
+ * be a visible hitch every time a new species walks into view. {@link #getIfReady} returns null
+ * while a bake is in flight and the renderer simply skips that creature for a frame or two.
+ */
+public final class GenomeMeshCache {
+	/** Distinct (genome, LOD) meshes held before eviction begins. */
+	private static final int MAX_ENTRIES = 384;
+
+	private record Key(Genome genome, int lod) {
+	}
+
+	private static final Map<Key, MeshData> READY = new ConcurrentHashMap<>();
+	private static final Map<Key, Boolean> IN_FLIGHT = new ConcurrentHashMap<>();
+	private static final ConcurrentLinkedQueue<Key> ORDER = new ConcurrentLinkedQueue<>();
+
+	private static final ExecutorService BAKERS = Executors.newFixedThreadPool(
+			Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2)),
+			new ThreadFactory() {
+				private final AtomicInteger counter = new AtomicInteger();
+
+				@Override
+				public Thread newThread(Runnable r) {
+					Thread t = new Thread(r, "primordia-mesh-bake-" + counter.incrementAndGet());
+					// Daemon so a hung bake can never keep the game from exiting.
+					t.setDaemon(true);
+					t.setPriority(Thread.NORM_PRIORITY - 1);
+					return t;
+				}
+			});
+
+	private GenomeMeshCache() {
+	}
+
+	/**
+	 * Returns the baked mesh if it is already available, otherwise schedules a bake and returns
+	 * {@code null}. Safe to call every frame — repeat calls for an in-flight bake are no-ops.
+	 */
+	public static MeshData getIfReady(Genome genome, int lod) {
+		Key key = new Key(genome, lod);
+		MeshData ready = READY.get(key);
+		if (ready != null) return ready;
+
+		if (IN_FLIGHT.putIfAbsent(key, Boolean.TRUE) != null) return null;
+
+		BAKERS.submit(() -> {
+			try {
+				BodyPlan plan = BodyPlanCache.get(genome);
+				MeshData mesh = MeshBaker.bake(plan, LodTier.resolutionFor(lod));
+				READY.put(key, mesh);
+				ORDER.add(key);
+				evictIfNeeded();
+			} catch (Throwable t) {
+				// A bad genome must degrade to an invisible creature, never to a crashed render thread.
+				Primordia.LOGGER.error("Mesh bake failed for {} at LOD {}", genome, lod, t);
+			} finally {
+				IN_FLIGHT.remove(key);
+			}
+		});
+		return null;
+	}
+
+	private static void evictIfNeeded() {
+		while (READY.size() > MAX_ENTRIES) {
+			Key evict = ORDER.poll();
+			if (evict == null) break;
+			READY.remove(evict);
+		}
+	}
+
+	public static void clear() {
+		READY.clear();
+		ORDER.clear();
+	}
+
+	public static int readyCount() {
+		return READY.size();
+	}
+
+	public static int pendingCount() {
+		return IN_FLIGHT.size();
+	}
+}

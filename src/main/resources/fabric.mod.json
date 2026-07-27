@@ -1,0 +1,29 @@
+{
+	"schemaVersion": 1,
+	"id": "primordia",
+	"version": "${version}",
+	"name": "Primordia",
+	"description": "Procedurally generated, evolving creatures. Genomes grow skeletons, skeletons grow SDF bodies, bodies walk with IK, and populations evolve and reshape the world.",
+	"authors": [
+		"jsz"
+	],
+	"license": "MIT",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"dev.jsz.primordia.Primordia"
+		],
+		"client": [
+			"dev.jsz.primordia.PrimordiaClient"
+		]
+	},
+	"mixins": [
+		"primordia.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.16.0",
+		"minecraft": "~1.21.1",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}

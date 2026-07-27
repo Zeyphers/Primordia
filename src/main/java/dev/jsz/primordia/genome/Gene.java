@@ -1,0 +1,112 @@
+package dev.jsz.primordia.genome;
+
+/**
+ * The gene loci of a creature. Every gene is a scalar normalised to {@code [0,1]};
+ * meaning is assigned at decode time by {@link dev.jsz.primordia.body.BodyPlanBuilder}
+ * (morphology) or by the ecology systems (behaviour).
+ * <p>
+ * Ordinals are the wire format, so <b>append new genes at the end only</b> and never
+ * reorder — {@link Genome#decode(String)} reads by index. {@link #plasticity} scales how
+ * far a locus drifts per mutation event: structural genes are conservative, colour genes
+ * are volatile, which is what makes lineages stay recognisable while still diverging.
+ */
+public enum Gene {
+	// ---- gross morphology -------------------------------------------------
+	SIZE(0.35f),
+	TORSO_LENGTH(0.45f),
+	TORSO_GIRTH(0.5f),
+	TORSO_TAPER(0.6f),
+	SPINE_SEGMENTS(0.25f),
+	SPINE_ARCH(0.6f),
+	BLEND_SMOOTHNESS(0.5f),
+
+	// ---- neck & head ------------------------------------------------------
+	NECK_LENGTH(0.5f),
+	NECK_SEGMENTS(0.25f),
+	NECK_THICKNESS(0.5f),
+	HEAD_SIZE(0.4f),
+	HEAD_ELONGATION(0.6f),
+	JAW_SIZE(0.7f),
+	CRANIUM_BULGE(0.6f),
+	EYE_SIZE(0.7f),
+	EYE_COUNT(0.15f),
+	EYE_SPACING(0.6f),
+
+	// ---- tail -------------------------------------------------------------
+	TAIL_LENGTH(0.6f),
+	TAIL_SEGMENTS(0.3f),
+	TAIL_THICKNESS(0.6f),
+
+	// ---- legs -------------------------------------------------------------
+	LEG_PAIRS(0.12f),
+	LEG_SEGMENTS(0.2f),
+	LEG_LENGTH(0.5f),
+	LEG_THICKNESS(0.55f),
+	LEG_SPLAY(0.6f),
+	LIMB_RATIO(0.5f),
+	DIGITIGRADE(0.5f),
+	FOOT_SIZE(0.6f),
+	GAIT_OFFSET(0.4f),
+
+	// ---- arms / manipulators ---------------------------------------------
+	ARM_PAIRS(0.1f),
+	ARM_LENGTH(0.5f),
+	ARM_THICKNESS(0.55f),
+
+	// ---- ornament ---------------------------------------------------------
+	DORSAL_SPINES(0.5f),
+	DORSAL_SPINE_LENGTH(0.6f),
+
+	// ---- ecology / behaviour (drives later milestones, drifts from day one) -
+	DIET(0.3f),
+	METABOLISM(0.45f),
+	SPEED(0.4f),
+	STAMINA(0.4f),
+	AGGRESSION(0.5f),
+	SOCIABILITY(0.5f),
+	FEAR(0.5f),
+	CURIOSITY(0.5f),
+	TERRITORIALITY(0.45f),
+	NOCTURNALITY(0.4f),
+	TEMP_PREFERENCE(0.3f),
+	HUMIDITY_PREFERENCE(0.3f),
+	ARMOR(0.4f),
+	FECUNDITY(0.35f),
+	MATURATION_RATE(0.35f),
+	LIFESPAN(0.3f),
+	BURROWING(0.35f),
+	NEST_BUILDING(0.35f),
+	GRAZING_IMPACT(0.4f),
+
+	/** Meta-gene: scales this individual's own mutation rate, so evolvability itself evolves. */
+	MUTABILITY(0.6f),
+
+	// ---- appearance -------------------------------------------------------
+	HUE(0.8f),
+	HUE_SECONDARY(0.8f),
+	SATURATION(0.7f),
+	BRIGHTNESS(0.7f),
+	PATTERN_TYPE(0.9f),
+	PATTERN_SCALE(0.8f),
+	PATTERN_CONTRAST(0.8f),
+	COUNTERSHADING(0.6f),
+
+	// ---- detailed anatomical options --------------------------------------
+	CLAWS(0.5f),
+	HAND_STYLE(0.5f),
+	FOOT_TYPE(0.5f),
+	SPINE_STYLE(0.5f),
+	FUR_CREST(0.5f),
+	ARMOR_COVERAGE(0.5f),
+	EYE_STYLE(0.5f);
+
+	public static final Gene[] VALUES = values();
+	public static final int COUNT = VALUES.length;
+
+	/** Relative drift magnitude per mutation event, in [0,1]. */
+	public final float plasticity;
+
+	Gene(float plasticity) {
+		this.plasticity = plasticity;
+	}
+}

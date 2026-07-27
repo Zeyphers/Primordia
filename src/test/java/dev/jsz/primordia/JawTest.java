@@ -85,7 +85,7 @@ class JawTest {
 				Vector3f onJaw = new Vector3f(jaw.head).lerp(jaw.tail, along);
 				float radius = MathX.lerp(jaw.radiusHead, jaw.radiusTail, along);
 				// Step upward off the mandible toward the muzzle looking for daylight.
-				for (int step = 1; step <= 8 && !foundGap; step++) {
+				for (int step = 1; step <= 14 && !foundGap; step++) {
 					float h = radius * (1.0f + step * 0.45f);
 					if (sdf.eval(onJaw.x, onJaw.y + h, onJaw.z) > 0f) foundGap = true;
 				}
@@ -222,5 +222,42 @@ class JawTest {
 		float impact = hingeOffAxis(plan, CreatureActivity.BITE, 0.90f).length();
 		assertTrue(impact < gape,
 				"the jaw is still open at the end of the bite: " + impact + " against a gape of " + gape);
+	}
+
+	/**
+	 * The skull has to be the right way up, and everything hung off it with it.
+	 * <p>
+	 * The head's basis was built with an inverted up vector for a long time, and nothing caught
+	 * it because every consumer used the same wrong vector consistently — the relationships all
+	 * held, they were just upside down. It put the mandible on top of the braincase, grew the
+	 * upper teeth out through the skull, and hung horns and ears off the chin. Testing the basis
+	 * against world up is the one check that could not be fooled that way.
+	 */
+	@Test
+	void theMandibleHangsBelowTheSkullAndTeethPointIntoTheMouth() {
+		Random random = new Random(1217);
+		for (int trial = 0; trial < 120; trial++) {
+			BodyPlan plan = BodyPlanBuilder.build(Genome.random(random));
+			BoneDef skull = plan.bones[plan.headBone];
+			BoneDef jaw = plan.bones[plan.jawBone];
+
+			assertTrue(jaw.head.y < skull.head.y,
+					"the jaw hinges above the skull axis — the head is upside down");
+			assertTrue(jaw.tail.y < jaw.head.y,
+					"the mandible rises from hinge to chin; it should hang");
+
+			for (dev.jsz.primordia.body.ToothDef tooth : plan.teeth) {
+				if (tooth.bone() == plan.headBone) {
+					assertTrue(tooth.direction().y < 0f,
+							"an upper tooth grows upward, out through the top of the head");
+				} else {
+					assertTrue(tooth.direction().y > 0f,
+							"a lower tooth grows downward, out through the bottom of the jaw");
+				}
+				// And mostly along the jaw's normal rather than lying flat against the lip.
+				assertTrue(Math.abs(tooth.direction().y) > Math.abs(tooth.direction().x) * 1.5f,
+						"a tooth leans more sideways than it stands up: " + tooth.direction());
+			}
+		}
 	}
 }

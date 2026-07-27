@@ -220,7 +220,10 @@ public final class BodyPlanBuilder {
 		Vector3f headRight = new Vector3f(0f, 1f, 0f).cross(headDir, new Vector3f());
 		if (headRight.lengthSquared() < 1e-6f) headRight.set(1f, 0f, 0f);
 		headRight.normalize();
-		Vector3f headUp = new Vector3f(headDir).cross(headRight).normalize().mul(-1f);
+		// headDir x headRight already points up out of the skull. The negation this used to carry
+		// inverted it, which put the whole mandible on top of the head and grew the upper teeth
+		// up through the braincase — measured at (0, -1.00, -0.08) for a creature facing +Z.
+		Vector3f headUp = new Vector3f(headDir).cross(headRight).normalize();
 
 		float jawMass = g.range(Gene.JAW_SIZE, 0.35f, 1.15f);
 		// Broad crushing jaws against narrow snatching ones. Without this every mouth is the same
@@ -239,15 +242,33 @@ public final class BodyPlanBuilder {
 
 		int jawBone = bones.size();
 		int jawGroup = nextBlendGroup++;
+		// Tapered hard from hinge to chin. An even bar reads as a sausage stuck under the face;
+		// a jaw is deep where the muscle attaches and thin where it bites.
 		bones.add(new BoneDef("jaw", headBone, jawHinge, jawTail,
-				Math.max(headSize * 0.20f * jawMass, blendRadius * 1.3f),
-				Math.max(headSize * 0.13f * jawMass, blendRadius * 1.15f),
+				Math.max(headSize * 0.21f * jawMass, blendRadius * 1.3f),
+				Math.max(headSize * 0.085f * jawMass, blendRadius * 1.15f),
 				Feature.JAW, true, jawGroup));
 		// The mandible's own bulk, carried on the jaw bone so it swings with it.
-		blobs.add(new SdfBlob(jawBone, new Vector3f(jawHinge).lerp(jawTail, 0.52f),
-				new Vector3f(headSize * 0.26f * jawMass * jawWidth,
-						headSize * 0.15f * jawMass * jawDepth,
-						jawLength * 0.44f),
+		// Three masses rather than one, because the silhouette is the whole point: a mandible is
+		// recognisable from the side by its angle, and one ellipsoid down the middle has no angle
+		// to be recognised by.
+		//
+		// The ramus is the tall rear branch climbing to the hinge — the corner of a jaw. The body
+		// is a flattened bar along the tooth line, wider than it is deep. The chin caps the front.
+		blobs.add(new SdfBlob(jawBone, new Vector3f(jawHinge).lerp(jawTail, 0.10f),
+				new Vector3f(headSize * 0.17f * jawMass * jawWidth,
+						headSize * 0.30f * jawMass,
+						headSize * 0.17f * jawMass),
+				Feature.JAW, false));
+		blobs.add(new SdfBlob(jawBone, new Vector3f(jawHinge).lerp(jawTail, 0.55f),
+				new Vector3f(headSize * 0.25f * jawMass * jawWidth,
+						headSize * 0.115f * jawMass * jawDepth,
+						jawLength * 0.40f),
+				Feature.JAW, false));
+		blobs.add(new SdfBlob(jawBone, new Vector3f(jawHinge).lerp(jawTail, 0.94f),
+				new Vector3f(headSize * 0.15f * jawMass * jawWidth,
+						headSize * 0.13f * jawMass,
+						headSize * 0.13f * jawMass),
 				Feature.JAW, false));
 
 		addTeeth(g, teeth, headBone, jawBone, cursor, headTail, headRight, headUp,
@@ -684,7 +705,9 @@ public final class BodyPlanBuilder {
 		Vector3f right = new Vector3f(up).cross(headDir);
 		if (right.lengthSquared() < 1e-6f) right.set(1f, 0f, 0f);
 		right.normalize();
-		Vector3f trueUp = new Vector3f(headDir).cross(right).normalize().mul(-1f);
+		// Same inversion as the jaw carried: negated, this put the braincase under the jawline,
+		// the eyes below the muzzle and every horn growing down out of the chin.
+		Vector3f trueUp = new Vector3f(headDir).cross(right).normalize();
 
 		// Cranium: a bulge behind the eyes that gives the skull a braincase silhouette.
 		float bulge = g.range(Gene.CRANIUM_BULGE, 0.55f, 1.25f);
@@ -788,7 +811,10 @@ public final class BodyPlanBuilder {
 		// cheek. A root offset sideways sits outside a narrow mandible entirely and the tooth
 		// floats free of the face; on the bone's own axis it is buried whatever the jaw's girth,
 		// and the mesher walks outward from there to wherever the flesh actually ends.
-		float splay = 0.42f * Math.min(jawWidth, 1.6f);
+		//
+		// Only enough tilt to clear the jaw's own width. At 0.42 the lateral component was
+		// outrunning the vertical one and the teeth lay along the lip rather than standing on it.
+		float splay = 0.16f * Math.min(jawWidth, 1.6f);
 		// How far the point stands clear of the gum. The mesher measures this outward from the
 		// flesh itself, not from the bone axis: the skull and the mandible carry different depths
 		// of it, and an offset from the axis left one whole row buried inside the lip.

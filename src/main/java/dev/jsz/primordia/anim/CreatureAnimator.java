@@ -616,9 +616,10 @@ public final class CreatureAnimator {
 		// of the skull and the resting pose is a rotation back up to meet it — which means the
 		// default state is a *closing* rotation, and opening is simply less of one.
 		//
-		// Positive lifts the chin: the bind rotation takes local +Y onto the hinge-to-chin
-		// direction, leaving local +X pointing to the creature's left.
-		q0.identity().rotateX(plan.jawRestAngle * (1f - jawOpen));
+		// Negative lifts the chin. The bind rotation takes local +Y onto the hinge-to-chin
+		// direction, and with the skull's basis the right way up that leaves local +X pointing to
+		// the creature's right, so closing is the negative sense.
+		q0.identity().rotateX(-plan.jawRestAngle * (1f - jawOpen));
 		skeleton.setLocalRotation(jaw, q0);
 		skeleton.updateBoneWorld(jaw);
 	}

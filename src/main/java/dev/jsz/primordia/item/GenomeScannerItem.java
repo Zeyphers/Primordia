@@ -37,7 +37,22 @@ public class GenomeScannerItem extends Item {
 	@Override
 	public ActionResult useOnEntity(ItemStack stack, PlayerEntity player, LivingEntity entity, Hand hand) {
 		if (!(entity instanceof CreatureEntity creature)) {
-			return ActionResult.PASS;
+			// Pointing the instrument at a cow is a reasonable thing for a player to try, and
+			// silently doing nothing reads as a broken item. Say why instead: vanilla animals are
+			// authored, not grown, so there is no gene sequence in them to resolve.
+			if (player.getWorld().isClient()) return ActionResult.SUCCESS;
+
+			player.sendMessage(Text.literal("── Scan inconclusive ──")
+					.formatted(Formatting.DARK_RED, Formatting.BOLD), false);
+			player.sendMessage(Text.literal("  " + entity.getName().getString())
+					.formatted(Formatting.GRAY)
+					.append(Text.literal(": genome too simple to read — a fixed form, not a grown one.")
+							.formatted(Formatting.DARK_GRAY)), false);
+
+			player.getWorld().playSound(null, entity.getBlockPos(),
+					SoundEvents.BLOCK_NOTE_BLOCK_BASS.value(), SoundCategory.PLAYERS, 0.5f, 0.7f);
+			player.getItemCooldownManager().set(this, 10);
+			return ActionResult.CONSUME;
 		}
 		// Read on the server so the report reflects authoritative state, then message the player.
 		if (player.getWorld().isClient()) {

@@ -4,6 +4,7 @@ import dev.jsz.primordia.anim.AnimationContext;
 import dev.jsz.primordia.anim.CreatureAnimator;
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.client.WorldGroundProbe;
+import dev.jsz.primordia.client.config.PrimordiaConfig;
 import dev.jsz.primordia.entity.CreatureActivity;
 import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.genome.Genome;
@@ -109,6 +110,7 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 		matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-yaw));
 		VertexConsumer consumer = vertexConsumers.getBuffer(RenderLayer.getEntityCutoutNoCull(TEXTURE));
 		emit(mesh, matrices.peek(), consumer, light);
+		emitGlow(mesh, matrices.peek(), vertexConsumers);
 		matrices.pop();
 
 		super.render(entity, yaw, tickDelta, matrices, vertexConsumers, light);
@@ -212,6 +214,14 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 
 	/** Block-light coordinate of full brightness: 15 levels, stored shifted left by four. */
 	private static final int FULL_BLOCK_LIGHT = 15 << 4;
+	/** Both halves at full, for the emissive pass which is lit by definition. */
+	private static final int FULL_BRIGHT = FULL_BLOCK_LIGHT | (FULL_BLOCK_LIGHT << 16);
+	/**
+	 * Mean emissive weight a quad needs before it is drawn again on the glow layer. Above zero so
+	 * the faint wash on a whole-body glow does not put every quad on the creature into the pack's
+	 * bloom pass.
+	 */
+	private static final float GLOW_QUAD_THRESHOLD = 0.12f;
 
 	private void emit(MeshData mesh, MatrixStack.Entry entry, VertexConsumer consumer, int light) {
 		float[] positions = SKINNED.positions();
@@ -240,9 +250,62 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 	}
 
 	/**
+	 * Draws the bioluminescent parts again on the emissive render layer.
+	 * <p>
+	 * Lifting the lightmap coordinate — which is all the first pass does — makes a part look
+	 * <i>lit</i>, and vanilla is happy with that. A shader pack is not: it reads the lightmap as
+	 * "how much light falls here" and applies its own exposure, bloom and tone mapping on top, so
+	 * a bright lightmap value is just a well-lit surface and never emits. Emission has to arrive
+	 * on a layer the pack recognises as emissive, which is what {@code entity_translucent_emissive}
+	 * is for. Packs single that layer out for bloom, and it renders full-bright in vanilla too, so
+	 * one mechanism covers both.
+	 * <p>
+	 * Additive over the solid body rather than replacing it: the base pass already drew these
+	 * quads opaquely, so this only has to add the light on top. Quads are selected whole — a quad
+	 * is either glowing or it is not — because the layer switch cannot be made per vertex.
+	 */
+	private void emitGlow(MeshData mesh, MatrixStack.Entry entry, VertexConsumerProvider providers) {
+		float[] emissive = mesh.emissive;
+		if (!PrimordiaConfig.get().emissiveGlow) return;
+
+		float[] positions = SKINNED.positions();
+		float[] normals = SKINNED.normals();
+		float[] colors = mesh.colors;
+		int[] quads = mesh.quads;
+
+		VertexConsumer glow = null;
+		for (int i = 0; i < quads.length; i += 4) {
+			float strength = (emissive[quads[i]] + emissive[quads[i + 1]]
+					+ emissive[quads[i + 2]] + emissive[quads[i + 3]]) * 0.25f;
+			if (strength <= GLOW_QUAD_THRESHOLD) continue;
+
+			// Deferred so a creature with no light organs never touches the layer at all, which
+			// keeps it out of the buffer and out of the pack's bloom pass.
+			if (glow == null) {
+				glow = providers.getBuffer(RenderLayer.getEntityTranslucentEmissive(TEXTURE));
+			}
+
+			for (int k = 0; k < 4; k++) {
+				int v = quads[i + k];
+				int p = v * 3;
+				int corner = k;
+				float u = (corner == 1 || corner == 2) ? UV_HI : UV_LO;
+				float t = corner >= 2 ? UV_HI : UV_LO;
+
+				glow.vertex(entry, positions[p], positions[p + 1], positions[p + 2])
+						.color(colors[p], colors[p + 1], colors[p + 2], strength)
+						.texture(u, t)
+						.overlay(OverlayTexture.DEFAULT_UV)
+						.light(FULL_BRIGHT)
+						.normal(entry, normals[p], normals[p + 1], normals[p + 2]);
+			}
+		}
+	}
+
+	/**
 	 * Raises the block-light half of a packed lightmap coordinate toward full brightness, leaving
-	 * the sky half alone. Lifting only block light is what makes a light organ read as glowing at
-	 * night — which is when it should — without blowing the creature out to white at noon.
+	 * the sky half alone. This is the vanilla half of the effect — it makes the surface read as
+	 * lit; {@link #emitGlow} is what makes a shader pack treat it as emitting.
 	 */
 	private static int emissiveLight(int light, float emissive) {
 		if (emissive <= 0.02f) return light;

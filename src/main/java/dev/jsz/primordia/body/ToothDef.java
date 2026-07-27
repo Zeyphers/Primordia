@@ -28,9 +28,15 @@ import org.joml.Vector3f;
  * @param root       origin inside the jaw, from which the tooth grows outward
  * @param direction  unit vector the tooth grows along
  * @param protrusion how far the point stands clear of the flesh
+ * @param maxExtent  hard ceiling on how far the point may sit from the root, whatever the
+ *                   marched surface turns out to be. This is the clipping guard: a tooth stops
+ *                   inside the jaw it closes against — invisible, since both are opaque — but one
+ *                   that runs the whole way through stands out of the top of the skull, and how
+ *                   much room there is depends on the opposing jaw's thickness, which only the
+ *                   plan knows
  * @param radius     half-width at the gum line
  * @param blunt      true for a grinder, chiselled off flat instead of coming to a point
  */
 public record ToothDef(int bone, Vector3f root, Vector3f direction, float protrusion,
-                       float radius, boolean blunt) {
+                       float maxExtent, float radius, boolean blunt) {
 }

@@ -47,6 +47,15 @@ public final class BodyPlanBuilder {
 	 */
 	private static final float JAW_BIND_OPEN = 0.78f;
 
+	/**
+	 * How much of the opposing jaw's thickness a tooth may bury itself in once the mouth closes.
+	 * <p>
+	 * Under one, so the point always stops inside the other jaw rather than emerging from the far
+	 * side of it. Teeth interpenetrating the flesh they close against are invisible — both are
+	 * opaque — but a tooth that runs the whole way through stands out of the top of the skull.
+	 */
+	private static final float CLOSED_BITE_CLEARANCE = 0.62f;
+
 	/** Spine parameter the front-most pair of legs attaches at. */
 	private static final float FOREMOST_LEG_U = 0.88f;
 	/** Spine parameter the rear-most pair reaches at maximum clustering. */
@@ -272,7 +281,10 @@ public final class BodyPlanBuilder {
 				Feature.JAW, false));
 
 		addTeeth(g, teeth, headBone, jawBone, cursor, headTail, headRight, headUp,
-				jawHinge, jawTail, headSize, jawWidth);
+				jawHinge, jawTail, headSize, jawWidth,
+				headSize * 0.42f, headSize * 0.22f,
+				Math.max(headSize * 0.21f * jawMass, headSize * 0.115f * jawMass * jawDepth),
+				Math.max(headSize * 0.085f * jawMass, headSize * 0.115f * jawMass * jawDepth));
 
 		// ---- abdomen ----------------------------------------------------------
 		// A high BODY_SEGMENTATION splits the trunk into a cephalothorax and a separate abdomen
@@ -591,8 +603,8 @@ public final class BodyPlanBuilder {
 			for (int i = 0; i < teeth.size(); i++) {
 				ToothDef old = teeth.get(i);
 				teeth.set(i, new ToothDef(old.bone(), new Vector3f(old.root()).mul(scale),
-						old.direction(), old.protrusion() * scale, old.radius() * scale,
-						old.blunt()));
+						old.direction(), old.protrusion() * scale, old.maxExtent() * scale,
+						old.radius() * scale, old.blunt()));
 			}
 			for (LimbChain leg : legs) {
 				leg.origin.mul(scale);
@@ -801,7 +813,8 @@ public final class BodyPlanBuilder {
 	private static void addTeeth(Genome g, List<ToothDef> teeth, int headBone, int jawBone,
 	                             Vector3f headStart, Vector3f headEnd, Vector3f right, Vector3f up,
 	                             Vector3f jawHinge, Vector3f jawTail, float headSize,
-	                             float jawWidth) {
+	                             float jawWidth, float skullR0, float skullR1,
+	                             float jawR0, float jawR1) {
 		float diet = g.raw(Gene.DIET);
 		boolean carnivore = diet > 0.65f;
 		boolean herbivore = diet < 0.35f;
@@ -822,22 +835,41 @@ public final class BodyPlanBuilder {
 		float radius = headSize * (herbivore ? 0.045f : (carnivore ? 0.042f : 0.038f));
 
 		for (int i = 0; i < count; i++) {
-			float along = MathX.lerp(0.40f, 0.90f, (i + 0.5f) / count);
+			// Stopped short of the snout tip: that is where the skull is thinnest, so it is where
+			// a tooth from the other jaw has least to bury itself in.
+			float along = MathX.lerp(0.40f, 0.80f, (i + 0.5f) / count);
 			// An omnivore's front teeth grab and its back teeth crush; that gradient is the tell.
 			float front = 1f - (i / (float) Math.max(1, count - 1));
 			float grow = herbivore ? 1f : MathX.lerp(0.7f, 1.25f, front);
 			boolean blunt = herbivore || (!carnivore && front < 0.5f);
 
+			// A tooth is bone and the jaw it closes against is opaque, so a tip that stops inside
+			// the opposing flesh is invisible and fine. One that runs all the way through and out
+			// the far side is not: that is teeth standing out of the top of the skull and poking
+			// through the underside of the chin. Cap each row against what it closes into.
+			//
+			// Measured, not assumed: at the previous lengths better than a third of all teeth came
+			// out through the other jaw once the mouth shut, worst on thin mandibles where a long
+			// upper fang had barely a centimetre of bone to bury itself in.
+			float skullHalf = MathX.lerp(skullR0, skullR1, along);
+			float jawHalf = MathX.lerp(jawR0, jawR1, along);
+			// An upper tooth may cross its own skull and bury itself part way into the mandible
+			// below; a lower one the reverse. Past that it comes out the far side.
+			float upperExtent = skullHalf + CLOSED_BITE_CLEARANCE * 2f * jawHalf;
+			float lowerExtent = jawHalf + CLOSED_BITE_CLEARANCE * 2f * skullHalf;
+
 			for (int s = -1; s <= 1; s += 2) {
 				// Upper row: rooted on the skull's axis, growing down and out into the mouth.
 				Vector3f upperRoot = new Vector3f(headStart).lerp(headEnd, along);
 				Vector3f downOut = new Vector3f(up).negate().fma(s * splay, right).normalize();
-				teeth.add(new ToothDef(headBone, upperRoot, downOut, reach * grow, radius, blunt));
+				teeth.add(new ToothDef(headBone, upperRoot, downOut, reach * grow,
+						upperExtent, radius, blunt));
 
 				// Lower row: rooted on the mandible's axis, growing up and out to meet it.
 				Vector3f lowerRoot = new Vector3f(jawHinge).lerp(jawTail, along);
 				Vector3f upOut = new Vector3f(up).fma(s * splay, right).normalize();
-				teeth.add(new ToothDef(jawBone, lowerRoot, upOut, reach * grow, radius, blunt));
+				teeth.add(new ToothDef(jawBone, lowerRoot, upOut, reach * grow,
+						lowerExtent, radius, blunt));
 			}
 		}
 	}

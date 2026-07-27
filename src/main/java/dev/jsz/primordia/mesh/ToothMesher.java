@@ -74,9 +74,16 @@ public final class ToothMesher {
 			if (axis.lengthSquared() < 1e-8f) continue;
 			axis.normalize();
 
+			// The marched surface decides where the gum is; the plan's ceiling decides how far
+			// past it the tooth may go. The march is the larger term of the two — a root sits on
+			// the bone axis, so it has the whole thickness of the jaw to cross before it emerges
+			// — which is why capping the protrusion alone changed nothing measurable.
 			float emerges = surfaceDistance(sdf, tooth.root(), axis, tooth.radius());
+			float extent = Math.min(emerges + tooth.protrusion(), tooth.maxExtent());
+			// Never inverted, however tight the ceiling: a tooth still has to leave the gum.
+			extent = Math.max(extent, emerges + tooth.radius() * 0.5f);
 			base.set(tooth.root());
-			tip.set(tooth.root()).fma(emerges + tooth.protrusion(), axis);
+			tip.set(tooth.root()).fma(extent, axis);
 			float length = base.distance(tip);
 			if (length < 1e-6f) continue;
 

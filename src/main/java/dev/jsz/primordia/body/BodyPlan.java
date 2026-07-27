@@ -36,6 +36,22 @@ public final class BodyPlan {
 	 */
 	public final float jawRestAngle;
 
+	/**
+	 * Fraction of the baked gape a creature holds even at rest — animals close their jaws, they do
+	 * not clench them.
+	 * <p>
+	 * Lives here rather than in the animator because the mesher needs it too: it decides how long
+	 * a tooth can be without fouling the other jaw, and the pose it must check against is the
+	 * tightest one the creature ever actually adopts. Solving against a fully shut mouth instead
+	 * rejects teeth for colliding in a pose that never occurs.
+	 */
+	public static final float JAW_REST_SLACK = 0.06f;
+
+	/** The tightest the mouth ever closes, in radians of jaw rotation. */
+	public float tightestJawClosure() {
+		return jawRestAngle * (1f - JAW_REST_SLACK);
+	}
+
 	/** Bind-pose height of the hip above the ground plane (y = 0). */
 	public final float hipHeight;
 	/** Overall bind-pose bounding box in model space, padded to include the blend radius. */

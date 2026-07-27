@@ -51,11 +51,6 @@ public final class CreatureAnimator {
 	 */
 	private static final float TAIL_COUNTER_LEAN = 0.65f;
 
-	/**
-	 * Fraction of the baked gape a creature holds at rest, so the mouth is not sealed shut.
-	 * Animals close their jaws; they do not clamp them.
-	 */
-	private static final float JAW_REST_SLACK = 0.06f;
 
 	/** Share of terrain pitch taken by rigid body rotation; the remainder bends the spine. */
 	private static final float ROOT_PITCH_SHARE = 0.55f;
@@ -601,7 +596,7 @@ public final class CreatureAnimator {
 
 		// Panting while moving, slow breathing at rest, over a floor that keeps the mouth from
 		// clamping perfectly shut.
-		float ambient = JAW_REST_SLACK + (ctx.speed > IDLE_SPEED
+		float ambient = BodyPlan.JAW_REST_SLACK + (ctx.speed > IDLE_SPEED
 				? 0.10f + 0.07f * (float) Math.sin(ctx.time * 6.5)
 				: 0.02f + 0.02f * (float) Math.sin(ctx.time * 1.5));
 

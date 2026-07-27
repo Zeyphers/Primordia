@@ -54,7 +54,7 @@ public final class BodyPlanBuilder {
 	 * side of it. Teeth interpenetrating the flesh they close against are invisible — both are
 	 * opaque — but a tooth that runs the whole way through stands out of the top of the skull.
 	 */
-	private static final float CLOSED_BITE_CLEARANCE = 0.62f;
+	private static final float CLOSED_BITE_CLEARANCE = 0.15f;
 
 	/** Spine parameter the front-most pair of legs attaches at. */
 	private static final float FOREMOST_LEG_U = 0.88f;
@@ -603,7 +603,7 @@ public final class BodyPlanBuilder {
 			for (int i = 0; i < teeth.size(); i++) {
 				ToothDef old = teeth.get(i);
 				teeth.set(i, new ToothDef(old.bone(), new Vector3f(old.root()).mul(scale),
-						old.direction(), old.protrusion() * scale, old.maxExtent() * scale,
+						old.direction(), old.protrusion() * scale, old.maxProtrusion() * scale,
 						old.radius() * scale, old.blunt()));
 			}
 			for (LimbChain leg : legs) {
@@ -853,23 +853,23 @@ public final class BodyPlanBuilder {
 			// upper fang had barely a centimetre of bone to bury itself in.
 			float skullHalf = MathX.lerp(skullR0, skullR1, along);
 			float jawHalf = MathX.lerp(jawR0, jawR1, along);
-			// An upper tooth may cross its own skull and bury itself part way into the mandible
-			// below; a lower one the reverse. Past that it comes out the far side.
-			float upperExtent = skullHalf + CLOSED_BITE_CLEARANCE * 2f * jawHalf;
-			float lowerExtent = jawHalf + CLOSED_BITE_CLEARANCE * 2f * skullHalf;
+			// Past the gum, an upper tooth has only the mandible's thickness to bury itself in
+			// before it comes out the underside; a lower one has the skull's.
+			float upperAllowance = CLOSED_BITE_CLEARANCE * 2f * jawHalf;
+			float lowerAllowance = CLOSED_BITE_CLEARANCE * 2f * skullHalf;
 
 			for (int s = -1; s <= 1; s += 2) {
 				// Upper row: rooted on the skull's axis, growing down and out into the mouth.
 				Vector3f upperRoot = new Vector3f(headStart).lerp(headEnd, along);
 				Vector3f downOut = new Vector3f(up).negate().fma(s * splay, right).normalize();
 				teeth.add(new ToothDef(headBone, upperRoot, downOut, reach * grow,
-						upperExtent, radius, blunt));
+						upperAllowance, radius, blunt));
 
 				// Lower row: rooted on the mandible's axis, growing up and out to meet it.
 				Vector3f lowerRoot = new Vector3f(jawHinge).lerp(jawTail, along);
 				Vector3f upOut = new Vector3f(up).fma(s * splay, right).normalize();
 				teeth.add(new ToothDef(jawBone, lowerRoot, upOut, reach * grow,
-						lowerExtent, radius, blunt));
+						lowerAllowance, radius, blunt));
 			}
 		}
 	}

@@ -16,10 +16,14 @@ Nothing about a creature is authored. There are no models, no textures, no anima
 meshed, coloured, and walks with full procedural IK. Taming, saddling, and riding work. Predation,
 diet-based temperament, foraging, and breeding are functional.
 
-**Verified:** compiles clean against Minecraft 1.21.1, and all 63 tests pass — covering genome
+**Verified:** compiles clean against Minecraft 1.21.1, and all 76 tests pass — covering genome
 serialisation, body-plan generation over hundreds of random genomes, bind-pose skinning
 correctness, IK convergence, mesh validity, knee stability, limb separation and intersection,
-archetype coverage, ornament reachability, and the hinged jaw.
+archetype coverage, ornament reachability, the hinged jaw, dentition, and quad winding.
+
+New here: start with [`HANDOFF.md`](HANDOFF.md) for the current state and how to build and run, and
+read [`docs/PITFALLS.md`](docs/PITFALLS.md) before changing the geometry pipeline — it lists the
+failure modes that leave the body plan valid and the tests green while the creature is wrong.
 
 **Current deployed version:** `primordia-0.1.2.jar` in Modrinth App profile.
 
@@ -219,6 +223,16 @@ The suite fuzzes hundreds of random genomes against the invariants that have no 
   that rotation is one character and a jaw closing up into the braincase looks, from most camera
   angles, merely odd — so the test measures the hinge in the skull's own frame rather than in
   world space, where head pitch would swamp it.
+- **`ToothClippingTest`** — no tooth comes through the jaw it closes against once the mouth shuts.
+  Only observable in the closed pose: the mesh is baked with the mouth wide open, where every tooth
+  sits harmlessly in the gap. It reads baked mesh vertices rather than recomputing where teeth
+  ought to be, because an earlier version that recomputed them reported no clipping while creatures
+  were visibly full of it.
+- **`QuadWindingTest`** — quads face the way their shading normals point. Invisible in vanilla,
+  which lights entities from the vertex normal alone; shader packs branch on `gl_FrontFacing` and
+  render a mis-wound quad inside-out.
+- **`PoseWalkTest`** — a stationary creature fed a walking speed still moves its feet, which is what
+  the `/primordia test` grid depends on.
 - **`OrnamentTest`** — every horn type, tail shape and glow region is reachable from some genome
   and meshes. These traits have no invariant of their own to break — a hornless creature is
   perfectly valid — so the thing worth testing is that no branch of the generator is unreachable,

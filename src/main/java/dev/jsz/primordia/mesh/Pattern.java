@@ -97,10 +97,6 @@ public final class Pattern {
 			// is exactly what makes them look grown onto the animal instead of painted on it.
 			case HORN -> dest.lerp(KERATIN, 0.55f).mul(0.92f);
 			case TUSK -> dest.lerp(KERATIN, 0.78f);
-			// Near-white and largely independent of the hide. Teeth are frequently smaller than a
-			// sampling cell, so their geometry alone may barely register — the colour is what
-			// makes a jaw line read as a jaw line when the mesh can only half resolve it.
-			case TOOTH -> dest.lerp(KERATIN, 0.88f).mul(1.06f);
 			case BEAK -> dest.lerp(palette.secondary, 0.45f).mul(0.72f);
 			case EAR -> dest.mul(0.88f);
 			// Frills and fins are thin membrane: they catch more light and show more of the

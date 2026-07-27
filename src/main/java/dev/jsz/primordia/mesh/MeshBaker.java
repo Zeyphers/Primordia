@@ -124,8 +124,51 @@ public final class MeshBaker {
 
 		alignWindingToNormals(positions, normals, quads);
 
+		// Teeth are appended after everything above, not folded into it. They never went through
+		// the field, so they need none of the smoothing, skin binding or winding correction that
+		// the body's surface does — they are already exactly the shape and orientation they should
+		// be, and running them through any of it would only round them off again.
+		ToothMesher.Result teeth = ToothMesher.build(plan, sdf);
+		if (teeth.vertexCount() > 0) {
+			int base = vertexCount;
+			positions = concat(positions, teeth.positions());
+			normals = concat(normals, teeth.normals());
+			colors = concat(colors, teeth.colors());
+			emissive = concat(emissive, teeth.emissive());
+			boneWeights = concat(boneWeights, teeth.boneWeights());
+			boneIndices = concat(boneIndices, teeth.boneIndices());
+
+			int[] toothQuads = teeth.quads();
+			int[] merged = java.util.Arrays.copyOf(quads, quads.length + toothQuads.length);
+			for (int i = 0; i < toothQuads.length; i++) {
+				merged[quads.length + i] = toothQuads[i] + base;
+			}
+			quads = merged;
+
+			for (int i = 0; i < teeth.positions().length; i += 3) {
+				minX = Math.min(minX, teeth.positions()[i]);
+				maxX = Math.max(maxX, teeth.positions()[i]);
+				minY = Math.min(minY, teeth.positions()[i + 1]);
+				maxY = Math.max(maxY, teeth.positions()[i + 1]);
+				minZ = Math.min(minZ, teeth.positions()[i + 2]);
+				maxZ = Math.max(maxZ, teeth.positions()[i + 2]);
+			}
+		}
+
 		return new MeshData(positions, normals, colors, emissive, boneIndices, boneWeights, quads,
 				minX, minY, minZ, maxX, maxY, maxZ);
+	}
+
+	private static float[] concat(float[] a, float[] b) {
+		float[] out = java.util.Arrays.copyOf(a, a.length + b.length);
+		System.arraycopy(b, 0, out, a.length, b.length);
+		return out;
+	}
+
+	private static int[] concat(int[] a, int[] b) {
+		int[] out = java.util.Arrays.copyOf(a, a.length + b.length);
+		System.arraycopy(b, 0, out, a.length, b.length);
+		return out;
 	}
 
 	/**
@@ -245,9 +288,9 @@ public final class MeshBaker {
 	private static int resolutionFor(BodyPlan plan, int requested) {
 		float span = Math.max(plan.boundsMax.x - plan.boundsMin.x,
 				Math.max(plan.boundsMax.y - plan.boundsMin.y, plan.boundsMax.z - plan.boundsMin.z));
-		if (plan.minFeatureRadius <= 1e-5f || span <= 1e-5f) return requested;
+		if (plan.minLimbRadius <= 1e-5f || span <= 1e-5f) return requested;
 
-		int needed = (int) Math.ceil(span / (plan.minFeatureRadius * 0.9f));
+		int needed = (int) Math.ceil(span / (plan.minLimbRadius * 0.9f));
 		// Never below the tier's own resolution, never far above it, never past the ceiling.
 		int ceiling = Math.min(Math.round(requested * 1.8f), LodTier.maxResolution());
 		return Math.max(requested, Math.min(needed, ceiling));

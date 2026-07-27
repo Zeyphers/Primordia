@@ -23,8 +23,6 @@ public enum Feature {
 	HORN,
 	/** Enlarged tooth projecting past the lip. */
 	TUSK,
-	/** One of the rows along the jaw lines. */
-	TOOTH,
 	/** Hard keratin sheath over the front of the jaw. */
 	BEAK,
 	/** External ear. */
@@ -51,7 +49,7 @@ public enum Feature {
 	public boolean isSurfaceDetail() {
 		return switch (this) {
 			// Hard keratin and sensory organs: these want a crisp base where they leave the hide.
-			case EYE, EYE_STALK, CLAWS, SPINE, HAND, HORN, TUSK, TOOTH, BEAK, EAR, FRILL, FIN -> true;
+			case EYE, EYE_STALK, CLAWS, SPINE, HAND, HORN, TUSK, BEAK, EAR, FRILL, FIN -> true;
 			// Armour plating and light organs are part of the flesh, not mounted on it. Hard
 			// unioning them left a row of discs and balls stuck to the body with a visible rim
 			// around each; they belong in the smooth union with the cranium and the jaw.

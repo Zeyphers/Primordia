@@ -55,22 +55,16 @@ public final class BodyPlan {
 	public final float minLimbRadius;
 
 	/**
-	 * Radius of the smallest feature of any kind, limbs included. This is what the mesher sizes
-	 * its cells against.
-	 * <p>
-	 * Kept apart from {@link #minLimbRadius} because the two answer different questions. That one
-	 * is a statement about limbs — it bounds the blend radius, and a creature whose legs are too
-	 * slender is a bad creature. This one is a statement about sampling, and a tooth being finer
-	 * than a leg says nothing about the leg. Folding teeth into the limb figure made every
-	 * toothed creature look like it had failed the slenderness invariant.
+	 * Teeth, as geometry emitted outside the signed distance field entirely. See {@link ToothDef}.
 	 */
-	public final float minFeatureRadius;
+	public final ToothDef[] teeth;
 
 	public BodyPlan(Genome genome, BoneDef[] bones, SdfBlob[] blobs, LimbChain[] legs, LimbChain[] arms,
 	                BodyPalette palette, float blendRadius, int rootBone, int headBone, int jawBone,
 	                float jawRestAngle, float hipHeight, Vector3f boundsMin, Vector3f boundsMax,
-	                float bodyLength, float mass, float minLimbRadius, float minFeatureRadius) {
-		this.minFeatureRadius = minFeatureRadius;
+	                ToothDef[] teeth,
+	                float bodyLength, float mass, float minLimbRadius) {
+		this.teeth = teeth;
 		this.jawBone = jawBone;
 		this.jawRestAngle = jawRestAngle;
 		this.genome = genome;

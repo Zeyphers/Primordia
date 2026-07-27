@@ -67,6 +67,7 @@ public final class BodyPlanBuilder {
 		List<SdfBlob> blobs = new ArrayList<>();
 		List<LimbChain> legs = new ArrayList<>();
 		List<LimbChain> arms = new ArrayList<>();
+		List<ToothDef> teeth = new ArrayList<>();
 		// Group 0 is the trunk; each limb claims the next id as it is built.
 		int nextBlendGroup = BoneDef.AXIAL + 1;
 
@@ -249,8 +250,8 @@ public final class BodyPlanBuilder {
 						jawLength * 0.44f),
 				Feature.JAW, false));
 
-		addTeeth(g, blobs, headBone, jawBone, cursor, headTail, headRight, headUp,
-				jawHinge, jawTail, headSize, jawWidth, blendRadius);
+		addTeeth(g, teeth, headBone, jawBone, cursor, headTail, headRight, headUp,
+				jawHinge, jawTail, headSize, jawWidth);
 
 		// ---- abdomen ----------------------------------------------------------
 		// A high BODY_SEGMENTATION splits the trunk into a cephalothorax and a separate abdomen
@@ -539,16 +540,7 @@ public final class BodyPlanBuilder {
 			if (b.feature != Feature.LIMB && b.feature != Feature.FOOT && b.feature != Feature.TAIL) continue;
 			minLimbRadius = Math.min(minLimbRadius, Math.min(b.radiusHead, b.radiusTail));
 		}
-		// Teeth are finer than any limb, and the mesher has to know or it sizes its cells against
-		// the legs and samples straight past them — measured at a fifth of a cell across, which is
-		// not a coarse tooth but no tooth at all. Tracked separately from the limb figure, which
-		// is an invariant about limbs and not about sampling.
-		float minFeatureRadius = minLimbRadius;
-		for (SdfBlob blob : blobArray) {
-			if (blob.feature() != Feature.TOOTH) continue;
-			minFeatureRadius = Math.min(minFeatureRadius,
-					Math.min(blob.radii().x, Math.min(blob.radii().y, blob.radii().z)));
-		}
+
 		// Enforce maximum height cap of 2.5 meters tall
 		float rawHeight = max.y - Math.min(0f, min.y);
 		if (rawHeight > 2.5f) {
@@ -575,6 +567,12 @@ public final class BodyPlanBuilder {
 				Vector3f r = new Vector3f(old.radii()).mul(scale);
 				blobArray[i] = new SdfBlob(old.bone(), c, r, old.feature(), old.subtract());
 			}
+			for (int i = 0; i < teeth.size(); i++) {
+				ToothDef old = teeth.get(i);
+				teeth.set(i, new ToothDef(old.bone(), new Vector3f(old.root()).mul(scale),
+						old.direction(), old.protrusion() * scale, old.radius() * scale,
+						old.blunt()));
+			}
 			for (LimbChain leg : legs) {
 				leg.origin.mul(scale);
 				leg.restEffector.mul(scale);
@@ -588,8 +586,9 @@ public final class BodyPlanBuilder {
 		return new BodyPlan(g, boneArray, blobArray,
 				legs.toArray(new LimbChain[0]), arms.toArray(new LimbChain[0]),
 				new BodyPalette(g), blendRadius, rootBone, headBone, jawBone,
-				(float) Math.atan(JAW_BIND_OPEN) * 0.88f, hipHeight,
-				min, max, bodyLength, mass, minLimbRadius, minFeatureRadius);
+				(float) Math.atan(JAW_BIND_OPEN) * 0.88f, hipHeight, min, max,
+				teeth.toArray(new ToothDef[0]),
+				bodyLength, mass, minLimbRadius);
 	}
 
 	// ------------------------------------------------------------------ helpers
@@ -759,79 +758,62 @@ public final class BodyPlanBuilder {
 	}
 
 	/**
-	 * Teeth along both jaw lines: the upper row on the skull, the lower on the mandible, so they
-	 * part when the mouth opens.
+	 * Teeth along both jaw lines: the upper row pinned to the skull, the lower to the mandible, so
+	 * they part when the mouth opens.
 	 * <p>
-	 * Sized far larger than a real animal's, and deliberately. Surface Nets only emits geometry
-	 * where the sampled field changes sign, so anything narrower than one sampling cell falls
-	 * between the samples and is not coarse but absent — the first version of these came out a
-	 * fifth of a cell across and never appeared at all. They are floored against the blend radius
-	 * too, or the smooth union simply absorbs them back into the gum.
+	 * These are {@link ToothDef}s, not blobs in the signed distance field, and that is the whole
+	 * point. Anything in the field goes through the smooth union that fairs limbs into hips, which
+	 * rounds a tooth off and melts it into the lip — a mouth of them came out as white lumps. They
+	 * are also finer than one sampling cell, so most did not survive the mesher at all.
+	 * <p>
+	 * Each is rooted <i>inside</i> the gum and protrudes from it. The buried part is simply hidden
+	 * by the flesh drawn over it, which costs nothing and means no seam can show at the gum line
+	 * however the body around it happens to be meshed.
 	 * <p>
 	 * Diet drives the shape, and it is the one cue that says what an animal eats before it does
-	 * anything: a carnivore gets a few long fangs, a herbivore a continuous blunt grinding ridge,
-	 * and an omnivore the mixed dentition that actually distinguishes one — a couple of grabbing
-	 * teeth at the front and flat crushing ones behind.
+	 * anything: a carnivore gets a few long points, a herbivore a dense row of short blunt
+	 * grinders, and an omnivore the mixed dentition that actually distinguishes one — grabbing
+	 * teeth at the front and crushing ones behind.
 	 */
-	private static void addTeeth(Genome g, List<SdfBlob> blobs, int headBone, int jawBone,
+	private static void addTeeth(Genome g, List<ToothDef> teeth, int headBone, int jawBone,
 	                             Vector3f headStart, Vector3f headEnd, Vector3f right, Vector3f up,
 	                             Vector3f jawHinge, Vector3f jawTail, float headSize,
-	                             float jawWidth, float blendRadius) {
+	                             float jawWidth) {
 		float diet = g.raw(Gene.DIET);
-		// Chunky enough to survive meshing at the tier the creature is most often seen at.
-		float unit = Math.max(headSize * 0.085f, blendRadius * 1.35f);
-		// Nothing narrower than this survives the smooth union that fairs the gum.
-		float minTooth = blendRadius * 1.25f;
-		float lateral = headSize * 0.16f * Math.min(jawWidth, 1.5f);
-
-		if (diet < 0.35f) {
-			// Herbivore: a continuous ridge on each side rather than separate teeth. Grinding
-			// dentition has no gaps in it, and at this resolution individual molars would merge
-			// into a ridge anyway — better to model the ridge than to pretend.
-			for (int s = -1; s <= 1; s += 2) {
-				Vector3f upper = jawLinePoint(headStart, headEnd, right, up, s, lateral, -0.19f, 0.66f, headSize);
-				Vector3f lower = jawLinePoint(jawHinge, jawTail, right, up, s, lateral * 0.92f, 0.10f, 0.66f, headSize);
-				Vector3f ridge = new Vector3f(Math.max(unit * 0.85f, minTooth),
-						Math.max(unit * 0.55f, minTooth),
-						headStart.distance(headEnd) * 0.22f);
-				blobs.add(new SdfBlob(headBone, upper, ridge, Feature.TOOTH, false));
-				blobs.add(new SdfBlob(jawBone, lower, ridge, Feature.TOOTH, false));
-			}
-			return;
-		}
-
 		boolean carnivore = diet > 0.65f;
-		int count = carnivore ? 3 : 4;
+		boolean herbivore = diet < 0.35f;
+
+		int count = herbivore ? 5 : (carnivore ? 3 : 4);
+		// The row is splayed by tilting each tooth outward, not by moving its root out to the
+		// cheek. A root offset sideways sits outside a narrow mandible entirely and the tooth
+		// floats free of the face; on the bone's own axis it is buried whatever the jaw's girth,
+		// and the mesher walks outward from there to wherever the flesh actually ends.
+		float splay = 0.42f * Math.min(jawWidth, 1.6f);
+		// How far the point stands clear of the gum. The mesher measures this outward from the
+		// flesh itself, not from the bone axis: the skull and the mandible carry different depths
+		// of it, and an offset from the axis left one whole row buried inside the lip.
+		float reach = headSize * (herbivore ? 0.10f : (carnivore ? 0.28f : 0.17f));
+		float radius = headSize * (herbivore ? 0.045f : (carnivore ? 0.042f : 0.038f));
+
 		for (int i = 0; i < count; i++) {
-			float along = MathX.lerp(0.44f, 0.90f, (i + 0.5f) / count);
-			// An omnivore's front teeth grab and its back teeth crush, which is the whole tell.
+			float along = MathX.lerp(0.40f, 0.90f, (i + 0.5f) / count);
+			// An omnivore's front teeth grab and its back teeth crush; that gradient is the tell.
 			float front = 1f - (i / (float) Math.max(1, count - 1));
-			float length = carnivore
-					? unit * MathX.lerp(1.5f, 2.4f, front)
-					: unit * MathX.lerp(0.75f, 1.9f, front);
-			float width = Math.max(minTooth,
-					carnivore ? unit * 0.62f : unit * MathX.lerp(0.95f, 0.62f, front));
-			length = Math.max(length, minTooth);
+			float grow = herbivore ? 1f : MathX.lerp(0.7f, 1.25f, front);
+			boolean blunt = herbivore || (!carnivore && front < 0.5f);
 
 			for (int s = -1; s <= 1; s += 2) {
-				Vector3f upper = jawLinePoint(headStart, headEnd, right, up, s, lateral, -0.19f, along, headSize);
-				blobs.add(new SdfBlob(headBone, new Vector3f(upper).fma(-length * 0.45f, up),
-						new Vector3f(width, length, width), Feature.TOOTH, false));
+				// Upper row: rooted on the skull's axis, growing down and out into the mouth.
+				Vector3f upperRoot = new Vector3f(headStart).lerp(headEnd, along);
+				Vector3f downOut = new Vector3f(up).negate().fma(s * splay, right).normalize();
+				teeth.add(new ToothDef(headBone, upperRoot, downOut, reach * grow, radius, blunt));
 
-				Vector3f lower = jawLinePoint(jawHinge, jawTail, right, up, s, lateral * 0.92f, 0.10f, along, headSize);
-				blobs.add(new SdfBlob(jawBone, new Vector3f(lower).fma(length * 0.45f, up),
-						new Vector3f(width, length, width), Feature.TOOTH, false));
+				// Lower row: rooted on the mandible's axis, growing up and out to meet it.
+				Vector3f lowerRoot = new Vector3f(jawHinge).lerp(jawTail, along);
+				Vector3f upOut = new Vector3f(up).fma(s * splay, right).normalize();
+				teeth.add(new ToothDef(jawBone, lowerRoot, upOut, reach * grow, radius, blunt));
 			}
 		}
-	}
-
-	/** A point on one side of a jaw line, offset out to the cheek and up or down off the axis. */
-	private static Vector3f jawLinePoint(Vector3f from, Vector3f to, Vector3f right, Vector3f up,
-	                                     int side, float lateral, float vertical, float along,
-	                                     float headSize) {
-		return new Vector3f(from).lerp(to, along)
-				.fma(side * lateral, right)
-				.fma(headSize * vertical, up);
 	}
 
 	/** Beak sheath and tusks — the two ways a jaw can advertise what it eats. */

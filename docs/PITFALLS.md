@@ -201,3 +201,89 @@ draw, and adding an unrelated gene — which shifts the whole sequence — broke
 
 Adding a gene changes `Gene.COUNT`, which changes what `Genome.random` produces for every locus.
 Expect unrelated statistical tests to move.
+
+---
+
+## 13. A correct record and a wrong world
+
+`RegionMaterialiser.topUp` walked the region's lineage list spawning as many of each as it could
+fit. With an entity budget of ten and a first lineage of forty animals, the first lineage took all
+ten slots — every time. A region recorded as holding four species put ten individuals of one species
+on the ground, and did it consistently enough that the whole explored map looked like a monoculture.
+
+Everything upstream was right. The ledger held four lineages with sensible populations,
+`/primordia region` listed all four, the population round-trip test passed, determinism passed, the
+food-chain test passed. Nothing was lost, double-counted, or out of range. The *record* was a
+faithful description of an ecology that the world was not rendering.
+
+This is the ledger's version of §5: a self-consistent frame. Every test asked whether the numbers
+were right, and they were. None asked whether the numbers reached the player.
+
+Two things worth carrying forward:
+
+- **The tell came from an unrelated system.** `TamingPreference` keys a creature's favourite food
+  off its lineage id, so "every animal for a hundred blocks wants sugar cane" was a direct readout of
+  lineage identity that nothing was designed to provide. When a symptom seems oddly specific, it is
+  often a coincidental probe into state that has no deliberate display.
+- **Proportional allocation starves the rare.** The obvious fix — split the budget by population
+  share — still gave the smallest lineage nothing, because rounding and a greedy left-to-right pass
+  exhausted the budget first. Given the trophic pyramid puts predators at the bottom of the
+  population table, the animal that vanishes is always the interesting one. `allocate` now reserves
+  one slot per lineage present *before* distributing the remainder, and lives outside the spawning
+  code so the test drives the real arithmetic rather than a copy of it (§6).
+
+---
+
+## 14. One-way selection is a ratchet, not a pressure
+
+`RegionSimulation.select` nudged `SIZE` by `-hunger` and nothing else. Satisfaction is almost never a
+clean 1.0, so the push was always downward, and a region's pre-history runs a few hundred steps
+before a player ever sees it. Every lineage in the world arrived pinned at minimum body size. There
+were no large animals anywhere, in any biome, on any seed.
+
+Nothing looked broken. A world of small animals is a perfectly plausible world, every population was
+stable, and the trophic pyramid was intact — it was just a pyramid of small things.
+
+Several other loci had the same shape: `METABOLISM` pushed only down, and `SPEED`, `STAMINA`,
+`ARMOR`, `FEAR` and `FECUNDITY` pushed only up under any predation at all. All of them would have
+railed given enough steps.
+
+**A selection term with no opposing cost is a ratchet.** Over a long enough run it does not produce
+an adapted population, it produces a saturated one, and it does it identically everywhere — which
+destroys exactly the variety the generator exists to produce. Every trait now has a cost on the
+other side: size is bounded by hunger below and predation above, speed and armour cost food to
+carry, vigilance costs foraging time.
+
+The test to keep is `selectionDoesNotPinTraitsAtTheirExtremes`, which founds sixty regions and
+asserts that every pushed locus still spans a range across the world. It is deliberately a check on
+the *spread across regions*, not on any one value: a single lineage sitting at an extreme is a
+legitimate adaptation, and a whole world sitting there is a bug.
+
+---
+
+## 15. A fixed proportion is a fixed silhouette
+
+Every creature came out looking like a dog. The head is a cranium blob plus a muzzle blob, and the
+muzzle was placed at a fixed two thirds along the skull with a fixed forward extent. `JAW_SIZE`
+scaled it and `JAW_WIDTH` made it broader or narrower — a crocodile snout and a weasel snout were
+both reachable — but the *proportion* between braincase and face never moved, so the silhouette was
+one shape at every point in the gene space.
+
+The missing axis was the one nobody had written down: how far the face carries in front of the
+braincase. Flat-faced animals are not animals with small muzzles, they are animals whose muzzle is
+broad and set back into the skull, so the fix moves the blob's position and swaps forward extent for
+width and depth as it retreats.
+
+Two things this cost time on:
+
+- **`SNOUT_TYPE` was already there and doing nothing.** It gated a beak above 0.68 and its whole
+  lower range was dead. A locus that only expresses past a threshold is a locus with unused range.
+- **Blending several genes to make a new axis narrows it.** The first attempt averaged three loci,
+  which by the central limit theorem concentrates the result around the middle — flat and long faces
+  both became rare and almost everything still came out mid-muzzled. A new axis wants one dominant
+  locus with light modulation, not a fair blend.
+
+`HeadProfileTest` measures the head's whole fore-aft extent against its width, reading baked blobs
+rather than recomputing from the genome (§6), and asserts both ends of the range are actually
+reachable — the same thing `OrnamentTest` exists to check, for the same reason: no single head is
+invalid, so reachability is all there is to test.

@@ -23,7 +23,19 @@ public enum CreatureActivity {
 	/** Head-down charge. */
 	RAM(18),
 	/** Foreleg raised high and slammed down. */
-	STOMP(24);
+	STOMP(24),
+	/**
+	 * Asleep or resting through the inactive half of its cycle. Ambient: it persists until the
+	 * creature decides to get up, so it is not on a timer like an attack is.
+	 */
+	SLEEP(0),
+	/** Head down at a carcass, tearing. */
+	FEED(60),
+	/**
+	 * Dead and lying where it fell. Ambient, and terminal — nothing transitions out of it.
+	 * Set on the carcass a creature leaves behind when something else kills it.
+	 */
+	CARCASS(0);
 
 	public static final CreatureActivity[] VALUES = values();
 

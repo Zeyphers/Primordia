@@ -14,6 +14,12 @@ import dev.jsz.primordia.body.Feature;
 import dev.jsz.primordia.body.HornType;
 import dev.jsz.primordia.body.SdfBlob;
 import dev.jsz.primordia.body.TailShape;
+import dev.jsz.primordia.ecology.region.LineageRecord;
+import dev.jsz.primordia.ecology.region.RegionLedger;
+import dev.jsz.primordia.ecology.region.RegionMaterialiser;
+import dev.jsz.primordia.ecology.region.RegionPos;
+import dev.jsz.primordia.ecology.region.RegionRecord;
+import dev.jsz.primordia.ecology.region.RegionSimulation;
 import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
@@ -28,6 +34,7 @@ import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 
@@ -87,6 +94,8 @@ public final class PrimordiaCommands {
 										.executes(ctx -> clear(ctx, IntegerArgumentType.getInteger(ctx, "radius")))))
 						.then(CommandManager.literal("info")
 								.executes(PrimordiaCommands::info))
+						.then(CommandManager.literal("region")
+								.executes(PrimordiaCommands::region))
 						.then(CommandManager.literal("breed")
 								.executes(PrimordiaCommands::breed))
 						.then(CommandManager.literal("mutate")
@@ -336,8 +345,44 @@ public final class PrimordiaCommands {
 				genome.raw(Gene.SOCIABILITY), genome.raw(Gene.MUTABILITY))), false);
 		source.sendFeedback(() -> Text.literal("  " + describeAnatomy(genome, plan))
 				.formatted(Formatting.GRAY), false);
+		source.sendFeedback(() -> Text.literal("  " + describeEcology(creature, genome))
+				.formatted(Formatting.GREEN), false);
 		source.sendFeedback(() -> Text.literal("  " + genome.encode()).formatted(Formatting.DARK_GRAY), false);
 		return 1;
+	}
+
+	/**
+	 * The creature's ecological state: how fed it is, what that makes it willing to do, and how far
+	 * through its life it is.
+	 * <p>
+	 * Energy is the gate on hunting, foraging and breeding and is not replicated to clients or shown
+	 * anywhere else, so without this line there is no way to tell a predator that has just eaten
+	 * from one that is broken.
+	 */
+	private static String describeEcology(CreatureEntity creature, Genome genome) {
+		if (creature.isCarcass()) {
+			return String.format("carcass · %.0f%% remaining",
+					creature.getCarcassNutrition()
+							/ Math.max(0.001f, dev.jsz.primordia.ecology.EnergyBudget
+							.carcassNutrition(BodyPlanCache.get(genome))) * 100f);
+		}
+		String state;
+		if (creature.isAsleep()) {
+			state = "asleep";
+		} else if (creature.wantsToHunt()) {
+			state = "hunting";
+		} else if (creature.isHungry()) {
+			state = "foraging";
+		} else {
+			state = "fed";
+		}
+		int maturity = dev.jsz.primordia.ecology.EnergyBudget.maturityTicks(genome);
+		return String.format("energy %.0f%% · %s · %s · gen %d",
+				creature.getEnergy() * 100f,
+				state,
+				creature.isMature() ? "adult" : String.format("juvenile (%d%%)",
+						Math.round(100f * creature.getLifeTicks() / (float) maturity)),
+				genome.generation());
 	}
 
 	/**
@@ -447,6 +492,85 @@ public final class PrimordiaCommands {
 		return nearby(source, SEARCH_RADIUS).stream()
 				.min(Comparator.comparingDouble(e -> e.squaredDistanceTo(pos)))
 				.orElse(null);
+	}
+
+	/**
+	 * Reads out the ledger for the region the player is standing in.
+	 * <p>
+	 * The ecology's only window. Almost everything the regional simulation does happens where
+	 * nobody is looking and leaves no trace an observer could read — a population that halved while
+	 * the player was away looks exactly like one that was always that size. Without this the whole
+	 * off-screen layer is unfalsifiable, both to the player and to anyone tuning it.
+	 */
+	private static int region(CommandContext<ServerCommandSource> ctx) {
+		ServerCommandSource source = ctx.getSource();
+		ServerWorld world = source.getWorld();
+		BlockPos pos = BlockPos.ofFloored(source.getPosition());
+		RegionPos regionPos = RegionPos.of(pos);
+		RegionRecord record = RegionLedger.get(world).existing(regionPos);
+
+		if (record == null || !record.founded) {
+			source.sendError(Text.literal("No ecology recorded for " + regionPos
+					+ " yet — it is founded a few seconds after a player arrives."));
+			return 0;
+		}
+
+		long day = world.getTime() / RegionSimulation.TICKS_PER_STEP;
+		source.sendFeedback(() -> Text.literal("── " + regionPos + " ──").formatted(Formatting.AQUA), false);
+		source.sendFeedback(() -> Text.literal(String.format(
+				"  vegetation %.0f%% of %.0f%% capacity · temp %.2f · humidity %.2f",
+				record.vegetation * 100f, record.productivity * 100f,
+				record.temperature, record.humidity)), false);
+		source.sendFeedback(() -> Text.literal(String.format(
+				"  day %d · last simulated day %d · %d lineage(s)",
+				day, record.lastStep, record.lineages.size())).formatted(Formatting.GRAY), false);
+
+		if (record.lineages.isEmpty()) {
+			source.sendFeedback(() -> Text.literal("  no fauna — this region is empty")
+					.formatted(Formatting.DARK_GRAY), false);
+			return 1;
+		}
+
+		for (LineageRecord lineage : record.lineages) {
+			int live = 0;
+			for (CreatureEntity creature : RegionMaterialiser.liveIn(world, regionPos)) {
+				Genome g = creature.getGenome();
+				if (g != null && g.lineage() == lineage.id) live++;
+			}
+			final int liveCount = live;
+			source.sendFeedback(() -> Text.literal(String.format(
+					"  %s %s  pop %.1f (%d live) · mass %.3f · %s · gen %d · var %.2f",
+					trendArrow(lineage.trend()),
+					shortId(lineage.id),
+					lineage.total(), liveCount, lineage.meanMass(),
+					dietLabel(lineage.meanOf(Gene.DIET)),
+					lineage.generation, lineage.variance))
+					.formatted(trendColour(lineage.trend())), false);
+		}
+		return 1;
+	}
+
+	private static String trendArrow(float trend) {
+		if (trend > 0.5f) return "▲";
+		if (trend < -0.5f) return "▼";
+		return "·";
+	}
+
+	private static Formatting trendColour(float trend) {
+		if (trend > 0.5f) return Formatting.GREEN;
+		if (trend < -0.5f) return Formatting.RED;
+		return Formatting.WHITE;
+	}
+
+	private static String dietLabel(float diet) {
+		if (diet < 0.35f) return String.format("herbivore %.2f", diet);
+		if (diet < 0.65f) return String.format("omnivore %.2f", diet);
+		return String.format("carnivore %.2f", diet);
+	}
+
+	private static String shortId(long lineage) {
+		String hex = Long.toHexString(lineage);
+		return hex.substring(0, Math.min(6, hex.length()));
 	}
 
 	private static String describe(Genome genome) {

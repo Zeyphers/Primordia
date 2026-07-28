@@ -45,6 +45,15 @@ public final class AnimationContext {
 	/** Progress through a timed activity, 0 to 1. Meaningless for ambient states. */
 	public float activityProgress;
 
+	/**
+	 * How far the body has gone slack, 0 upright to 1 lying down. Driven by sleeping and by death.
+	 * <p>
+	 * Separate from {@link #activity} rather than another case in its switch, because it is not a
+	 * behaviour with a duration — it is a state the body is held in, and the axial passes need to
+	 * read it every frame regardless of what else is going on.
+	 */
+	public float collapse;
+
 	public GroundProbe ground = GroundProbe.flat(0f);
 
 	/** Unit forward vector X component, derived from {@link #bodyYaw}. */

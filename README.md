@@ -16,10 +16,11 @@ Nothing about a creature is authored. There are no models, no textures, no anima
 meshed, coloured, and walks with full procedural IK. Taming, saddling, and riding work. Predation,
 diet-based temperament, foraging, and breeding are functional.
 
-**Verified:** compiles clean against Minecraft 1.21.1, and all 76 tests pass — covering genome
+**Verified:** compiles clean against Minecraft 1.21.1, and all 101 tests pass — covering genome
 serialisation, body-plan generation over hundreds of random genomes, bind-pose skinning
 correctness, IK convergence, mesh validity, knee stability, limb separation and intersection,
-archetype coverage, ornament reachability, the hinged jaw, dentition, and quad winding.
+archetype coverage, ornament reachability, the hinged jaw, dentition, quad winding, the energy
+economy the food web is gated on, and the region ledger the world's memory lives in.
 
 New here: start with [`HANDOFF.md`](HANDOFF.md) for the current state and how to build and run, and
 read [`docs/PITFALLS.md`](docs/PITFALLS.md) before changing the geometry pipeline — it lists the
@@ -30,10 +31,25 @@ failure modes that leave the body plan valid and the tests green while the creat
 | Milestone | What it delivers | State |
 |---|---|---|
 | **M1 — It lives** | Genome → skeleton → SDF → mesh → IK walk cycle | **done, verified in-game** |
-| **M2 — It eats** | Food webs, hunger, foraging, predation, death | **in progress** |
-| M3 — It evolves | Breeding, selection pressure, lineage divergence | genetics layer done, ecology loop partially wired |
-| M4 — It changes things | Grazing, burrowing, nest building, terrain effects | not started |
-| M5 — You study it | Genome scanner item, field journal UI, lineage tree | scanner implemented |
+| **M2 — It eats** | Food webs, hunger, foraging, predation, death | **done** |
+| **M3 — It evolves** | Breeding, selection pressure, lineage divergence | **done, at both entity and region scale** |
+| M4 — It changes things | Grazing, burrowing, nest building, terrain effects | grazing and trails done; dens and nests not started |
+| M5 — You study it | Genome scanner item, field journal UI, lineage tree | scanner and region survey done; journal UI not started |
+
+The ecology is in [`docs/ECOLOGY.md`](docs/ECOLOGY.md) — read it before touching anything under
+`ecology/`. Two simulations run at different scales and hand populations back and forth:
+
+- **Where you are standing**, creatures carry an energy budget, hunt only when hungry, give up a
+  chase they cannot win, leave carcasses rather than item drops, breed on their own, sleep through
+  half of every day, crop the vegetation they eat, and wear paths into the ground.
+- **Everywhere else**, populations are numbers in a per-region ledger that keeps advancing: births,
+  deaths, predation, selection on a mean genome, speciation, extinction, and migration into
+  neighbouring regions — a day of ecology per step, integrated when you come back.
+
+A region is founded from the stock of whatever region is nearest, drifted by the distance, and then
+run through 100–300 days of its own history *before you ever see it*. Walking a long way is
+therefore a biogeographical observation: fauna change gradually with distance, sharply across a
+climate boundary, and an isolated region evolves its own endemics.
 
 The genetics engine (`Mutation`) is complete and tested ahead of M3, because the genome format
 is the hardest thing to change later — everything is keyed by it.
@@ -78,7 +94,8 @@ In-game, with cheats on:
 | `/primordia spawn` | One random creature |
 | `/primordia spawn 10` | Ten of them |
 | `/primordia spawn 5 1234` | Five, reproducibly, from seed 1234 |
-| `/primordia info` | Full breakdown of the nearest creature's genome and body |
+| `/primordia info` | Full breakdown of the nearest creature's genome, body and ecological state |
+| `/primordia region` | The ledger for the region you are standing in: populations, trends, vegetation |
 | `/primordia breed` | Cross the two nearest creatures; reports genetic divergence |
 | `/primordia mutate` | Spawn a mutated clone of the nearest creature |
 | `/primordia clear 32` | Remove creatures within 32 blocks |
@@ -248,6 +265,9 @@ The suite fuzzes hundreds of random genomes against the invariants that have no 
 - Version-sensitive API surface, if porting off 1.21.1: `EntityType.Builder#build(String)` takes a
   `RegistryKey` from 1.21.2, `writeCustomDataToNbt` is renamed in 1.21.5, and the
   `EntityAttributes.GENERIC_*` constants lose their prefix in 1.21.2.
-- Creatures do not spawn naturally yet — they exist only via commands. That lands with M2.
+- Grazing feeds a herbivore but does not yet consume the block, so plant food is effectively
+  infinite. Consuming it needs a regional stock to debit, which is Phase B in `docs/ECOLOGY.md`.
+- Carcasses are `CreatureEntity` instances and count against the `CREATURE` spawn cap while they
+  last. A heavily-hunted area may briefly suppress its own spawning.
 - Skinning is CPU-side. Moving it to a GPU vertex shader with a bone palette is the next big
   performance lever if creature counts need to go well past the current budget.

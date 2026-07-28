@@ -108,6 +108,20 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 		// Model space is built facing +Z; Minecraft yaw 0 also faces +Z but increases toward -X,
 		// so the model rotates by the negated yaw.
 		matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-yaw));
+		if (entity.isCarcass()) {
+			// A dead animal lies on its side. Rolling the whole body is the right level to do this
+			// at — the alternative is posing every bone into a heap, which the skeleton has no
+			// concept of and which would need a second solver to look like anything.
+			//
+			// Read bottom-up, which is the order the geometry passes through: drop the trunk from
+			// standing height onto the model origin, roll it over, then lift by half the body's
+			// width so the side it is now lying on meets the ground. Rolling first would swing the
+			// whole animal out sideways, because the model origin is between its feet rather than
+			// through the middle of it.
+			matrices.translate(0f, plan.width() * 0.45f, 0f);
+			matrices.multiply(RotationAxis.POSITIVE_Z.rotationDegrees(90f));
+			matrices.translate(0f, -plan.hipHeight, 0f);
+		}
 		VertexConsumer consumer = vertexConsumers.getBuffer(RenderLayer.getEntityCutoutNoCull(TEXTURE));
 		emit(mesh, matrices.peek(), consumer, light);
 		emitGlow(mesh, matrices.peek(), vertexConsumers);
@@ -180,6 +194,16 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 		context.time = (entity.age + tickDelta) / 20f;
 		context.airborne = !entity.isOnGround();
 		context.swimming = entity.isTouchingWater();
+		// A carcass is fully slack; a sleeping animal is settled but still holding itself together.
+		context.collapse = entity.isCarcass() ? 1f : (entity.isAsleep() ? 0.55f : 0f);
+		if (entity.isCarcass()) {
+			// Nothing about a body on the ground should read as locomotion, and the gait would
+			// otherwise keep cycling from residual drift in the entity's position.
+			context.speed = 0f;
+			context.turnRate = 0f;
+			context.lookYaw = 0f;
+			context.lookPitch = 0f;
+		}
 		context.tier = tier;
 		context.ground = probe.forWorld(entity.getWorld());
 

@@ -2,6 +2,10 @@ package dev.jsz.primordia.item;
 
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.DietGroup;
+import dev.jsz.primordia.ecology.region.LineageRecord;
+import dev.jsz.primordia.ecology.region.RegionLedger;
+import dev.jsz.primordia.ecology.region.RegionPos;
+import dev.jsz.primordia.ecology.region.RegionRecord;
 import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.entity.TamingPreference;
 import dev.jsz.primordia.entity.Temperament;
@@ -17,6 +21,9 @@ import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Hand;
+import net.minecraft.util.TypedActionResult;
+import net.minecraft.server.world.ServerWorld;
+import net.minecraft.world.World;
 
 /**
  * The naturalist's field instrument: right-click a creature to read its genome, anatomy and
@@ -32,6 +39,72 @@ public class GenomeScannerItem extends Item {
 
 	public GenomeScannerItem(Settings settings) {
 		super(settings);
+	}
+
+	/**
+	 * Pointed at nothing, the instrument surveys the region instead of an individual.
+	 * <p>
+	 * This is the only way the player can perceive the half of the ecology that happens where they
+	 * are not. A population that halved while they were away looks exactly like one that was always
+	 * that size — the world moving without you is worth nothing if there is no way to tell that it
+	 * moved. Populations, trends and the state of the vegetation are what make the regional
+	 * simulation something a player can notice, disbelieve, and go and check.
+	 */
+	@Override
+	public TypedActionResult<ItemStack> use(World world, PlayerEntity player, Hand hand) {
+		ItemStack stack = player.getStackInHand(hand);
+		if (world.isClient() || !(world instanceof ServerWorld serverWorld)) {
+			return TypedActionResult.success(stack, world.isClient());
+		}
+
+		RegionPos pos = RegionPos.of(player.getBlockPos());
+		RegionRecord record = RegionLedger.get(serverWorld).existing(pos);
+
+		if (record == null || !record.founded) {
+			player.sendMessage(Text.literal("── Survey inconclusive ──")
+					.formatted(Formatting.DARK_RED, Formatting.BOLD), false);
+			player.sendMessage(Text.literal("  No ecological record for this region yet.")
+					.formatted(Formatting.DARK_GRAY), false);
+			player.getItemCooldownManager().set(this, 20);
+			return TypedActionResult.consume(stack);
+		}
+
+		player.sendMessage(Text.literal("── Survey " + pos + " ──")
+				.formatted(Formatting.AQUA, Formatting.BOLD), false);
+		player.sendMessage(Text.literal(String.format("  Vegetation: %.0f%% of %.0f%% capacity",
+				record.vegetation * 100f, record.productivity * 100f))
+				.formatted(record.vegetation < record.productivity * 0.4f
+						? Formatting.RED : Formatting.GREEN), false);
+
+		if (record.lineages.isEmpty()) {
+			player.sendMessage(Text.literal("  No fauna recorded — this region is empty.")
+					.formatted(Formatting.DARK_GRAY), false);
+		}
+		for (LineageRecord lineage : record.lineages) {
+			float trend = lineage.trend();
+			String arrow = trend > 0.5f ? "▲ growing" : trend < -0.5f ? "▼ declining" : "· steady";
+			String hex = Long.toHexString(lineage.id);
+			hex = hex.substring(0, Math.min(6, hex.length())).toUpperCase();
+			player.sendMessage(Text.literal(String.format(
+					"  [%s] %.0f individuals · gen %d · %s",
+					hex, lineage.total(), lineage.generation, arrow))
+					.formatted(trend > 0.5f ? Formatting.GREEN
+							: trend < -0.5f ? Formatting.RED : Formatting.WHITE), false);
+		}
+
+		world.playSound(null, player.getBlockPos(),
+				SoundEvents.BLOCK_NOTE_BLOCK_CHIME.value(), SoundCategory.PLAYERS, 0.5f, 1.2f);
+		player.getItemCooldownManager().set(this, 20);
+		return TypedActionResult.consume(stack);
+	}
+
+	/** One word for what this creature is currently doing about being fed. */
+	private static String state(CreatureEntity creature) {
+		if (creature.isCarcass()) return "dead";
+		if (creature.isAsleep()) return "asleep";
+		if (creature.wantsToHunt()) return "hunting";
+		if (creature.isHungry()) return "foraging";
+		return "fed";
 	}
 
 	@Override
@@ -114,8 +187,9 @@ public class GenomeScannerItem extends Item {
 				Math.round(genome.raw(Gene.FEAR) * 100f),
 				Math.round(genome.raw(Gene.SOCIABILITY) * 100f))).formatted(Formatting.LIGHT_PURPLE), false);
 
-		player.sendMessage(Text.literal(String.format("  Health: %.1f / %.1f",
-				creature.getHealth(), creature.getMaxHealth())).formatted(Formatting.RED), false);
+		player.sendMessage(Text.literal(String.format("  Health: %.1f / %.1f · Energy: %.0f%% (%s)",
+				creature.getHealth(), creature.getMaxHealth(),
+				creature.getEnergy() * 100f, state(creature))).formatted(Formatting.RED), false);
 
 		player.getWorld().playSound(null, creature.getBlockPos(),
 				SoundEvents.BLOCK_NOTE_BLOCK_CHIME.value(), SoundCategory.PLAYERS, 0.6f, 1.6f);

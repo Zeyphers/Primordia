@@ -222,8 +222,32 @@ public final class CreatureAnimator {
 				targetLunge = 0.45f * strike;
 				targetCrouch = 0.12f * strike;
 			}
+			case SLEEP -> {
+				// Head tucked round toward the flank, body settled onto its legs.
+				targetHeadPitch = 0.55f;
+				targetHeadYaw = 0.45f;
+				targetCrouch = 0.55f;
+			}
+			case FEED -> {
+				// Head down at the body on the ground, worrying at it.
+				targetHeadPitch = 1.15f;
+				targetHeadYaw = 0.22f * (float) Math.sin(ctx.time * 3.1);
+				targetHeadPitch += 0.14f * (float) Math.sin(ctx.time * 7.5);
+				targetCrouch = 0.18f;
+			}
+			case CARCASS -> {
+				// Fully slack. The roll onto the side is applied by the renderer, since it is a
+				// transform of the whole body rather than a pose of any bone in it.
+				targetHeadPitch = 0.8f;
+				targetCrouch = 1f;
+			}
 			default -> {
 			}
+		}
+
+		// A body going slack overrides whatever else it was doing. Death is not a blend.
+		if (ctx.collapse > 0f) {
+			targetCrouch = Math.max(targetCrouch, ctx.collapse);
 		}
 
 		float rate = ctx.activity.isAttack() ? 22f : 7f;

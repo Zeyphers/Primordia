@@ -3,7 +3,7 @@
 Start here, then read [`README.md`](README.md) for what the mod is and
 [`docs/PITFALLS.md`](docs/PITFALLS.md) before changing anything in the geometry pipeline.
 
-**State:** builds clean against Minecraft 1.21.1, 76 tests pass, `main` is pushed and in sync.
+**State:** builds clean against Minecraft 1.21.1, 101 tests pass.
 
 ---
 
@@ -99,6 +99,57 @@ and a normal-smoothing slider. Bioluminescence emits on `entity_translucent_emis
 
 ---
 
+## Ecology, phase A
+
+The complaint this addressed: walking into a new area in survival, the carnivores killed every
+herbivore within minutes and left beef and bones scattered everywhere. Six causes, diagnosed with
+line references in [`docs/ECOLOGY.md`](docs/ECOLOGY.md) — read that first, it also lays out the
+four-level design the rest of the ecology is being built to.
+
+Creatures now carry an `energy` budget, hunt only when hungry, give up a chase they cannot win,
+leave a carcass rather than item drops when something other than a player kills them, breed in the
+wild without the player's involvement, and sleep through half of every day.
+
+`/primordia info` gained a line reporting energy, current state (`fed` / `foraging` / `hunting` /
+`asleep` / `carcass`), maturity and generation — energy is server-only and not replicated, so
+without that line there is no way to tell a predator that has just eaten from one that is broken.
+
+## Ecology, phases B–F
+
+The whole of [`docs/ECOLOGY.md`](docs/ECOLOGY.md) is now built except dens/nests and the journal UI.
+
+Creatures are **no longer placed by the vanilla spawner at all** — `BiomeModifications.addSpawn` is
+gone. Population lives in a per-region ledger (`ecology/region/`), 128 blocks square, persisted with
+the save. `RegionMaterialiser` spawns entities from it and `CreatureEntity#checkDespawn` absorbs them
+back; `RegionSimulation` advances the regions nobody is in, one in-game day per step; `RegionFounder`
+gives a new region founders inherited from its nearest neighbour and 100–300 days of pre-history
+before it is ever seen.
+
+Read `RegionMaterialiser`'s class comment before changing anything in that package. The contract is
+that a population is either in the record or in the world, never both and never neither, and the
+test that guards it (`populationSurvivesAThousandLoadAndUnloadCycles`) is the most important one in
+the suite.
+
+**Tuning lives in three files:** `EnergyBudget` for individuals, `RegionSimulation` for populations,
+`RegionFounder` for what a new region starts with.
+
+## What has and has not been watched
+
+**None of the ecology has been observed in a live world.** It builds, 94 tests pass including
+determinism and the population round trip, and the client boots with the mod loaded — but whether a
+valley actually feels balanced, whether founding takes long enough to stutter, and whether trails
+appear at a sensible rate are all things only a play session can answer.
+
+Specific things to look at first:
+
+- `/primordia region` in a fresh world, then again after sleeping a few nights, to see whether the
+  numbers move at a rate that reads as alive rather than as noise.
+- Whether the 3×3 active region block plus `CLUSTER_BUDGET` of 30 keeps the frame rate sane.
+- Founding cost. It runs 100–300 simulation steps and is capped at two regions per five-second pass;
+  if crossing new terrain stutters, lower `FOUNDINGS_PER_PASS`.
+- Whether carcasses read as dead animals. The renderer rolls them 90° about Z and drops them by the
+  body's half-width — the transform is geometrically reasoned but has never been looked at.
+
 ## Open threads
 
 **The shader faceting is not confirmed fixed.** A real bug was found and fixed — roughly 1 quad in
@@ -137,3 +188,25 @@ Fifteen test classes. The ones that encode something non-obvious:
 
 Read `docs/PITFALLS.md` before adding to these. Several of them were written wrong first, passed,
 and hid the bug they existed to catch.
+
+
+## Found in play
+
+Four bugs the test suite could not have caught, all fixed, all now guarded. Read `PITFALLS.md`
+§13–15 — each is a general trap, not a one-off.
+
+| Symptom | Cause |
+|---|---|
+| One species everywhere, all wanting the same bait | `topUp` gave the whole entity budget to the first lineage in the list; the record held four species and showed one |
+| Nothing moved | One lineage means one `NOCTURNALITY`, so the entire population slept and woke on the same tick |
+| No large creatures anywhere | `SIZE` was selected downward only, so a region's pre-history pinned every lineage at minimum before the player saw it |
+| Everything had a dog muzzle | The muzzle blob sat at a fixed proportion along the skull, so the silhouette was one shape across the whole gene space |
+
+The first was diagnosed from an unrelated system: `TamingPreference` keys favourite food off the
+lineage id, so "everything wants sugar cane" was a direct readout of lineage identity that nothing
+was designed to provide.
+
+**Hitboxes now cover the head**, capped at twice hip height — Minecraft puts the eye at 85% of the
+box and suffocates anything whose eye is inside a block, so an uncapped box would have long-necked
+creatures taking damage under every tree. `RegionMaterialiser.place` checks headroom for the animal
+it is actually placing, for the same reason.

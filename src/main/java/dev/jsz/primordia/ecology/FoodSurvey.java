@@ -67,8 +67,10 @@ public final class FoodSurvey {
 		float hunterMass = plan == null ? 0.2f : plan.mass;
 
 		float biomass = 0f;
+		// Carcasses are food, but they are not a standing prey population — counting them would
+		// report a valley as well stocked precisely because everything in it has been killed.
 		for (CreatureEntity other : world.getEntitiesByClass(CreatureEntity.class, box,
-				e -> e != hunter && e.isAlive())) {
+				e -> e != hunter && e.isAlive() && !e.isCarcass())) {
 			var theirs = other.getBodyPlan();
 			if (theirs == null || theirs.mass >= hunterMass * 0.85f) continue;
 			biomass += theirs.mass;

@@ -6,14 +6,20 @@ import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BodyPlanCache;
 import dev.jsz.primordia.body.DietGroup;
 import dev.jsz.primordia.body.LimbChain;
+import dev.jsz.primordia.ecology.EnergyBudget;
 import dev.jsz.primordia.ecology.FoodSurvey;
+import dev.jsz.primordia.ecology.SurvivalDrops;
+import dev.jsz.primordia.ecology.WorldImpact;
+import dev.jsz.primordia.ecology.region.RegionMaterialiser;
 import dev.jsz.primordia.entity.goal.CreatureAttackGoal;
 import dev.jsz.primordia.entity.goal.CreatureTemptGoal;
 import dev.jsz.primordia.entity.goal.DefendOwnerGoal;
+import dev.jsz.primordia.entity.goal.FeedOnCarcassGoal;
 import dev.jsz.primordia.entity.goal.FleeLargerCreatureGoal;
 import dev.jsz.primordia.entity.goal.FollowOwnerGoal;
 import dev.jsz.primordia.entity.goal.GrazeGoal;
 import dev.jsz.primordia.entity.goal.LeaveWaterGoal;
+import dev.jsz.primordia.entity.goal.RestGoal;
 import dev.jsz.primordia.entity.goal.StayGoal;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
@@ -99,6 +105,12 @@ public class CreatureEntity extends PathAwareEntity {
 	/** Whether a posed specimen plays its walk cycle or stands. Toggled by {@code /primordia test walk}. */
 	private static final TrackedData<Boolean> POSE_WALKING =
 			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+	/** Dead and lying where it fell, waiting to be eaten. Tracked because the renderer poses it. */
+	private static final TrackedData<Boolean> CARCASS =
+			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+	/** Resting through the inactive half of its cycle. Tracked for the same reason. */
+	private static final TrackedData<Boolean> ASLEEP =
+			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
 
 	/** Walking speed reported to the animator by a posed creature, in blocks per second. */
 	public static final float POSE_WALK_SPEED = 2.2f;
@@ -117,8 +129,34 @@ public class CreatureEntity extends PathAwareEntity {
 
 	/** Speed below which the creature is considered standing rather than walking, in blocks/tick. */
 	private static final double WALK_THRESHOLD_SQ = 0.0015 * 0.0015;
-	/** Ticks between food-availability checks. Six seconds; the survey is not free. */
-	private static final int NOURISHMENT_INTERVAL = 120;
+
+	/**
+	 * Distance beyond which a wild creature dissolves back into its region record. Inside the
+	 * radius at which chunks stop ticking, so the absorb always runs before the entity goes quiet.
+	 */
+	private static final double DESPAWN_RANGE = 112.0;
+	/**
+	 * Per-tick chance of wearing the ground, before mass and grazing impact scale it. Small enough
+	 * that a trail is the record of many crossings rather than of one.
+	 */
+	private static final float TRAIL_CHANCE_PER_TICK = 0.0006f;
+	/** Ticks a carcass lasts before it rots away, if nothing eats it first. Five minutes. */
+	private static final int CARCASS_LIFETIME = 6000;
+	/**
+	 * Ticks a successful hunter is stood down for, so it eats its kill rather than starting another.
+	 * Only needs to outlast the walk back to the body; feeding takes it from there.
+	 */
+	private static final int POST_KILL_COOLDOWN = 400;
+	/** Ticks between starvation hits once a creature is empty. */
+	private static final int STARVATION_INTERVAL = 60;
+	/** Ticks between wild breeding checks. Not free — it surveys the neighbourhood. */
+	private static final int BREEDING_CHECK_INTERVAL = 200;
+	/**
+	 * Creatures of the same lineage within {@link #BREEDING_RANGE} above which no more will breed.
+	 * Scaled by local carrying capacity, so a rich valley carries a bigger herd than a scree slope.
+	 */
+	private static final int BASE_DENSITY_CAP = 6;
+	private static final double BREEDING_RANGE = 16.0;
 
 	/** Parsed form of {@link #GENOME_CODE}, invalidated whenever the tracked string changes. */
 	private Genome genome;
@@ -138,6 +176,23 @@ public class CreatureEntity extends PathAwareEntity {
 	private Temperament temperament;
 	private int loveTimer;
 	private VocalProfile vocalProfile;
+
+	/**
+	 * How fed this creature is, in [0,1]. The gate on hunting, foraging and breeding, and the thing
+	 * that makes a predator stop. Server-authoritative and never replicated — no client behaviour
+	 * depends on it, and {@code /primordia info} reads it directly off the server entity.
+	 */
+	private float energy = 0.85f;
+	/** Ticks before this creature will consider hunting again after a chase it lost. */
+	private int huntCooldown;
+	/** Ticks before it can breed again. Set from {@link Gene#FECUNDITY} after each brood. */
+	private int breedCooldown;
+	/** Ticks lived. Distinct from {@code age}, which vanilla resets; this one only ever climbs. */
+	private int lifeTicks;
+	/** Remaining food in this carcass, in the absolute units {@code EnergyBudget} works in. */
+	private float carcassNutrition;
+	/** Ticks this carcass has lain here. */
+	private int carcassTicks;
 
 	public VocalProfile getVocalProfile() {
 		if (vocalProfile == null && getGenome() != null) {
@@ -257,6 +312,38 @@ public class CreatureEntity extends PathAwareEntity {
 		return data;
 	}
 
+	/**
+	 * {@inheritDoc}
+	 * <p>
+	 * The other half of the ledger's contract: a creature that leaves the world without dying goes
+	 * back into the region record it came from, rather than simply ceasing to exist. This is the
+	 * "dissolve" step — animals becoming numbers again — and every path that removes a creature
+	 * without killing it has to come through here or the population leaks.
+	 * <p>
+	 * Vanilla's random despawn between 32 and 128 blocks is deliberately not reproduced. For an
+	 * ordinary mob that flicker is invisible; for an animal the player is watching a herd of, having
+	 * one wink out at forty blocks is not. These despawn only once they are properly out of range,
+	 * which is still well inside the distance at which their chunks stop ticking, so the absorb
+	 * always gets its chance to run.
+	 */
+	@Override
+	public void checkDespawn() {
+		if (!(getWorld() instanceof ServerWorld world)) {
+			super.checkDespawn();
+			return;
+		}
+		if (isPersistent() || !RegionMaterialiser.isLedgerManaged(this)) {
+			super.checkDespawn();
+			return;
+		}
+		PlayerEntity nearest = world.getClosestPlayer(this, -1.0);
+		if (nearest == null) return;
+		if (nearest.squaredDistanceTo(this) < DESPAWN_RANGE * DESPAWN_RANGE) return;
+
+		RegionMaterialiser.absorb(world, this);
+		discard();
+	}
+
 	@Override
 	public boolean isClimbing() {
 		return dataTracker.get(CLIMBING) || super.isClimbing();
@@ -287,6 +374,178 @@ public class CreatureEntity extends PathAwareEntity {
 		builder.add(POSING, false);
 		builder.add(POSE_WALKING, true);
 		builder.add(CLIMBING, false);
+		builder.add(CARCASS, false);
+		builder.add(ASLEEP, false);
+	}
+
+	// ------------------------------------------------------------------ ecology
+
+	/** How fed this creature is, in [0,1]. */
+	public float getEnergy() {
+		return energy;
+	}
+
+	public void setEnergy(float value) {
+		this.energy = MathHelper.clamp(value, 0f, 1f);
+	}
+
+	public void addEnergy(float delta) {
+		setEnergy(energy + delta);
+	}
+
+	/**
+	 * Whether this creature will go looking for something to kill.
+	 * <p>
+	 * Everything that makes a predator stop lives in this one method, and every hunting goal is
+	 * gated on it. A creature that has eaten, is asleep, is still recovering from a chase it lost,
+	 * or is somebody's tamed companion, does not hunt.
+	 */
+	public boolean wantsToHunt() {
+		if (isCarcass() || isAsleep() || isPosing()) return false;
+		if (huntCooldown > 0) return false;
+		if (isTamed()) return false;
+		if (!getDietGroup().hunts()) return false;
+		return energy < EnergyBudget.HUNT_THRESHOLD;
+	}
+
+	/** Whether this creature will go looking for plants or a carcass. */
+	public boolean isHungry() {
+		return !isCarcass() && !isAsleep() && energy < EnergyBudget.FORAGE_THRESHOLD;
+	}
+
+	/** Old enough to breed, from {@link Gene#MATURATION_RATE}. */
+	public boolean isMature() {
+		Genome g = getGenome();
+		return g != null && lifeTicks >= EnergyBudget.maturityTicks(g);
+	}
+
+	public int getLifeTicks() {
+		return lifeTicks;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 * <p>
+	 * Stands a successful hunter down long enough to eat what it just killed.
+	 * <p>
+	 * Without this the loop closes on paper and not in play: a kill leaves a carcass, but the
+	 * predator is still below its hunger threshold at that instant, so the targeting goal acquires
+	 * the next animal on the very next tick and {@link FeedOnCarcassGoal} — which refuses to run
+	 * while a target is set — never gets a turn. The predator walks away from every body it makes
+	 * and keeps killing, which is the original bug wearing the new system as a costume.
+	 * <p>
+	 * The cooldown only has to outlast the walk back to the carcass; feeding raises energy above
+	 * the threshold on its own from there.
+	 */
+	@Override
+	public boolean onKilledOther(ServerWorld world, LivingEntity other) {
+		boolean result = super.onKilledOther(world, other);
+		if (!isDomesticated()) {
+			huntCooldown = Math.max(huntCooldown, POST_KILL_COOLDOWN);
+			setTarget(null);
+		}
+		return result;
+	}
+
+	/**
+	 * Charges a hunter for a pursuit that caught nothing and stands it down for a while.
+	 * <p>
+	 * The cooldown matters more than the energy cost. Without it the targeting goal simply
+	 * re-acquires the animal that just outran it on the very next tick, and a bounded chase becomes
+	 * an unbounded one made of short chases.
+	 */
+	public void onHuntFailed() {
+		Genome g = getGenome();
+		addEnergy(-EnergyBudget.FAILED_HUNT_COST);
+		huntCooldown = g == null ? 200 : EnergyBudget.failedHuntCooldown(g);
+		setTarget(null);
+	}
+
+	public boolean isAsleep() {
+		return dataTracker.get(ASLEEP);
+	}
+
+	public void setAsleep(boolean asleep) {
+		if (isAsleep() == asleep) return;
+		dataTracker.set(ASLEEP, asleep);
+		if (asleep) {
+			getNavigation().stop();
+			setTarget(null);
+			dataTracker.set(ACTIVITY, (byte) CreatureActivity.SLEEP.ordinal());
+		}
+	}
+
+	// ----------------------------------------------------------------- carcasses
+
+	/** A body lying where it fell: not alive, not an item pile, and edible until it is not. */
+	public boolean isCarcass() {
+		return dataTracker.get(CARCASS);
+	}
+
+	public float getCarcassNutrition() {
+		return carcassNutrition;
+	}
+
+	/**
+	 * Turns this entity into the carcass of the creature that just died.
+	 * <p>
+	 * Spawned as a fresh entity rather than by keeping the dead one alive, because a
+	 * {@code LivingEntity} at zero health is in the middle of vanilla's death sequence and fighting
+	 * that is how you get an animal that is dead on the server and standing on the client. This is a
+	 * new entity that was simply never alive.
+	 */
+	public static void spawnCarcassOf(CreatureEntity dead) {
+		if (dead.isCarcass()) return;
+		Genome g = dead.getGenome();
+		BodyPlan plan = dead.getBodyPlan();
+		if (g == null || plan == null) return;
+		if (!(dead.getWorld() instanceof ServerWorld world)) return;
+
+		CreatureEntity carcass = PrimordiaEntities.CREATURE.create(world);
+		if (carcass == null) return;
+		carcass.setGenome(g);
+		carcass.refreshPositionAndAngles(dead.getX(), dead.getY(), dead.getZ(), dead.getYaw(), 0f);
+		carcass.becomeCarcass(EnergyBudget.carcassNutrition(plan));
+		world.spawnEntity(carcass);
+	}
+
+	private void becomeCarcass(float nutrition) {
+		dataTracker.set(CARCASS, true);
+		dataTracker.set(ACTIVITY, (byte) CreatureActivity.CARCASS.ordinal());
+		carcassNutrition = nutrition;
+		carcassTicks = 0;
+		setAiDisabled(true);
+		setSilent(true);
+		setPersistent();
+		getNavigation().stop();
+		setTarget(null);
+	}
+
+	/**
+	 * Draws food out of this carcass, returning how much was actually taken. Returns 0 once it is
+	 * picked clean, which is what tells a feeding goal to stop.
+	 */
+	public float consumeCarcass(float requested) {
+		if (!isCarcass() || carcassNutrition <= 0f) return 0f;
+		float taken = Math.min(requested, carcassNutrition);
+		carcassNutrition -= taken;
+		return taken;
+	}
+
+	/**
+	 * Ages a carcass out. A body eaten down to nothing simply disappears; one that rots untouched
+	 * leaves bone, so a kill site nobody scavenged is still readable on the ground later.
+	 */
+	private void tickCarcass() {
+		carcassTicks++;
+		if (carcassNutrition <= 0.001f) {
+			discard();
+			return;
+		}
+		if (carcassTicks >= CARCASS_LIFETIME) {
+			SurvivalDrops.dropSkeletalRemains(this);
+			discard();
+		}
 	}
 
 	// ------------------------------------------------------- taming and riding
@@ -567,9 +826,16 @@ public class CreatureEntity extends PathAwareEntity {
 			}
 		});
 
+		// Above everything but fleeing: a resting animal is not available to the rest of the world,
+		// and a predator asleep through half the day is the cheapest population brake there is.
+		goalSelector.add(1, new RestGoal(this));
+
 		goalSelector.add(2, new CreatureTemptGoal(this, 1.15));
 		goalSelector.add(2, new FleeLargerCreatureGoal(this, 1.35));
 		goalSelector.add(3, new CreatureAttackGoal(this, 1.15));
+		// Above grazing and below fighting: a carcass is worth more than a mouthful of grass, but
+		// not worth standing over while something is trying to eat you.
+		goalSelector.add(4, new FeedOnCarcassGoal(this, 1.1));
 		// Below fighting, above foraging: a companion should finish the fight before it wanders
 		// back to heel, but should not stop to graze while its owner walks away.
 		goalSelector.add(4, new FollowOwnerGoal(this, 1.25, 10f, 3f, 20f));
@@ -598,10 +864,17 @@ public class CreatureEntity extends PathAwareEntity {
 			}
 		});
 
-		// Hunters go after creatures smaller than themselves.
+		// Hunters go after creatures smaller than themselves — but only when hungry. This predicate
+		// used to be the size check alone, which is why a carnivore killed every herbivore within
+		// reach and then started on the next one: nothing in it ever became false. See
+		// wantsToHunt(), which is where every reason to stop now lives.
 		targetSelector.add(2, new ActiveTargetGoal<>(this, CreatureEntity.class, 10, true, false,
 				other -> {
 					if (!(other instanceof CreatureEntity prey) || prey == this) return false;
+					if (!wantsToHunt()) return false;
+					// A carcass is food, not prey. Feeding on one is FeedOnCarcassGoal's job, and
+					// targeting it would have the predator try to kill something already dead.
+					if (prey.isCarcass()) return false;
 					// Never the owner's other animals — a pack that eats itself is not a pack.
 					if (isDomesticated() && prey.isDomesticated()
 							&& getOwnerUuid() != null && getOwnerUuid().equals(prey.getOwnerUuid())) {
@@ -610,21 +883,25 @@ public class CreatureEntity extends PathAwareEntity {
 					BodyPlan mine = getBodyPlan();
 					BodyPlan theirs = prey.getBodyPlan();
 					if (mine == null || theirs == null) return false;
-					return theirs.mass < mine.mass * 0.85f;
+					// Bounded at both ends. The upper bound is self-preservation; the lower one is
+					// what stops a large predator working through a field of small animals it can
+					// never actually get full on. See EnergyBudget#MIN_PREY_MASS_RATIO.
+					return EnergyBudget.isWorthHunting(mine.mass, theirs.mass);
 				}));
 
 		// Hunters attack vanilla passive animals (Cows, Sheep, Pigs, Chickens, Rabbits, Horses,
 		// etc.). Bonded creatures do not go looking: a companion that clears out the farm it is
 		// walking past is a liability, so they fight what their owner fights and nothing else.
 		targetSelector.add(2, new ActiveTargetGoal<>(this, net.minecraft.entity.passive.AnimalEntity.class, 10, true, false,
-				animal -> !isDomesticated()
+				animal -> !isDomesticated() && wantsToHunt()
 						&& (getTemperament().huntsUnprovoked()
 						|| (getGenome() != null && getGenome().raw(Gene.DIET) > 0.45f))));
 
 		// Committed predators treat the player as prey without being provoked first. A bonded
-		// creature never does, whatever its disposition says.
+		// creature never does, whatever its disposition says. Gated on hunger like everything else,
+		// so a fed predator is something you can walk past.
 		targetSelector.add(4, new ActiveTargetGoal<>(this, PlayerEntity.class, 10, true, false,
-				target -> getTemperament().huntsUnprovoked() && !isDomesticated()));
+				target -> getTemperament().huntsUnprovoked() && !isDomesticated() && wantsToHunt()));
 	}
 
 	@Override
@@ -651,10 +928,45 @@ public class CreatureEntity extends PathAwareEntity {
 		return temperament;
 	}
 
+	/**
+	 * {@inheritDoc}
+	 * <p>
+	 * A player's kill drops items; anything else leaves a body. This is the fork that stops a
+	 * predator working through a herd from carpeting the ground in beef, leather and bone that
+	 * nothing in the world is able to eat — the meat is still there, it is just still attached to
+	 * the animal, and something has to come and eat it.
+	 */
 	@Override
 	public void onDeath(DamageSource damageSource) {
 		super.onDeath(damageSource);
-		dev.jsz.primordia.ecology.SurvivalDrops.dropLoot(this, damageSource);
+		if (getWorld().isClient() || isCarcass()) return;
+
+		if (SurvivalDrops.killedByPlayer(damageSource)) {
+			SurvivalDrops.dropLoot(this, 1f);
+		} else {
+			spawnCarcassOf(this);
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 * <p>
+	 * A carcass is not alive and cannot be killed again, but a player is allowed to butcher one —
+	 * driving a predator off a fresh kill and taking it is a reasonable thing to want to do, and
+	 * the yield scales with how much of the body is left.
+	 */
+	@Override
+	public boolean damage(DamageSource source, float amount) {
+		if (!isCarcass()) return super.damage(source, amount);
+		if (getWorld().isClient()) return false;
+		if (!(source.getAttacker() instanceof PlayerEntity)) return false;
+
+		BodyPlan plan = getBodyPlan();
+		float remaining = plan == null ? 0f
+				: carcassNutrition / Math.max(0.001f, EnergyBudget.carcassNutrition(plan));
+		SurvivalDrops.dropLoot(this, remaining);
+		discard();
+		return true;
 	}
 
 
@@ -675,12 +987,31 @@ public class CreatureEntity extends PathAwareEntity {
 
 		if (getWorld().isClient()) return;
 
-		tickNourishment();
+		if (isCarcass()) {
+			tickCarcass();
+			return;
+		}
+
+		lifeTicks++;
+		if (huntCooldown > 0) huntCooldown--;
+		if (breedCooldown > 0) breedCooldown--;
+
+		tickEnergy();
+		tickWildBreeding();
 		tickBreeding();
+		tickTrail();
 
 		// Timed activities expire on their own, so no goal has to remember to clear one.
 		if (activityCooldown > 0) {
 			activityCooldown--;
+			return;
+		}
+		// SLEEP is ambient but not derived from motion, so the velocity check below would clear it
+		// every tick. A sleeping creature is not idle, it is asleep, and only RestGoal ends that.
+		if (isAsleep()) {
+			if (getActivity() != CreatureActivity.SLEEP) {
+				dataTracker.set(ACTIVITY, (byte) CreatureActivity.SLEEP.ordinal());
+			}
 			return;
 		}
 		CreatureActivity ambient = getVelocity().horizontalLengthSquared() > WALK_THRESHOLD_SQ
@@ -704,7 +1035,8 @@ public class CreatureEntity extends PathAwareEntity {
 
 		Box searchBox = getBoundingBox().expand(8.0, 4.0, 8.0);
 		List<CreatureEntity> partners = getWorld().getEntitiesByClass(CreatureEntity.class, searchBox,
-				other -> other != this && other.isAlive() && other.loveTimer > 0 && other.getGenome() != null);
+				other -> other != this && other.isAlive() && !other.isCarcass()
+						&& other.loveTimer > 0 && other.getGenome() != null);
 
 		for (CreatureEntity partner : partners) {
 			float dist = Mutation.distance(this.getGenome(), partner.getGenome());
@@ -716,7 +1048,10 @@ public class CreatureEntity extends PathAwareEntity {
 				world.spawnParticles(ParticleTypes.HEART, getX(), getBodyY(0.9), getZ(), 14, 0.5, 0.5, 0.5, 0.1);
 				world.spawnParticles(ParticleTypes.HEART, partner.getX(), partner.getBodyY(0.9), partner.getZ(), 14, 0.5, 0.5, 0.5, 0.1);
 
-				Genome childGenome = Mutation.breed(this.getGenome(), partner.getGenome(), java.util.concurrent.ThreadLocalRandom.current());
+				// The world random rather than ThreadLocalRandom: the ecology has to be
+				// reproducible from a seed, and a thread-local source is by definition not.
+				Genome childGenome = Mutation.breed(this.getGenome(), partner.getGenome(),
+						new java.util.Random(getRandom().nextLong()));
 				CreatureEntity child = PrimordiaEntities.CREATURE.create(world);
 				if (child != null) {
 					child.dataTracker.set(GENOME_CODE, childGenome.encode());
@@ -725,8 +1060,21 @@ public class CreatureEntity extends PathAwareEntity {
 							(getY() + partner.getY()) * 0.5,
 							(getZ() + partner.getZ()) * 0.5,
 							getYaw(), getPitch());
-					child.dataTracker.set(TAMED, true);
-					child.dataTracker.set(OWNER, this.dataTracker.get(OWNER));
+					// Inherited, not assumed. This used to set TAMED unconditionally, which was
+					// harmless while only a player could trigger breeding and is wrong the moment
+					// wild animals can: every birth in the world would have come out tame, and
+					// tamed creatures are exempt from starving and from being hunted.
+					boolean bornTame = this.isTamed() && partner.isTamed();
+					child.dataTracker.set(TAMED, bornTame);
+					child.dataTracker.set(OWNER, bornTame
+							? this.dataTracker.get(OWNER)
+							: Optional.empty());
+					// Offspring start hungry, and both parents pay for them.
+					child.setEnergy(0.55f);
+					this.addEnergy(-EnergyBudget.BREED_COST);
+					partner.addEnergy(-EnergyBudget.BREED_COST);
+					this.breedCooldown = EnergyBudget.breedingInterval(this.getGenome());
+					partner.breedCooldown = EnergyBudget.breedingInterval(partner.getGenome());
 					world.spawnEntity(child);
 				}
 				break;
@@ -736,37 +1084,108 @@ public class CreatureEntity extends PathAwareEntity {
 
 
 	/**
-	 * Applies the cost of being large in a place that cannot feed you.
+	 * Burns energy, and starves anything that runs out.
 	 * <p>
-	 * A creature whose mass exceeds what the surrounding land can support slowly starves. This is
-	 * what stops giants from simply existing everywhere: bulk has to be paid for by an environment
-	 * productive enough to sustain it, so the biggest animals collect where the food is and thin
-	 * out where it is not. Tamed creatures are exempt — their owner is presumed to be feeding them.
+	 * This replaces the old carrying-capacity check, which dealt starvation damage to any creature
+	 * whose mass exceeded what the surrounding land could support. That rule had the right intent —
+	 * bulk should have to be paid for — but it enforced the outcome directly instead of letting it
+	 * happen: an animal was punished for being big in a poor place whether or not it had actually
+	 * failed to find food. Now the cost of being large is a faster drain and a bigger appetite
+	 * ({@link EnergyBudget#drainPerTick}, {@link EnergyBudget#mouthfulValue}), and a giant on a
+	 * scree slope starves because it genuinely cannot eat enough, which is the same pressure
+	 * arrived at honestly.
 	 * <p>
-	 * Deliberately slow and forgiving. The intent is a pressure that shapes where large animals
-	 * live, not an execution timer.
+	 * Tamed creatures are exempt from starving — their owner is presumed to be feeding them — but
+	 * they still burn energy, so a companion that has not been fed will go and forage.
 	 */
-	private void tickNourishment() {
-		if (isTamed()) return;
-		if (age % NOURISHMENT_INTERVAL != 0) return;
+	private void tickEnergy() {
+		Genome g = getGenome();
+		BodyPlan plan = getBodyPlan();
+		if (g == null || plan == null) return;
+
+		EnergyBudget.Activity activity;
+		if (isAsleep()) {
+			activity = EnergyBudget.Activity.RESTING;
+		} else if (getTarget() != null || isSprinting()) {
+			activity = EnergyBudget.Activity.SPRINTING;
+		} else if (getVelocity().horizontalLengthSquared() > WALK_THRESHOLD_SQ) {
+			activity = EnergyBudget.Activity.MOVING;
+		} else {
+			activity = EnergyBudget.Activity.IDLE;
+		}
+		addEnergy(-EnergyBudget.drainPerTick(g, plan, activity));
+
+		if (energy > EnergyBudget.STARVING || isTamed()) return;
+		if (age % STARVATION_INTERVAL != 0) return;
+		damage(getWorld().getDamageSources().starve(), EnergyBudget.STARVATION_DAMAGE);
+	}
+
+	/**
+	 * Wears a trail into the ground under a heavy animal that keeps using the same route.
+	 * <p>
+	 * The chance is deliberately tiny and scaled by mass, so a single small creature crossing a
+	 * meadow leaves nothing and a herd of large ones that walks the same line between water and
+	 * grazing eventually wears a visible path. That is the whole appeal — the route is not drawn by
+	 * anything, it is where they actually went, and it tells the player something true about a herd
+	 * they may never have seen.
+	 * <p>
+	 * Every change goes through {@link WorldImpact}, which holds the allow-list and the per-chunk
+	 * budget. Nothing here decides on its own that a block may be modified.
+	 */
+	private void tickTrail() {
+		if (isTamed() || !isOnGround()) return;
+		if (getVelocity().horizontalLengthSquared() <= WALK_THRESHOLD_SQ) return;
+		if (!(getWorld() instanceof ServerWorld world)) return;
 
 		BodyPlan plan = getBodyPlan();
-		if (plan == null) return;
+		Genome g = getGenome();
+		if (plan == null || g == null) return;
+
+		float pressure = plan.mass * (0.4f + g.raw(Gene.GRAZING_IMPACT));
+		if (getRandom().nextFloat() >= pressure * TRAIL_CHANCE_PER_TICK) return;
+
+		WorldImpact.trample(world, getBlockPos().down());
+	}
+
+	/**
+	 * Puts a well-fed adult into breeding condition on its own.
+	 * <p>
+	 * Before this, {@code loveTimer} was set in exactly one place — a player feeding a tamed
+	 * creature — so the wild birth rate was zero. Spawning was the only source of animals and
+	 * predation was a pure sink, which meant every population was monotonically decreasing by
+	 * construction. No amount of restraint on the part of the predators would have fixed that; a
+	 * herd that cannot replace its losses is stripped by anything at all.
+	 * <p>
+	 * Gated on local density rather than a global cap, and the density allowance comes from
+	 * {@link FoodSurvey#carryingCapacity}, so a productive valley carries a larger herd than a
+	 * barren ridge without either being written down anywhere.
+	 */
+	private void tickWildBreeding() {
+		if (isTamed() || isPosing() || isAsleep()) return;
+		if (loveTimer > 0 || breedCooldown > 0) return;
+		if (age % BREEDING_CHECK_INTERVAL != 0) return;
+		if (!isMature() || energy < EnergyBudget.BREED_THRESHOLD) return;
+
+		Genome g = getGenome();
+		BodyPlan plan = getBodyPlan();
+		if (g == null || plan == null) return;
 
 		DietGroup diet = getDietGroup();
 		float prey = diet.hunts() ? FoodSurvey.preyDensity(getWorld(), this) : 0f;
 		float capacity = FoodSurvey.carryingCapacity(getWorld(), getBlockPos(), diet, prey);
+		// Capacity is a supportable mass; how many animals that is depends on how big they are.
+		int allowance = Math.max(1, Math.min(BASE_DENSITY_CAP,
+				Math.round(capacity / Math.max(0.03f, plan.mass))));
 
-		// A margin of grace, so an animal merely passing through a barren patch is unaffected.
-		if (plan.mass <= capacity * 1.35f) return;
+		Box range = getBoundingBox().expand(BREEDING_RANGE, 8.0, BREEDING_RANGE);
+		int neighbours = getWorld().getEntitiesByClass(CreatureEntity.class, range,
+				other -> other != this && other.isAlive() && !other.isCarcass()
+						&& other.getGenome() != null
+						&& other.getGenome().lineage() == g.lineage()).size();
+		if (neighbours >= allowance) return;
 
-		// Damage scales with how far over the limit it is, and is capped low enough that reaching
-		// better ground is always a realistic escape.
-		float excess = plan.mass / Math.max(0.01f, capacity * 1.35f);
-		float damage = Math.min(2.0f, 0.35f * (excess - 1f));
-		if (damage > 0.05f) {
-			damage(getWorld().getDamageSources().starve(), damage);
-		}
+		loveTimer = 600;
+		playMatingCall();
 	}
 
 	// ----------------------------------------------------------------- activity
@@ -906,16 +1325,31 @@ public class CreatureEntity extends PathAwareEntity {
 			return super.getBaseDimensions(pose);
 		}
 		BodyPlan plan = BodyPlanCache.get(g);
-		// Hitbox encompasses legs and torso only — NOT the tail or neck.
 		// Lateral width comes from how far the legs splay, and torso girth.
 		float legSpanX = 0f;
 		for (LimbChain leg : plan.legs) {
 			legSpanX = Math.max(legSpanX, Math.abs(leg.restEffector.x));
 		}
-		// Full leg span (both sides) plus a small margin; torso width as a floor.
-		float width = Math.max(0.50f, Math.max(legSpanX * 2.0f * 1.05f, plan.width() * 0.75f));
-		// Height from ground to top of torso; no need to cover tail or head.
-		float height = Math.max(0.50f, plan.hipHeight * 1.25f);
+		// The box used to cover legs and torso only, on the reasoning that a tail and a neck are
+		// thin and should not stop an animal fitting through a gap. In practice it meant a
+		// long-necked or long-tailed creature ran its head and tail straight through walls — most
+		// obviously on fast ones, where the client's interpolation carries the mesh further past
+		// the hitbox before the next position update lands.
+		//
+		// A Minecraft hitbox is axis-aligned and square in plan, so it cannot follow a body that
+		// turns; using the full body length as the width would make a long creature a moving 3×3
+		// block that could not path anywhere. Just under half of it covers the head and most of the
+		// neck at any facing while still leaving the animal able to walk between trees.
+		float width = Math.max(0.50f, Math.max(
+				Math.max(legSpanX * 2.0f * 1.05f, plan.width() * 0.9f),
+				Math.min(plan.bodyLength * 0.40f, 1.8f)));
+		// Tall enough to cover the head rather than stopping at the shoulder, but capped against hip
+		// height. Minecraft puts the eye at 85% of the box and suffocates anything whose eye is
+		// inside a block, so a creature holding a long neck straight up would otherwise take
+		// suffocation damage every time it walked under a tree.
+		float height = Math.max(0.50f, Math.max(
+				plan.hipHeight * 1.25f,
+				Math.min(plan.height() * 0.92f, plan.hipHeight * 2.0f)));
 
 		if (getAttributeInstance(EntityAttributes.GENERIC_STEP_HEIGHT) != null) {
 			getAttributeInstance(EntityAttributes.GENERIC_STEP_HEIGHT)
@@ -968,6 +1402,16 @@ public class CreatureEntity extends PathAwareEntity {
 		nbt.putBoolean("Posing", isPosing());
 		nbt.putBoolean("PoseWalking", isPoseWalking());
 		nbt.putBoolean("Saddled", isSaddled());
+		nbt.putFloat("Energy", energy);
+		nbt.putInt("LifeTicks", lifeTicks);
+		nbt.putInt("HuntCooldown", huntCooldown);
+		nbt.putInt("BreedCooldown", breedCooldown);
+		nbt.putBoolean("Asleep", isAsleep());
+		if (isCarcass()) {
+			nbt.putBoolean("Carcass", true);
+			nbt.putFloat("CarcassNutrition", carcassNutrition);
+			nbt.putInt("CarcassTicks", carcassTicks);
+		}
 		UUID owner = getOwnerUuid();
 		if (owner != null) {
 			nbt.putUuid("Owner", owner);
@@ -992,6 +1436,17 @@ public class CreatureEntity extends PathAwareEntity {
 		// there — those were spawned walking.
 		dataTracker.set(POSE_WALKING, !nbt.contains("PoseWalking") || nbt.getBoolean("PoseWalking"));
 		dataTracker.set(SADDLED, nbt.getBoolean("Saddled"));
+		// Absent on creatures saved before the energy economy existed. Defaulting to zero would
+		// starve every animal in an existing world on first load, so they wake up well fed.
+		energy = nbt.contains("Energy") ? nbt.getFloat("Energy") : 0.85f;
+		lifeTicks = nbt.getInt("LifeTicks");
+		huntCooldown = nbt.getInt("HuntCooldown");
+		breedCooldown = nbt.getInt("BreedCooldown");
+		dataTracker.set(ASLEEP, nbt.getBoolean("Asleep"));
+		if (nbt.getBoolean("Carcass")) {
+			becomeCarcass(nbt.getFloat("CarcassNutrition"));
+			carcassTicks = nbt.getInt("CarcassTicks");
+		}
 		dataTracker.set(OWNER, nbt.containsUuid("Owner")
 				? Optional.of(nbt.getUuid("Owner"))
 				: Optional.empty());

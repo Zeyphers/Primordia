@@ -1,10 +1,14 @@
 package dev.jsz.primordia.entity.goal;
 
+import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.DietGroup;
+import dev.jsz.primordia.ecology.EnergyBudget;
+import dev.jsz.primordia.ecology.WorldImpact;
 import dev.jsz.primordia.entity.CreatureActivity;
 import dev.jsz.primordia.entity.CreatureEntity;
 import net.minecraft.entity.ai.goal.Goal;
 import net.minecraft.registry.tag.BlockTags;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 
@@ -39,7 +43,11 @@ public class GrazeGoal extends Goal {
 	@Override
 	public boolean canStart() {
 		if (!creature.getDietGroup().eatsPlants()) return false;
+		if (creature.isCarcass() || creature.isAsleep() || creature.isPosing()) return false;
 		if (creature.getTarget() != null) return false;
+		// Grazing now actually feeds the animal, so it is worth doing only when there is room to
+		// eat. A full herbivore stops cropping and goes and does something else.
+		if (!creature.isHungry()) return false;
 		if (cooldown-- > 0) return false;
 		cooldown = SEARCH_INTERVAL;
 
@@ -53,7 +61,8 @@ public class GrazeGoal extends Goal {
 
 	@Override
 	public boolean shouldContinue() {
-		return target != null && chewTicks < 200 && creature.getTarget() == null;
+		return target != null && chewTicks < 200 && creature.getTarget() == null
+				&& creature.getEnergy() < 1f;
 	}
 
 	@Override
@@ -101,6 +110,20 @@ public class GrazeGoal extends Goal {
 		// Re-trigger periodically so the timed activity does not lapse mid-meal.
 		if (chewTicks % 20 == 1) {
 			creature.triggerActivity(CreatureActivity.GRAZE);
+		}
+
+		// One mouthful per chew cycle: the plant is eaten, the animal is fed, and the region's
+		// standing vegetation goes down by what was taken. That last part is what closes the
+		// boom-bust loop — a herd that overgrazes a valley lowers the carrying capacity that
+		// decides how many of them it can support, and the crash is nobody's design.
+		BodyPlan plan = creature.getBodyPlan();
+		if (plan == null || chewTicks % 20 != 10) return;
+
+		creature.addEnergy(EnergyBudget.mouthfulValue(plan));
+		if (creature.getWorld() instanceof ServerWorld world && WorldImpact.graze(world, target)) {
+			// That mouthful is gone; find the next one rather than chewing on air.
+			target = findVegetation();
+			if (target == null) chewTicks = 999;
 		}
 	}
 

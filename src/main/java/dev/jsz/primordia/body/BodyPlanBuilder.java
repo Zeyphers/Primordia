@@ -731,13 +731,38 @@ public final class BodyPlanBuilder {
 		// Upper jaw: the muzzle above the mouth line, and part of the skull. The mandible below it
 		// is a hinged bone of its own so that it can actually move — see the jaw section of build.
 		float muzzle = g.range(Gene.JAW_SIZE, 0.35f, 1.15f);
-		Vector3f muzzlePos = new Vector3f(headStart).lerp(headEnd, 0.66f)
-				.fma(-headSize * 0.05f * muzzle, trueUp);
 		float snoutWidth = g.range(Gene.JAW_WIDTH, 0.62f, 1.95f);
+
+		// How far the face carries in front of the braincase: 0 is flat-faced, 1 is long-snouted.
+		//
+		// This axis did not exist. The muzzle blob was placed at a fixed two thirds along the head
+		// with a fixed forward extent, so *every* creature came out with a tapering snout projecting
+		// from a rounded cranium — which is a dog, and the generator produced a world of them
+		// regardless of what the genome said. Jaw size and width changed how big and how broad the
+		// muzzle was without ever changing that silhouette.
+		//
+		// Driven mostly by SNOUT_TYPE, which previously did nothing at all below the threshold where
+		// it grows a beak — so the low two thirds of that locus was dead space, and this is exactly
+		// the axis it should have been controlling. Reading it as one continuous scale also makes
+		// the beak coherent rather than bolted on: the longest faces are the ones that get one.
+		//
+		// Blending several genes evenly was tried first and is wrong here. Summing three roughly
+		// uniform loci concentrates the result around the middle, so flat and long faces both became
+		// rare and almost everything still came out mid-muzzled. One dominant locus with a light
+		// modulation keeps the full range reachable.
+		float projection = MathX.clamp01(0.85f * g.raw(Gene.SNOUT_TYPE)
+				+ 0.15f * g.raw(Gene.HEAD_ELONGATION));
+
+		// A flat face is not a small face — it is a broad one set back into the skull. Shrinking the
+		// blob toward zero would read as a head with the front missing, so as it draws back it also
+		// widens and deepens, which is what gives a bear, a cat or an ape its blunt profile.
+		float blunt = 1.45f - 0.45f * projection;
+		Vector3f muzzlePos = new Vector3f(headStart).lerp(headEnd, 0.38f + 0.34f * projection)
+				.fma(-headSize * 0.05f * muzzle, trueUp);
 		blobs.add(new SdfBlob(headBone, muzzlePos,
-				new Vector3f(headSize * 0.30f * muzzle * snoutWidth,
-						headSize * 0.21f * muzzle / (float) Math.sqrt(snoutWidth),
-						headSize * 0.52f * muzzle),
+				new Vector3f(headSize * 0.30f * muzzle * snoutWidth * blunt,
+						headSize * 0.21f * muzzle / (float) Math.sqrt(snoutWidth) * blunt,
+						headSize * (0.14f + 0.50f * projection) * muzzle),
 				Feature.HEAD, false));
 
 		// Head Crest / Hair Tufts

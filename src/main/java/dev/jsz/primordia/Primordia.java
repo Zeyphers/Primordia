@@ -1,12 +1,10 @@
 package dev.jsz.primordia;
 
 import dev.jsz.primordia.command.PrimordiaCommands;
+import dev.jsz.primordia.ecology.region.EcologyTicker;
 import dev.jsz.primordia.registry.PrimordiaEntities;
 import dev.jsz.primordia.registry.PrimordiaItems;
 import net.fabricmc.api.ModInitializer;
-import net.fabricmc.fabric.api.biome.v1.BiomeModifications;
-import net.fabricmc.fabric.api.biome.v1.BiomeSelectors;
-import net.minecraft.entity.SpawnGroup;
 import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,29 +22,24 @@ public class Primordia implements ModInitializer {
 		PrimordiaEntities.register();
 		PrimordiaItems.register();
 		PrimordiaCommands.register();
+		EcologyTicker.register();
 
-		// Surface wildlife, at roughly the frequency of a vanilla pig or chicken.
+		// Deliberately no BiomeModifications.addSpawn. Creatures are no longer placed by the
+		// vanilla spawner at all.
 		//
-		// Weight is relative to every other mob eligible in the biome, so the number only means
-		// anything next to vanilla's: sheep are 12, pigs and chickens 10, cows 8. This was 80 —
-		// eight sheep's worth — which did not add creatures to the fauna so much as replace it.
+		// The vanilla spawner invents an animal per spawn attempt, each rolling its own random
+		// archetype, so a valley's fauna was an independent random draw per individual — as likely
+		// to come out as four predators with nothing to eat as anything that could sustain itself.
+		// No amount of restraint in the creatures' behaviour rescues a composition that was never
+		// viable.
 		//
-		// Group size is held low for a second reason on top of density: these are procedural
-		// meshes, and the near LOD tier only budgets for eight creatures on screen at once. A
-		// pack of seven spends that budget on a single herd and everything else drops a tier.
-		BiomeModifications.addSpawn(
-				BiomeSelectors.foundInOverworld(),
-				SpawnGroup.CREATURE,
-				PrimordiaEntities.CREATURE,
-				10, 2, 4
-		);
-
-		// Deliberately no MONSTER registration. Registering the same entity in a second spawn
-		// group is not "cave spawns" — the groups carry independent mob caps (~10 for CREATURE
-		// against ~70 for MONSTER), so the creature spawned against both budgets at once, and
-		// inherited hostile spawning behaviour: in darkness, underground, and topped up
-		// continuously rather than placed once when the chunk generates. That was the bulk of
-		// the flood. Creatures are animals, and spawn like animals.
+		// Population now lives in the region ledger, and creatures are placed from it by
+		// RegionMaterialiser: the record says how many of which lineage live here, and entities are
+		// a rendering of that. See docs/ECOLOGY.md.
+		//
+		// The old note about not registering a second MONSTER spawn group still applies if anyone
+		// is tempted: the groups carry independent mob caps, so the entity spawned against both
+		// budgets at once and inherited hostile top-up behaviour.
 
 		LOGGER.info("Primordia initialised");
 	}

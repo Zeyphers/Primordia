@@ -1,0 +1,14 @@
+{
+  "parent": "primordia:keep_records",
+  "display": {
+    "icon": { "id": "primordia:basic_gene_lab" },
+    "title": { "text": "Known Quantity" },
+    "description": { "text": "File twelve of one bloodline, until it holds no more surprises." },
+    "frame": "goal",
+    "show_toast": true,
+    "announce_to_chat": false,
+    "hidden": false
+  },
+  "criteria": { "trigger": { "trigger": "minecraft:impossible", "conditions": {} } },
+  "requirements": [[ "trigger" ]]
+}

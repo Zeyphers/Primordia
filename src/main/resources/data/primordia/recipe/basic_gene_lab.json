@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "building",
+  "pattern": [
+    "IGI",
+    "RFR",
+    "ICI"
+  ],
+  "key": {
+    "I": { "item": "minecraft:iron_ingot" },
+    "G": { "item": "minecraft:glass_pane" },
+    "R": { "item": "minecraft:redstone" },
+    "F": { "item": "minecraft:furnace" },
+    "C": { "item": "minecraft:comparator" }
+  },
+  "result": { "id": "primordia:basic_gene_lab", "count": 1 }
+}

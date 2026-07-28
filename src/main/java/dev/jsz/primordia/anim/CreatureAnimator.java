@@ -188,8 +188,17 @@ public final class CreatureAnimator {
 
 		switch (ctx.activity) {
 			case GRAZE -> {
-				// Head down to the ground, with a chewing rhythm layered on.
-				targetHeadPitch = 1.05f;
+				// Where the head goes is the look direction's job, not this layer's. It used to be
+				// a flat 1.05 radians of pitch — head to the ground, unconditionally — which is
+				// right for cropping grass at your feet and wrong for everything else the goal can
+				// actually target. A creature browsing leaves off a branch above it still drove its
+				// head down, because the constant swamped the look and then the clamp absorbed what
+				// was left. The look already points at the exact block being eaten, so all that is
+				// needed here is the movement of feeding on top of it.
+				//
+				// A little extra pitch remains so the animal commits to the mouthful rather than
+				// merely facing it, and the crouch settles the body over its food.
+				targetHeadPitch = 0.18f;
 				targetHeadYaw = 0.10f * (float) Math.sin(ctx.time * 1.3);
 				// Fast small bob is the jaw working; the slow one is the head shifting between bites.
 				targetHeadPitch += 0.09f * (float) Math.sin(ctx.time * 9.0)

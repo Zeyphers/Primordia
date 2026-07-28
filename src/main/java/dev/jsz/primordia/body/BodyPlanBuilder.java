@@ -494,7 +494,11 @@ public final class BodyPlanBuilder {
 		// Discrete photophores down the flanks, for the strongly bioluminescent only. Weaker
 		// glow genotypes light existing geometry instead (see BodyPalette / Pattern) rather than
 		// growing organs, so the trait fades in smoothly instead of popping into existence.
-		if (g.expresses(Gene.BIOLUMINESCENCE, 0.78f)) {
+		//
+		// Tracks BodyPalette.GLOW_THRESHOLD and must stay clear above it, or a creature would grow
+		// organs it has no glow to light. Expressed against that constant rather than a literal so
+		// moving the palette's cut cannot silently invert the two.
+		if (g.expresses(Gene.BIOLUMINESCENCE, BodyPalette.GLOW_THRESHOLD + 0.08f)) {
 			// Set into the flank rather than stuck onto it. Sunk this far the pod barely changes
 			// the silhouette, but it still wins the nearest-part test that decides vertex colour,
 			// so what the player sees is a glowing patch in the skin rather than a bead on a

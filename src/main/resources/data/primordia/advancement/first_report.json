@@ -1,0 +1,14 @@
+{
+  "parent": "primordia:take_a_sample",
+  "display": {
+    "icon": { "id": "primordia:genome_report" },
+    "title": { "text": "Almost Nothing" },
+    "description": { "text": "Decode a specimen. The answer will be vague, and that is honest." },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": false,
+    "hidden": false
+  },
+  "criteria": { "trigger": { "trigger": "minecraft:inventory_changed", "conditions": { "items": [ { "items": "primordia:genome_report" } ] } } },
+  "requirements": [[ "trigger" ]]
+}

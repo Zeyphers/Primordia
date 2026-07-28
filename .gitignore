@@ -21,3 +21,6 @@ bin/
 run/
 remappedSrc/
 .claude/
+
+# runtime
+logs/

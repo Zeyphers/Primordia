@@ -1,0 +1,14 @@
+{
+  "parent": "primordia:first_report",
+  "display": {
+    "icon": { "id": "primordia:field_guide" },
+    "title": { "text": "Keep Records" },
+    "description": { "text": "Carry a field guide. Reports will file themselves into it." },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": false,
+    "hidden": false
+  },
+  "criteria": { "trigger": { "trigger": "minecraft:inventory_changed", "conditions": { "items": [ { "items": "primordia:field_guide" } ] } } },
+  "requirements": [[ "trigger" ]]
+}

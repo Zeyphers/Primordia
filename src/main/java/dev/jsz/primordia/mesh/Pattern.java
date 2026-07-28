@@ -33,7 +33,18 @@ public final class Pattern {
 	public static float colorAt(float x, float y, float z, float nx, float ny, float nz,
 	                            Feature feature, BodyPalette palette, Noise noise, Vector3f dest) {
 		// A dedicated light organ is emissive whatever the glow region says — it is the organ.
+		//
+		// Except on a creature that does not glow at all. Whether organs are grown is decided in
+		// BodyPlanBuilder off its own threshold on the same locus, and the floor below used to
+		// apply unconditionally: raise the palette's cut past the builder's and every animal in
+		// the gap between them would sprout fully lit pods while reporting no bioluminescence.
+		// The two constants are ordered correctly today, and this makes it not matter if they
+		// ever stop being — the palette is the single authority on whether a creature emits.
 		if (feature == Feature.GLOW) {
+			if (palette.glowStrength <= 0f) {
+				dest.set(palette.primary);
+				return 0f;
+			}
 			dest.set(palette.glow);
 			return Math.max(palette.glowStrength, 0.85f);
 		}

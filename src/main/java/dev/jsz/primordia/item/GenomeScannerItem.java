@@ -42,6 +42,24 @@ public class GenomeScannerItem extends Item {
 	}
 
 	/**
+	 * {@inheritDoc}
+	 * <p>
+	 * States plainly that this is not a survival item. It has no recipe, because reading a complete
+	 * genome off a living animal in one click is exactly the result the lab pipeline exists to make
+	 * a player earn — but it remains the fastest way to check what the generator actually produced,
+	 * which is worth keeping for creative building and for debugging.
+	 */
+	@Override
+	public void appendTooltip(ItemStack stack, TooltipContext context, java.util.List<Text> tooltip,
+	                          net.minecraft.item.tooltip.TooltipType type) {
+		tooltip.add(Text.literal("Creative-mode instrument").formatted(Formatting.LIGHT_PURPLE));
+		tooltip.add(Text.literal("Not craftable in survival — use the lab pipeline:")
+				.formatted(Formatting.DARK_GRAY));
+		tooltip.add(Text.literal("Biopsy Kit → Gene Sequencer → Genome Decoder")
+				.formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
+	}
+
+	/**
 	 * Pointed at nothing, the instrument surveys the region instead of an individual.
 	 * <p>
 	 * This is the only way the player can perceive the half of the ecology that happens where they

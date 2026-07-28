@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "pattern": [
+    "  S",
+    " B ",
+    "I  "
+  ],
+  "key": {
+    "S": { "item": "minecraft:string" },
+    "B": { "item": "minecraft:glass_bottle" },
+    "I": { "item": "minecraft:iron_ingot" }
+  },
+  "result": { "id": "primordia:biopsy_kit", "count": 1 }
+}

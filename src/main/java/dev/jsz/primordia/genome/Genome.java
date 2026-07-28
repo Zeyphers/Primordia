@@ -130,8 +130,14 @@ public final class Genome {
 	}
 
 	/**
-	 * Creates a founder genome adapted with biome camouflage (~85% chance) or
-	 * bright warning/display outliers (15% chance for Red / Canary Yellow).
+	 * Creates a founder genome adapted with biome camouflage, or — rarely — with the bright
+	 * warning colouration of something that does not need to hide.
+	 * <p>
+	 * The outlier used to fire on 15% of founders at near-maximum saturation and brightness, which
+	 * measured out as one animal in seven being scarlet. Warning colouration only reads as a
+	 * warning when the rest of the fauna is drab, so it is now uncommon, and pitched at a strong
+	 * rust or ochre rather than a traffic cone. {@link dev.jsz.primordia.body.BodyPalette} caps
+	 * saturation by hue on top of this.
 	 */
 	public static Genome createForBiome(net.minecraft.util.math.random.Random random, String biomeCategory) {
 		Archetype archetype = Archetype.VALUES[random.nextInt(Archetype.VALUES.length)];
@@ -139,11 +145,11 @@ public final class Genome {
 		Genome g = archetype.create(jRandom);
 		float[] v = g.copyValues();
 
-		boolean isOutlier = random.nextFloat() < 0.15f;
+		boolean isOutlier = random.nextFloat() < 0.04f;
 		if (isOutlier) {
 			v[Gene.HUE.ordinal()] = random.nextBoolean() ? random.nextFloat() * 0.10f : 0.94f + random.nextFloat() * 0.06f;
-			v[Gene.SATURATION.ordinal()] = 0.85f + random.nextFloat() * 0.15f;
-			v[Gene.BRIGHTNESS.ordinal()] = 0.75f + random.nextFloat() * 0.20f;
+			v[Gene.SATURATION.ordinal()] = 0.62f + random.nextFloat() * 0.25f;
+			v[Gene.BRIGHTNESS.ordinal()] = 0.55f + random.nextFloat() * 0.25f;
 			return new Genome(v, g.seed(), g.lineage(), 0);
 		}
 
@@ -155,21 +161,23 @@ public final class Genome {
 			v[Gene.BRIGHTNESS.ordinal()] = random.nextBoolean() ? 0.85f + random.nextFloat() * 0.15f : 0.10f + random.nextFloat() * 0.20f;
 		} else if (cat.contains("desert") || cat.contains("badlands") || cat.contains("beach") || cat.contains("sand")) {
 			v[Gene.HUE.ordinal()] = 0.08f + random.nextFloat() * 0.06f;
-			v[Gene.SATURATION.ordinal()] = 0.20f + random.nextFloat() * 0.25f;
+			v[Gene.SATURATION.ordinal()] = 0.28f + random.nextFloat() * 0.24f;
 			v[Gene.BRIGHTNESS.ordinal()] = 0.70f + random.nextFloat() * 0.25f;
 		} else if (cat.contains("snow") || cat.contains("ice") || cat.contains("frozen")) {
 			v[Gene.SATURATION.ordinal()] = 0.02f + random.nextFloat() * 0.10f;
 			v[Gene.BRIGHTNESS.ordinal()] = 0.82f + random.nextFloat() * 0.16f;
 		} else if (cat.contains("swamp")) {
 			v[Gene.HUE.ordinal()] = 0.18f + random.nextFloat() * 0.08f;
-			v[Gene.SATURATION.ordinal()] = 0.30f + random.nextFloat() * 0.30f;
+			v[Gene.SATURATION.ordinal()] = 0.24f + random.nextFloat() * 0.24f;
 			v[Gene.BRIGHTNESS.ordinal()] = 0.22f + random.nextFloat() * 0.25f;
 		} else if (cat.contains("jungle") || cat.contains("forest") || cat.contains("taiga")) {
-			v[Gene.HUE.ordinal()] = 0.25f + random.nextFloat() * 0.13f;
-			v[Gene.SATURATION.ordinal()] = 0.35f + random.nextFloat() * 0.40f;
+			// Woodland camouflage is olive, moss and bark, not parrot green. This band was the
+			// most saturated in the table and forest fauna came out luminous because of it.
+			v[Gene.HUE.ordinal()] = 0.22f + random.nextFloat() * 0.14f;
+			v[Gene.SATURATION.ordinal()] = 0.26f + random.nextFloat() * 0.26f;
 		} else {
-			v[Gene.HUE.ordinal()] = 0.12f + random.nextFloat() * 0.10f;
-			v[Gene.SATURATION.ordinal()] = 0.30f + random.nextFloat() * 0.35f;
+			v[Gene.HUE.ordinal()] = 0.10f + random.nextFloat() * 0.11f;
+			v[Gene.SATURATION.ordinal()] = 0.28f + random.nextFloat() * 0.28f;
 		}
 
 		return new Genome(v, g.seed(), g.lineage(), 0);

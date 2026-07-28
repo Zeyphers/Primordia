@@ -1,0 +1,10 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": { "layer0": "primordia:item/tissue_sample" },
+  "overrides": [
+    {
+      "predicate": { "primordia:filled": 1 },
+      "model": "primordia:item/tissue_sample_full"
+    }
+  ]
+}

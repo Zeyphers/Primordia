@@ -2,8 +2,13 @@ package dev.jsz.primordia;
 
 import dev.jsz.primordia.command.PrimordiaCommands;
 import dev.jsz.primordia.ecology.region.EcologyTicker;
+import dev.jsz.primordia.lab.NameLineagePayload;
+import dev.jsz.primordia.registry.PrimordiaBlockEntities;
+import dev.jsz.primordia.registry.PrimordiaBlocks;
 import dev.jsz.primordia.registry.PrimordiaEntities;
+import dev.jsz.primordia.registry.PrimordiaItemGroup;
 import dev.jsz.primordia.registry.PrimordiaItems;
+import dev.jsz.primordia.registry.PrimordiaScreenHandlers;
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
@@ -20,8 +25,16 @@ public class Primordia implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		PrimordiaEntities.register();
+		// Blocks before block entities: the entity types name the blocks they are valid for, and
+		// the blocks reach their type back through a supplier so neither can be first by accident.
+		PrimordiaBlocks.register();
+		PrimordiaBlockEntities.register();
+		PrimordiaScreenHandlers.register();
 		PrimordiaItems.register();
+		// After the items and blocks it lists, since it holds references to them.
+		PrimordiaItemGroup.register();
 		PrimordiaCommands.register();
+		NameLineagePayload.register();
 		EcologyTicker.register();
 
 		// Deliberately no BiomeModifications.addSpawn. Creatures are no longer placed by the

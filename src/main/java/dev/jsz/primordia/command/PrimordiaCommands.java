@@ -5,6 +5,11 @@ import com.mojang.brigadier.arguments.LongArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import dev.jsz.primordia.genome.Archetype;
+import dev.jsz.primordia.lab.Discoveries;
+import dev.jsz.primordia.lab.GuideData;
+import dev.jsz.primordia.registry.PrimordiaItems;
+import net.minecraft.item.ItemStack;
+import net.minecraft.server.network.ServerPlayerEntity;
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BodyPlanCache;
 import dev.jsz.primordia.body.BoneDef;
@@ -94,6 +99,11 @@ public final class PrimordiaCommands {
 										.executes(ctx -> clear(ctx, IntegerArgumentType.getInteger(ctx, "radius")))))
 						.then(CommandManager.literal("info")
 								.executes(PrimordiaCommands::info))
+						.then(CommandManager.literal("collect")
+								.executes(ctx -> collect(ctx, 48))
+								.then(CommandManager.argument("radius", IntegerArgumentType.integer(1, 256))
+										.executes(ctx -> collect(ctx,
+												IntegerArgumentType.getInteger(ctx, "radius")))))
 						.then(CommandManager.literal("region")
 								.executes(PrimordiaCommands::region))
 						.then(CommandManager.literal("breed")
@@ -120,6 +130,55 @@ public final class PrimordiaCommands {
 	}
 
 	// ------------------------------------------------------------------ actions
+
+	/**
+	 * Files every nearby creature straight into the player's field guide.
+	 * <p>
+	 * A testing shortcut, and deliberately a blunt one: reaching a fully characterised species the
+	 * honest way is twelve separate expeditions, which is the right cost when playing and an absurd
+	 * one when checking that a plate lays out correctly. Bypasses the sample, the lab and the
+	 * report entirely — the guide is the only thing this is for.
+	 */
+	private static int collect(CommandContext<ServerCommandSource> ctx, int radius) {
+		ServerCommandSource source = ctx.getSource();
+		ServerPlayerEntity player = source.getPlayer();
+		if (player == null) {
+			source.sendError(Text.literal("Must be run by a player"));
+			return 0;
+		}
+
+		ItemStack guide = ItemStack.EMPTY;
+		for (int i = 0; i < player.getInventory().size(); i++) {
+			ItemStack candidate = player.getInventory().getStack(i);
+			if (candidate.isOf(PrimordiaItems.FIELD_GUIDE)) {
+				guide = candidate;
+				break;
+			}
+		}
+		if (guide.isEmpty()) {
+			source.sendError(Text.literal("No field guide in your inventory"));
+			return 0;
+		}
+
+		Box box = player.getBoundingBox().expand(radius, radius, radius);
+		List<CreatureEntity> nearby = player.getWorld().getEntitiesByClass(CreatureEntity.class, box,
+				creature -> creature.isAlive() && !creature.isCarcass() && creature.getGenome() != null);
+
+		GuideData data = GuideData.get(guide);
+		int before = data.speciesCount();
+		for (CreatureEntity creature : nearby) {
+			data.file(creature.getGenome());
+		}
+		data.write(guide);
+		Discoveries.checkGuide(player, data);
+
+		int filed = nearby.size();
+		int newSpecies = data.speciesCount() - before;
+		source.sendFeedback(() -> Text.literal("Filed " + filed + " specimen(s), "
+				+ newSpecies + " new bloodline(s) · "
+				+ data.speciesCount() + " on file").formatted(Formatting.GREEN), false);
+		return filed;
+	}
 
 	private static int spawn(CommandContext<ServerCommandSource> ctx, int count, String archetypeName, Long seed) {
 		ServerCommandSource source = ctx.getSource();

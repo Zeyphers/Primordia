@@ -1,0 +1,14 @@
+{
+  "parent": "primordia:fully_characterised",
+  "display": {
+    "icon": { "id": "minecraft:oak_sapling" },
+    "title": { "text": "It Stopped Being That" },
+    "description": { "text": "Record a bloodline on both sides of a fork." },
+    "frame": "challenge",
+    "show_toast": true,
+    "announce_to_chat": false,
+    "hidden": true
+  },
+  "criteria": { "trigger": { "trigger": "minecraft:impossible", "conditions": {} } },
+  "requirements": [[ "trigger" ]]
+}

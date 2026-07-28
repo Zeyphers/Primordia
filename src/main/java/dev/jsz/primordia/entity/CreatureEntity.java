@@ -47,6 +47,8 @@ import net.minecraft.entity.attribute.DefaultAttributeContainer;
 import net.minecraft.entity.attribute.EntityAttributeInstance;
 import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.entity.damage.DamageSource;
+import net.minecraft.entity.damage.DamageTypes;
+import net.minecraft.registry.tag.DamageTypeTags;
 import net.minecraft.entity.data.DataTracker;
 import net.minecraft.entity.data.TrackedData;
 import net.minecraft.entity.data.TrackedDataHandlerRegistry;
@@ -935,11 +937,17 @@ public class CreatureEntity extends PathAwareEntity {
 	 * predator working through a herd from carpeting the ground in beef, leather and bone that
 	 * nothing in the world is able to eat — the meat is still there, it is just still attached to
 	 * the animal, and something has to come and eat it.
+	 * <p>
+	 * Unless there is nothing left to leave. A death by fire or lava consumes the body, so it
+	 * neither drops nor becomes a carcass — a corpse lying intact in a lava lake reads as a bug
+	 * whatever the ecology says, and a floating one is worse.
 	 */
 	@Override
 	public void onDeath(DamageSource damageSource) {
 		super.onDeath(damageSource);
 		if (getWorld().isClient() || isCarcass()) return;
+
+		if (consumesTheBody(damageSource)) return;
 
 		if (SurvivalDrops.killedByPlayer(damageSource)) {
 			SurvivalDrops.dropLoot(this, 1f);
@@ -949,16 +957,43 @@ public class CreatureEntity extends PathAwareEntity {
 	}
 
 	/**
+	 * Whether this death leaves nothing behind to find.
+	 * <p>
+	 * Burning covers fire, lava and magma; the void and the kill command leave nothing by
+	 * definition. Everything else — including a player's kill with a flaming sword, which the
+	 * damage type does not mark as fire — still yields a body or a drop.
+	 */
+	private static boolean consumesTheBody(DamageSource source) {
+		if (source == null) return false;
+		return source.isIn(DamageTypeTags.IS_FIRE)
+				|| source.isOf(DamageTypes.LAVA)
+				|| source.isOf(DamageTypes.IN_FIRE)
+				|| source.isOf(DamageTypes.ON_FIRE)
+				|| source.isOf(DamageTypes.HOT_FLOOR)
+				|| source.isOf(DamageTypes.OUT_OF_WORLD)
+				|| source.isOf(DamageTypes.GENERIC_KILL);
+	}
+
+	/**
 	 * {@inheritDoc}
 	 * <p>
 	 * A carcass is not alive and cannot be killed again, but a player is allowed to butcher one —
 	 * driving a predator off a fresh kill and taking it is a reasonable thing to want to do, and
 	 * the yield scales with how much of the body is left.
+	 * <p>
+	 * Fire is the exception to "cannot be killed again". Ignoring every non-player source is right
+	 * for arrows and for other predators, but it also made a body immune to the lava it was lying
+	 * in, so a kill that happened to fall in would float there indefinitely. Burning removes it and
+	 * yields nothing, matching what happens to a creature that dies in lava in the first place.
 	 */
 	@Override
 	public boolean damage(DamageSource source, float amount) {
 		if (!isCarcass()) return super.damage(source, amount);
 		if (getWorld().isClient()) return false;
+		if (consumesTheBody(source)) {
+			discard();
+			return true;
+		}
 		if (!(source.getAttacker() instanceof PlayerEntity)) return false;
 
 		BodyPlan plan = getBodyPlan();
@@ -993,6 +1028,7 @@ public class CreatureEntity extends PathAwareEntity {
 		}
 
 		lifeTicks++;
+		noticeWatchers();
 		if (huntCooldown > 0) huntCooldown--;
 		if (breedCooldown > 0) breedCooldown--;
 
@@ -1019,6 +1055,30 @@ public class CreatureEntity extends PathAwareEntity {
 				: CreatureActivity.IDLE;
 		if (getActivity() != ambient) {
 			dataTracker.set(ACTIVITY, (byte) ambient.ordinal());
+		}
+	}
+
+	/** Ticks between sweeps for a player close enough to have seen this creature. */
+	private static final int SIGHTING_INTERVAL = 40;
+	/** How close counts as having seen one. Comfortably inside normal render distance. */
+	private static final double SIGHTING_RANGE = 24.0;
+
+	/**
+	 * Awards the opening advancement to anyone near enough to have noticed this animal.
+	 * <p>
+	 * There is no vanilla trigger for "saw an entity", and the first sighting is exactly the moment
+	 * the mod wants to say "that was not designed — go and find out what it is". So it is granted
+	 * from here, on a slow sweep, and the tracker discards the repeats.
+	 */
+	private void noticeWatchers() {
+		if (isCarcass() || age % SIGHTING_INTERVAL != 0) return;
+		if (!(getWorld() instanceof ServerWorld world)) return;
+
+		for (var player : world.getPlayers()) {
+			if (player.squaredDistanceTo(this) <= SIGHTING_RANGE * SIGHTING_RANGE) {
+				dev.jsz.primordia.lab.Discoveries.grant(player,
+						dev.jsz.primordia.lab.Discoveries.SOMETHING_MOVES);
+			}
 		}
 	}
 
@@ -1292,7 +1352,83 @@ public class CreatureEntity extends PathAwareEntity {
 		}
 	}
 
+	/** Damage a biopsy inflicts. One heart: a real jab, not a wound. */
+	public static final float SAMPLE_DAMAGE = 2.0f;
+	/** Health a sampled creature is always left with, so a swab can never be a murder weapon. */
+	private static final float SAMPLE_HEALTH_FLOOR = 1.0f;
+
+	/**
+	 * Reacts to having a tissue sample taken.
+	 * <p>
+	 * Sampling is otherwise a free action against anything in the world, which makes the whole lab
+	 * pipeline a matter of walking up to an apex predator and clicking it. The needle now actually
+	 * hurts, which is what puts the risk back: the damage is dealt as a player attack, so every
+	 * piece of aggression the mod already has — {@code RevengeGoal} for anything that retaliates,
+	 * {@code EscapeDangerGoal} for anything skittish — fires on its own without this method
+	 * arranging it.
+	 * <p>
+	 * A bonded companion tolerates it from its owner. Being jabbed by a stranger is a different
+	 * matter, and it reacts like anything else would.
+	 */
+	public void provokeSampling(PlayerEntity player) {
+		if (getWorld().isClient() || isCarcass()) return;
+		if (isDomesticated() && player.getUuid().equals(getOwnerUuid())) return;
+
+		// Never lethal. Killing an animal with a cotton swab is absurd on its own, and it would
+		// also route the death through the player-kill branch in onDeath and drop full loot —
+		// turning the biopsy kit into a strange one-hit weapon against anything already wounded.
+		if (getHealth() - SAMPLE_DAMAGE >= SAMPLE_HEALTH_FLOOR) {
+			damage(getDamageSources().playerAttack(player), SAMPLE_DAMAGE);
+		}
+
+		// Damage already sets the attacker and wakes the revenge goals, but a creature too hurt to
+		// take the damage above still noticed the needle. Provoke it explicitly so a wounded animal
+		// is not the one thing in the world that lets you sample it for free.
+		if (getTemperament().retaliates()) {
+			setTarget(player);
+			setAttacker(player);
+		} else if (getTemperament().fleesWhenHurt()) {
+			setAttacker(player);
+		}
+	}
+
 	// --------------------------------------------------------------- dimensions
+
+	/**
+	 * World Y of the middle of the skull, in the bind pose.
+	 * <p>
+	 * Not the same thing as {@link #getEyeY()}, and the gap between them is the whole reason this
+	 * exists. Minecraft puts the eye at 85% of the collision box, and this mod's box is capped at
+	 * twice hip height so that long-necked creatures do not suffocate under trees — so on anything
+	 * with a neck the "eye" sits somewhere in the shoulders, well below the head the player can
+	 * actually see. Aiming at a target from there and pitching the rendered head by the resulting
+	 * angle leaves the head short of what it is supposedly looking at, and the taller the animal
+	 * the further short it falls.
+	 * <p>
+	 * Model space is world space here — nothing scales the mesh at render time — so the bone
+	 * position adds straight onto the entity's feet.
+	 */
+	public double getHeadY() {
+		BodyPlan plan = getBodyPlan();
+		if (plan == null || plan.headBone < 0 || plan.headBone >= plan.bones.length) {
+			return getEyeY();
+		}
+		var bone = plan.bones[plan.headBone];
+		return getY() + (bone.head.y + bone.tail.y) * 0.5;
+	}
+
+	/**
+	 * Points the head at a world position as though the look ran from the skull rather than from
+	 * the collision box's nominal eye.
+	 * <p>
+	 * {@link net.minecraft.entity.ai.control.LookControl} derives pitch from {@link #getEyeY()} and
+	 * offers no way to say otherwise, so the aim point is pre-compensated by the offset between the
+	 * two: the angle it computes from the eye then equals the angle from the head to the real
+	 * target. Yaw needs no correction — both are measured from the same X/Z.
+	 */
+	public void lookAtFromHead(double x, double y, double z) {
+		getLookControl().lookAt(x, y + (getEyeY() - getHeadY()), z);
+	}
 
 	public List<Box> getLegSubHitboxes() {
 		BodyPlan plan = getBodyPlan();

@@ -1,0 +1,49 @@
+{
+	"variants": {
+		"facing=north,stage=idle": {
+			"model": "primordia:block/basic_gene_lab"
+		},
+		"facing=east,stage=idle": {
+			"model": "primordia:block/basic_gene_lab",
+			"y": 90
+		},
+		"facing=south,stage=idle": {
+			"model": "primordia:block/basic_gene_lab",
+			"y": 180
+		},
+		"facing=west,stage=idle": {
+			"model": "primordia:block/basic_gene_lab",
+			"y": 270
+		},
+		"facing=north,stage=sequencing": {
+			"model": "primordia:block/basic_gene_lab_sequencing"
+		},
+		"facing=east,stage=sequencing": {
+			"model": "primordia:block/basic_gene_lab_sequencing",
+			"y": 90
+		},
+		"facing=south,stage=sequencing": {
+			"model": "primordia:block/basic_gene_lab_sequencing",
+			"y": 180
+		},
+		"facing=west,stage=sequencing": {
+			"model": "primordia:block/basic_gene_lab_sequencing",
+			"y": 270
+		},
+		"facing=north,stage=decoding": {
+			"model": "primordia:block/basic_gene_lab_decoding"
+		},
+		"facing=east,stage=decoding": {
+			"model": "primordia:block/basic_gene_lab_decoding",
+			"y": 90
+		},
+		"facing=south,stage=decoding": {
+			"model": "primordia:block/basic_gene_lab_decoding",
+			"y": 180
+		},
+		"facing=west,stage=decoding": {
+			"model": "primordia:block/basic_gene_lab_decoding",
+			"y": 270
+		}
+	}
+}

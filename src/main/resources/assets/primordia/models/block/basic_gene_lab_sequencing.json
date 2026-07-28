@@ -1,0 +1,6 @@
+{
+	"parent": "primordia:block/basic_gene_lab_base",
+	"textures": {
+		"all": "primordia:block/basic_gene_lab_sequencing_tex"
+	}
+}

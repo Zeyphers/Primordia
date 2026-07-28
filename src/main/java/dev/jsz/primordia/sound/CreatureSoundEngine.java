@@ -43,7 +43,11 @@ public final class CreatureSoundEngine {
 			if (diet < 0.35f) return SoundEvents.ENTITY_PANDA_AMBIENT;
 			return SoundEvents.ENTITY_WOLF_AMBIENT;
 		} else if (plan.mass < 0.25f) {
-			if (plan.legs.length >= 6) return SoundEvents.ENTITY_BEE_LOOP;
+			// Many-legged and small used to buzz like a bee. It is the one vanilla loop that reads
+			// as a specific animal rather than as a texture of sound — a bee is unmistakably a bee,
+			// so every insectoid in the mod sounded like the same borrowed creature. A spider's
+			// rasp carries the same "small and many-legged" idea without naming something else.
+			if (plan.legs.length >= 6) return SoundEvents.ENTITY_SPIDER_AMBIENT;
 			return SoundEvents.ENTITY_FOX_AMBIENT;
 		}
 

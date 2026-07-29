@@ -13,7 +13,14 @@ public interface GroundProbe {
 	 * Implementations must reject surfaces the creature could not actually have stepped onto —
 	 * notably the sides of walls and tree trunks, which a foot passing by will otherwise plant on
 	 * and appear glued to. Returning {@code NaN} is the correct answer for such a column; the
-	 * caller falls back to the creature's own foot level.
+	 * caller then searches the neighbouring columns and finally falls back to the creature's own
+	 * foot level.
+	 * <p>
+	 * <b>Open water is not one of those columns.</b> It must report a height just under the
+	 * surface, not {@code NaN}. The caller's rescue is designed for a foot over a cliff edge, and
+	 * at a shoreline it will happily find the bank the creature is standing on and plant the foot
+	 * there — which is what standing on top of a lake looks like. A column with water in it has a
+	 * real answer, and giving it is what keeps the rescue out of it.
 	 *
 	 * @param referenceY the creature's foot level, the origin for step-up and drop limits
 	 * @return the surface Y, or {@code Float.NaN} when nothing standable is in range

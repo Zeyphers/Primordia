@@ -8,6 +8,8 @@ import dev.jsz.primordia.client.config.PrimordiaConfig;
 import dev.jsz.primordia.entity.CreatureActivity;
 import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.genome.Genome;
+import dev.jsz.primordia.mesh.FaceColour;
+import dev.jsz.primordia.mesh.FaceNormal;
 import dev.jsz.primordia.mesh.GenomeMeshCache;
 import dev.jsz.primordia.mesh.LodTier;
 import dev.jsz.primordia.mesh.MeshData;
@@ -108,6 +110,26 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 		// Model space is built facing +Z; Minecraft yaw 0 also faces +Z but increases toward -X,
 		// so the model rotates by the negated yaw.
 		matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-yaw));
+
+		float climb = entity.getClimbBlend();
+		if (climb > 0.01f) {
+			// Tip the whole animal onto the wall it is holding.
+			//
+			// Minecraft's own climbers do not do this — a spider goes up a wall standing upright,
+			// which is fine for a silhouette made of boxes and looks wrong on something with legs
+			// that visibly reach for a surface. Here the body turns until its feet are on the wall
+			// and its back is to the room, which is what a climbing animal looks like.
+			//
+			// A pitch of -90° about the model's own X takes forward to up and up to backward: the
+			// creature ends up facing the way it is climbing, lying against the surface. The
+			// creature's yaw already points into the wall, because ClimbWallGoal walks it there and
+			// keeps it looking at it, so no separate wall direction is needed here.
+			matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(-90f * climb));
+			// Rotating about the feet would swing the body out into the room. Lifting to hip height
+			// first turns it about its own middle, and the drop afterwards settles it against the
+			// surface rather than floating a body's width off it.
+			matrices.translate(0f, plan.hipHeight * 0.5f * climb, 0f);
+		}
 		if (entity.isCarcass()) {
 			// A dead animal lies on its side. Rolling the whole body is the right level to do this
 			// at — the alternative is posing every bone into a heap, which the skeleton has no
@@ -255,23 +277,54 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 		int[] quads = mesh.quads;
 		int overlay = OverlayTexture.DEFAULT_UV;
 
-		for (int i = 0; i < quads.length; i++) {
-			int v = quads[i];
-			int p = v * 3;
+		// Sharp shading hands all four corners of a face the face's own normal instead of their
+		// individual smooth ones. Nothing about the mesh changes — this loop already emits four
+		// unshared vertices per quad, so the only difference is which normal each one is given.
+		PrimordiaConfig config = PrimordiaConfig.get();
+		boolean sharp = config.sharpShading;
+		boolean flatColour = config.flatFaceColour;
 
-			// Corners run a, b, c, d around the quad, so the UV square does too.
-			int corner = i & 3;
-			float u = (corner == 1 || corner == 2) ? UV_HI : UV_LO;
-			float t = corner >= 2 ? UV_HI : UV_LO;
+		for (int i = 0; i < quads.length; i += 4) {
+			if (sharp) {
+				// From the skinned positions, so a face turns with the limb it belongs to.
+				FaceNormal.compute(positions, quads, i, faceNormal);
+			}
+			float faceEmissive = 0f;
+			if (flatColour) {
+				FaceColour.average(colors, quads, i, faceColour);
+				faceEmissive = FaceColour.averageEmissive(emissive, quads, i);
+			}
 
-			consumer.vertex(entry, positions[p], positions[p + 1], positions[p + 2])
-					.color(colors[p], colors[p + 1], colors[p + 2], 1f)
-					.texture(u, t)
-					.overlay(overlay)
-					.light(emissiveLight(light, emissive[v]))
-					.normal(entry, normals[p], normals[p + 1], normals[p + 2]);
+			for (int k = 0; k < 4; k++) {
+				int v = quads[i + k];
+				int p = v * 3;
+
+				// Corners run a, b, c, d around the quad, so the UV square does too.
+				float u = (k == 1 || k == 2) ? UV_HI : UV_LO;
+				float t = k >= 2 ? UV_HI : UV_LO;
+
+				float nx = sharp ? faceNormal.x : normals[p];
+				float ny = sharp ? faceNormal.y : normals[p + 1];
+				float nz = sharp ? faceNormal.z : normals[p + 2];
+
+				float cr = flatColour ? faceColour.x : colors[p];
+				float cg = flatColour ? faceColour.y : colors[p + 1];
+				float cb = flatColour ? faceColour.z : colors[p + 2];
+				float ce = flatColour ? faceEmissive : emissive[v];
+
+				consumer.vertex(entry, positions[p], positions[p + 1], positions[p + 2])
+						.color(cr, cg, cb, 1f)
+						.texture(u, t)
+						.overlay(overlay)
+						.light(emissiveLight(light, ce))
+						.normal(entry, nx, ny, nz);
+			}
 		}
 	}
+
+	/** Scratch for the current face's normal and colour. Rendering is single-threaded, as {@link #SKINNED} is. */
+	private final org.joml.Vector3f faceNormal = new org.joml.Vector3f();
+	private final org.joml.Vector3f faceColour = new org.joml.Vector3f();
 
 	/**
 	 * Draws the bioluminescent parts again on the emissive render layer.

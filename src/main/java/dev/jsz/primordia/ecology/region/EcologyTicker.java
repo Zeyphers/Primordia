@@ -40,6 +40,16 @@ public final class EcologyTicker {
 	 */
 	private static final int FOUNDINGS_PER_PASS = 2;
 
+	/** Live surface creatures allowed across the whole active area. */
+	private static final int CLUSTER_BUDGET = RegionMaterialiser.CLUSTER_BUDGET;
+	/**
+	 * Live cave creatures allowed across the whole active area, budgeted apart from the surface.
+	 * <p>
+	 * Lower, because they are tiny and underground sight lines are short — but never zero, which is
+	 * what a shared budget amounted to in practice.
+	 */
+	private static final int CAVE_CLUSTER_BUDGET = 18;
+
 	/** Regions that were active on the previous pass, per world. */
 	private static final Map<ServerWorld, Set<Long>> ACTIVE = new HashMap<>();
 
@@ -70,7 +80,13 @@ public final class EcologyTicker {
 		int foundings = 0;
 		// Counted once across the whole pass rather than per region, because what matters is how
 		// many creatures are near the player, not how they are distributed between records.
-		int clusterLive = 0;
+		//
+		// Kept apart by habitat. A single shared count meant the surface fauna — placed first, and
+		// far more numerous — spent the whole allowance before the cave pass was reached, so a
+		// player underground found nothing at all however many the record said were down there.
+		// The two are never in view together, so they were never really competing for anything.
+		int clusterSurface = 0;
+		int clusterCaves = 0;
 
 		for (ServerPlayerEntity player : world.getPlayers()) {
 			RegionPos centre = RegionPos.of(player.getBlockPos());
@@ -88,6 +104,10 @@ public final class EcologyTicker {
 						foundings++;
 						RegionFounder.found(ledger, record,
 								RegionClimate.sample(world, pos), biomeName(world, pos), day);
+					} else if (record.version < RegionFounder.VERSION) {
+						// Founded by an older build. Bring it forward rather than leaving the
+						// player's existing world permanently without whatever has been added since.
+						RegionFounder.upgrade(record, RegionClimate.sample(world, pos));
 					}
 
 					// Only on the pass where it becomes active: this covers the whole absence in
@@ -98,10 +118,11 @@ public final class EcologyTicker {
 						RegionSimulation.skipTo(record, day);
 					}
 
-					clusterLive += RegionMaterialiser.countLive(world, pos);
-					if (clusterLive < RegionMaterialiser.CLUSTER_BUDGET) {
-						RegionMaterialiser.topUp(world, record);
-					}
+					clusterSurface += RegionMaterialiser.countLive(world, pos, false);
+					clusterCaves += RegionMaterialiser.countLive(world, pos, true);
+					RegionMaterialiser.topUp(world, record,
+							clusterSurface < CLUSTER_BUDGET,
+							clusterCaves < CAVE_CLUSTER_BUDGET);
 				}
 			}
 		}

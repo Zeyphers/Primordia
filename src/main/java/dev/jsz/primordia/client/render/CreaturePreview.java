@@ -1,6 +1,9 @@
 package dev.jsz.primordia.client.render;
 
 import dev.jsz.primordia.genome.Genome;
+import dev.jsz.primordia.mesh.FaceColour;
+import dev.jsz.primordia.mesh.FaceNormal;
+import dev.jsz.primordia.client.config.PrimordiaConfig;
 import dev.jsz.primordia.mesh.GenomeMeshCache;
 import dev.jsz.primordia.mesh.LodTier;
 import dev.jsz.primordia.mesh.MeshData;
@@ -13,6 +16,7 @@ import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.RotationAxis;
+import org.joml.Vector3f;
 
 /**
  * Draws a creature into a GUI, from its genome alone.
@@ -72,8 +76,19 @@ public final class CreaturePreview {
 
 		DiffuseLighting.enableGuiDepthLighting();
 		VertexConsumerProvider.Immediate consumers = context.getVertexConsumers();
-		emit(mesh, matrices.peek(), consumers.getBuffer(RenderLayer.getEntityCutoutNoCull(WHITE)));
-		consumers.draw();
+		RenderLayer layer = RenderLayer.getEntityCutoutNoCull(WHITE);
+		emit(mesh, matrices.peek(), consumers.getBuffer(layer));
+
+		// Only this layer. The provider handed out here is the screen's shared buffer, and it is
+		// still holding every item and glyph drawn so far this frame — the tab icons among them,
+		// because DrawContext queues those rather than rasterising them on the spot.
+		//
+		// A bare draw() flushes all of it, wherever the caller happens to be. Drawn from inside the
+		// bloodlines viewport that meant the tab strip was rasterised under this method's lighting
+		// and inside its scissor rectangle, so the icons came out dimmed and clipped — and since
+		// each visible node did it again, zooming out until more nodes fit made it worse, and
+		// hovering (which changes what is queued when) made it flicker.
+		consumers.draw(layer);
 		DiffuseLighting.enableGuiDepthLighting();
 
 		matrices.pop();
@@ -93,20 +108,36 @@ public final class CreaturePreview {
 		int[] quads = mesh.quads;
 		int light = 0xF000F0;
 
-		for (int i = 0; i < quads.length; i++) {
-			int v = quads[i];
-			int p = v * 3;
+		// The plate should show the animal the way the world does, so it reads the same settings.
+		PrimordiaConfig config = PrimordiaConfig.get();
+		boolean sharp = config.sharpShading;
+		boolean flatColour = config.flatFaceColour;
+		Vector3f face = new Vector3f();
+		Vector3f tint = new Vector3f();
 
-			int corner = i & 3;
-			float u = (corner == 1 || corner == 2) ? UV_HI : UV_LO;
-			float t = corner >= 2 ? UV_HI : UV_LO;
+		for (int i = 0; i < quads.length; i += 4) {
+			if (sharp) FaceNormal.compute(positions, quads, i, face);
+			if (flatColour) FaceColour.average(colors, quads, i, tint);
+			for (int k = 0; k < 4; k++) {
+				int v = quads[i + k];
+				int p = v * 3;
 
-			consumer.vertex(entry, positions[p], positions[p + 1], positions[p + 2])
-					.color(colors[p], colors[p + 1], colors[p + 2], 1f)
-					.texture(u, t)
-					.overlay(OverlayTexture.DEFAULT_UV)
-					.light(light)
-					.normal(entry, normals[p], normals[p + 1], normals[p + 2]);
+				float u = (k == 1 || k == 2) ? UV_HI : UV_LO;
+				float t = k >= 2 ? UV_HI : UV_LO;
+
+				float nx = sharp ? face.x : normals[p];
+				float ny = sharp ? face.y : normals[p + 1];
+				float nz = sharp ? face.z : normals[p + 2];
+
+				consumer.vertex(entry, positions[p], positions[p + 1], positions[p + 2])
+						.color(flatColour ? tint.x : colors[p],
+								flatColour ? tint.y : colors[p + 1],
+								flatColour ? tint.z : colors[p + 2], 1f)
+						.texture(u, t)
+						.overlay(OverlayTexture.DEFAULT_UV)
+						.light(light)
+						.normal(entry, nx, ny, nz);
+			}
 		}
 	}
 }

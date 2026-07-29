@@ -131,7 +131,21 @@ public enum Gene {
 	LEG_ARCH(0.25f),
 
 	/** Broad crushing jaw against a narrow snatching one. */
-	JAW_WIDTH(0.5f);
+	JAW_WIDTH(0.5f),
+
+	/**
+	 * How committed a lineage is to living underground: 0 surface, 1 fully cave-dwelling.
+	 * <p>
+	 * A locus rather than a flag on the archetype, because everything else about where a creature
+	 * lives is heritable and this should be too. A surface lineage can drift down into the caves
+	 * over generations and a cave one can come back out, and the region ledger will place each
+	 * where its genome says it belongs without anything having declared it.
+	 * <p>
+	 * Low plasticity: moving between the surface and the dark is a change of everything — light,
+	 * food, temperature, what can see you — so it should take a lineage many generations rather
+	 * than happening in one unlucky mutation.
+	 */
+	SUBTERRANEAN(0.12f);
 
 	public static final Gene[] VALUES = values();
 	public static final int COUNT = VALUES.length;

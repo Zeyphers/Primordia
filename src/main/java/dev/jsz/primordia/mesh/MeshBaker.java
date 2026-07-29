@@ -32,10 +32,46 @@ public final class MeshBaker {
 		return gradientWeight;
 	}
 
+	/**
+	 * Voxel edge in world units, or zero for the ordinary smooth extraction.
+	 * <p>
+	 * Held here rather than read from the config inside the mesher, for the same reason
+	 * {@link #gradientWeight} is: baking runs on worker threads and the config is client state.
+	 * Both are pushed in from the client when a setting changes.
+	 */
+	private static volatile float voxelSize = 0f;
+
+	public static void setVoxelSize(float size) {
+		voxelSize = Math.max(0f, size);
+	}
+
+	public static float voxelSize() {
+		return voxelSize;
+	}
+
+
 	public static MeshData bake(BodyPlan plan, int resolution) {
 		BodySdf sdf = new BodySdf(plan);
+		int cells = resolutionFor(plan, resolution);
+
+		// Voxel mode has no way to resolve a limb thinner than one cell.
+		//
+		// Ordinarily resolutionFor raises the sampling grid until cells are finer than the thinnest
+		// limb, because a limb narrower than a cell falls between samples and disappears entirely
+		// (PITFALLS §3). A voxel grid cannot do that: its cell size is set by the world so that
+		// every creature is built from the same size of block, and letting one slender genome
+		// halve it would defeat the point.
+		//
+		// So the limb is thickened to meet the grid instead. Arachnids are the case that needs it —
+		// their legs are routinely finer than a single pixel-sized voxel, and came out as broken
+		// dotted lines of blocks rather than legs.
+		sdf.setInflate(voxelSize > 0f ? limbInflation(plan, cells) : 0f);
 		SurfaceNets.Result net = SurfaceNets.extract(sdf, plan.boundsMin, plan.boundsMax,
-				resolutionFor(plan, resolution));
+				cells, voxelSize);
+		// Cleared before anything else reads the field. Colouring asks featureAt which part of the
+		// body a vertex belongs to, and the teeth are placed against the jaw's true surface; both
+		// want the real shape, not the thickened one.
+		sdf.setInflate(0f);
 
 		int vertexCount = net.vertexCount();
 		if (vertexCount == 0) {
@@ -109,7 +145,10 @@ public final class MeshBaker {
 			float fnLen = (float) Math.sqrt(fnx * fnx + fny * fny + fnz * fnz);
 			if (fnLen > 1e-6f) {
 				fnx /= fnLen; fny /= fnLen; fnz /= fnLen;
-				float g = gradientWeight;
+				// Voxel geometry is flat by construction, so the analytic gradient — which describes
+				// the smooth field the blocks were cut from, not the blocks — would shade a cube as
+				// though it were still a curve. The facet normals are the truthful ones here.
+				float g = voxelSize > 0f ? 0f : gradientWeight;
 				float nx = normals[p] * g + fnx * (1f - g);
 				float ny = normals[p + 1] * g + fny * (1f - g);
 				float nz = normals[p + 2] * g + fnz * (1f - g);
@@ -158,6 +197,7 @@ public final class MeshBaker {
 		return new MeshData(positions, normals, colors, emissive, boneIndices, boneWeights, quads,
 				minX, minY, minZ, maxX, maxY, maxZ);
 	}
+
 
 	private static float[] concat(float[] a, float[] b) {
 		float[] out = java.util.Arrays.copyOf(a, a.length + b.length);
@@ -285,6 +325,27 @@ public final class MeshBaker {
 	 * that ceiling the limb is simply too thin to render and the body plan's thickness floor is the
 	 * thing keeping it visible.
 	 */
+	/**
+	 * How far to grow the field so the thinnest limb survives the voxel grid.
+	 * <p>
+	 * Targets a limb roughly one and a half voxels across — one is enough to exist, but a
+	 * single-voxel leg reads as a dotted line as it passes diagonally through the lattice, and the
+	 * animal looks broken rather than blocky. Zero when the limbs are already thick enough, so a
+	 * heavy-legged creature is not silently fattened.
+	 * <p>
+	 * Capped at three quarters of a cell. Inflation grows the <i>whole</i> body, not just the limbs,
+	 * so an uncapped value would balloon a small creature into a lump the moment the voxels got
+	 * large relative to it.
+	 */
+	private static float limbInflation(BodyPlan plan, int cells) {
+		if (plan.minLimbRadius <= 1e-5f) return 0f;
+		float span = Math.max(plan.boundsMax.x - plan.boundsMin.x,
+				Math.max(plan.boundsMax.y - plan.boundsMin.y, plan.boundsMax.z - plan.boundsMin.z));
+		float cell = SurfaceNets.voxelCell(span, cells, voxelSize);
+		float wanted = cell * 0.75f - plan.minLimbRadius;
+		return Math.max(0f, Math.min(wanted, cell * 0.75f));
+	}
+
 	private static int resolutionFor(BodyPlan plan, int requested) {
 		float span = Math.max(plan.boundsMax.x - plan.boundsMin.x,
 				Math.max(plan.boundsMax.y - plan.boundsMin.y, plan.boundsMax.z - plan.boundsMin.z));

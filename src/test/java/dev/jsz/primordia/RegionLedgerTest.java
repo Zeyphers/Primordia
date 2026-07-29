@@ -207,7 +207,8 @@ class RegionLedgerTest {
 			RegionRecord record = world.create(pos, pos.seed(4242));
 
 			RegionFounder.Climate climate = new RegionFounder.Climate(
-					random.nextFloat(), random.nextFloat(), 0.15f + random.nextFloat() * 0.85f);
+					random.nextFloat(), random.nextFloat(), 0.15f + random.nextFloat() * 0.85f,
+					random.nextFloat());
 			RegionFounder.found(world, record, climate, "plains", 0);
 
 			// A region can legitimately end up empty if its pre-history went badly, but it must not
@@ -241,7 +242,7 @@ class RegionLedgerTest {
 		RegionPos pos = new RegionPos(3, 3);
 		RegionRecord record = world.create(pos, pos.seed(7));
 		// A hot, dry region.
-		RegionFounder.found(world, record, new RegionFounder.Climate(0.92f, 0.06f, 0.12f), "desert", 0);
+		RegionFounder.found(world, record, new RegionFounder.Climate(0.92f, 0.06f, 0.12f, 0.18f), "desert", 0);
 
 		assertFalse(record.lineages.isEmpty(), "desert region founded empty");
 		for (LineageRecord l : record.lineages) {
@@ -317,12 +318,12 @@ class RegionLedgerTest {
 			FakeWorld world = new FakeWorld();
 			RegionPos richPos = new RegionPos(trial, 0);
 			RegionRecord rich = world.create(richPos, richPos.seed(31));
-			RegionFounder.found(world, rich, new RegionFounder.Climate(0.6f, 0.9f, 0.95f), "jungle", 0);
+			RegionFounder.found(world, rich, new RegionFounder.Climate(0.6f, 0.9f, 0.95f, 0.18f), "jungle", 0);
 
 			FakeWorld other = new FakeWorld();
 			RegionPos barrenPos = new RegionPos(trial, 900);
 			RegionRecord barren = other.create(barrenPos, barrenPos.seed(31));
-			RegionFounder.found(other, barren, new RegionFounder.Climate(0.5f, 0.1f, 0.12f), "badlands", 0);
+			RegionFounder.found(other, barren, new RegionFounder.Climate(0.5f, 0.1f, 0.12f, 0.18f), "badlands", 0);
 
 			for (LineageRecord l : rich.lineages) {
 				richTotal += l.meanMass();
@@ -482,7 +483,7 @@ class RegionLedgerTest {
 		FakeWorld isolated = new FakeWorld();
 		isolated.records.put(pos.key(), record);
 		RegionFounder.found(isolated, record,
-				new RegionFounder.Climate(0.5f, 0.5f, 0.7f), "plains", 0);
+				new RegionFounder.Climate(0.5f, 0.5f, 0.7f, 0.18f), "plains", 0);
 		return record;
 	}
 }

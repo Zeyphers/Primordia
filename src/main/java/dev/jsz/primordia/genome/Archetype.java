@@ -36,7 +36,16 @@ public enum Archetype {
 	/** Two-part body, four pairs of clustered high-kneed legs, eight eyes. Spider-shaped. */
 	ARACHNID,
 	/** Broad, flat, heavily armoured; stalked eyes, big claws, a paddle tail. */
-	CRUSTACEAN;
+	CRUSTACEAN,
+	/**
+	 * Small, pale, many-legged and bioluminescent. Lives in the dark and climbs.
+	 * <p>
+	 * The one archetype defined by where it lives rather than by what its body is for. Everything
+	 * about it follows from the cave: it is small because a cave feeds little, it glows because
+	 * nothing else down there does, it climbs because a cave has as much wall and ceiling as it has
+	 * floor, and it is pale because colour is worth nothing where there is no light to show it.
+	 */
+	CAVE_CRAWLER;
 
 	public static final Archetype[] VALUES = values();
 
@@ -53,6 +62,18 @@ public enum Archetype {
 		if (this == CHAOS) return Genome.random(random);
 
 		float[] v = base.copyValues();
+
+		// Everything that is not a cave crawler is pinned to the surface.
+		//
+		// SUBTERRANEAN is a new locus and no other archetype bands it, so it was taking the moderate
+		// random draw — which clears the threshold often enough that ordinary surface animals were
+		// coming out marked as cave dwellers, and the region ledger duly buried them. A locus that
+		// decides where an animal lives cannot be left to chance in the archetypes that have already
+		// decided.
+		if (this != CAVE_CRAWLER) {
+			band(v, Gene.SUBTERRANEAN, 0f, 0.25f, random);
+		}
+
 		switch (this) {
 			case BIPED -> {
 				band(v, Gene.LEG_PAIRS, 0.02f, 0.22f, random);      // one pair
@@ -221,6 +242,68 @@ public enum Archetype {
 				band(v, Gene.BLEND_SMOOTHNESS, 0f, 0.25f, random);
 				band(v, Gene.HORN_TYPE, 0f, 0.30f, random);
 			}
+			case CAVE_CRAWLER -> {
+				// Where it lives, which is the locus everything else here is downstream of.
+				band(v, Gene.SUBTERRANEAN, 0.82f, 1f, random);
+
+				// Small. A cave produces a fraction of the food a meadow does, and the size band is
+				// the difference between something that can live on that and something that cannot.
+				// It is also what keeps them climbable: the entity's wall-climbing is gated on mass.
+				band(v, Gene.SIZE, 0.04f, 0.20f, random);
+				band(v, Gene.TORSO_LENGTH, 0.20f, 0.50f, random);
+				band(v, Gene.TORSO_GIRTH, 0.15f, 0.40f, random);
+
+				// Many short legs held wide. A climber wants its weight close to the surface it is
+				// on and its feet spread around it, which is the opposite of the tall narrow stance
+				// a runner wants.
+				band(v, Gene.LEG_PAIRS, 0.55f, 1f, random);        // three or four pairs
+				band(v, Gene.LEG_SEGMENTS, 0.55f, 1f, random);
+				band(v, Gene.LEG_LENGTH, 0.18f, 0.42f, random);
+				band(v, Gene.LEG_THICKNESS, 0.22f, 0.45f, random);
+				band(v, Gene.LEG_SPLAY, 0.75f, 1f, random);
+				band(v, Gene.LEG_ARCH, 0.55f, 0.90f, random);
+				band(v, Gene.DIGITIGRADE, 0f, 0.25f, random);
+				band(v, Gene.CLAWS, 0.70f, 1f, random);            // what it hangs on with
+				band(v, Gene.FOOT_TYPE, 0.60f, 1f, random);
+
+				// It glows. This is the point of them — the thing you see first is a light moving
+				// on a cave wall, and only then what is carrying it.
+				band(v, Gene.BIOLUMINESCENCE, 0.90f, 1f, random);
+				band(v, Gene.GLOW_REGION, 0f, 1f, random);
+				// Cold colours. Warm bioluminescence reads as fire or lava and a cave has both;
+				// blue-green is unmistakably alive.
+				band(v, Gene.GLOW_HUE, 0.42f, 0.72f, random);
+
+				// Pale and unpatterned. Pigment is a display trait and there is nothing down there
+				// to display to, so cave animals the world over lose it.
+				band(v, Gene.SATURATION, 0f, 0.18f, random);
+				band(v, Gene.BRIGHTNESS, 0.55f, 0.90f, random);
+				band(v, Gene.PATTERN_CONTRAST, 0f, 0.20f, random);
+				band(v, Gene.COUNTERSHADING, 0f, 0.20f, random);
+
+				// Large eyes and long feelers, or none worth the name — both are real cave
+				// strategies, and the band is wide enough to produce each.
+				band(v, Gene.EYE_SIZE, 0.10f, 0.95f, random);
+				band(v, Gene.ARM_PAIRS, 0.45f, 0.80f, random);     // one pair, used as antennae
+				band(v, Gene.ARM_LENGTH, 0.35f, 0.70f, random);
+
+				// Awake in the dark, which underground is always.
+				band(v, Gene.NOCTURNALITY, 0.75f, 1f, random);
+				band(v, Gene.TEMP_PREFERENCE, 0.30f, 0.55f, random);
+				band(v, Gene.HUMIDITY_PREFERENCE, 0.55f, 0.90f, random);
+				// Scavengers and small predators. Nothing photosynthesises down there, so a pure
+				// plant-eater has nothing to eat.
+				band(v, Gene.DIET, 0.45f, 0.85f, random);
+				band(v, Gene.FEAR, 0.55f, 0.90f, random);
+				band(v, Gene.AGGRESSION, 0.10f, 0.40f, random);
+				band(v, Gene.FECUNDITY, 0.55f, 0.90f, random);
+
+				band(v, Gene.NECK_LENGTH, 0f, 0.20f, random);
+				band(v, Gene.TAIL_LENGTH, 0.10f, 0.45f, random);
+				band(v, Gene.HEAD_SIZE, 0.25f, 0.55f, random);
+				band(v, Gene.BLEND_SMOOTHNESS, 0.10f, 0.40f, random);
+				band(v, Gene.HORN_TYPE, 0f, 0.30f, random);
+			}
 			default -> {
 			}
 		}
@@ -243,4 +326,34 @@ public enum Archetype {
 	public static Archetype randomStructured(RandomGenerator random) {
 		return VALUES[1 + random.nextInt(VALUES.length - 1)];
 	}
+
+	/**
+	 * A structured archetype that belongs above ground.
+	 * <p>
+	 * {@link #CAVE_CRAWLER} is excluded because it is defined by living somewhere the surface
+	 * founder never looks. Rolled into a meadow it would be a small pale glowing thing standing in
+	 * daylight with none of the reasons it is shaped that way — and the region ledger would then
+	 * keep placing it there, since a lineage's home is decided by its genome.
+	 */
+	public static Archetype randomSurface(RandomGenerator random) {
+		Archetype picked;
+		do {
+			picked = randomStructured(random);
+		} while (picked == CAVE_CRAWLER);
+		return picked;
+	}
+
+	/** Whether a genome's {@link Gene#SUBTERRANEAN} commits it to living underground. */
+	public static boolean isSubterranean(Genome genome) {
+		return genome.raw(Gene.SUBTERRANEAN) >= SUBTERRANEAN_THRESHOLD;
+	}
+
+	/**
+	 * Where a lineage stops being a surface animal that visits caves and becomes a cave animal.
+	 * <p>
+	 * Deliberately high. Everything about the placement, the spawning and the light budget keys off
+	 * this, so a lineage drifting a little way down the locus should not suddenly relocate its
+	 * whole population underground.
+	 */
+	public static final float SUBTERRANEAN_THRESHOLD = 0.66f;
 }

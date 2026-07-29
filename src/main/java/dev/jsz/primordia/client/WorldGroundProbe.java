@@ -1,6 +1,8 @@
 package dev.jsz.primordia.client;
 
 import dev.jsz.primordia.anim.GroundProbe;
+import net.minecraft.block.BlockState;
+import net.minecraft.fluid.FluidState;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.shape.VoxelShape;
@@ -32,6 +34,14 @@ public final class WorldGroundProbe implements GroundProbe {
 	private static final float MAX_DROP = 4.0f;
 	/** Vertical clearance a candidate surface needs above it to count as standable. */
 	private static final double REQUIRED_HEADROOM = 0.4;
+	/**
+	 * How far below a water surface a foot rests when there is no reachable bottom under it.
+	 * <p>
+	 * Enough to read as "in the water" rather than "on the water", and no more: the foot is being
+	 * placed where the gait wanted it, not where the creature would have chosen to put it, so
+	 * plunging the whole leg in would look as deliberate and as wrong as standing on top.
+	 */
+	private static final double WADE_DEPTH = 0.35;
 
 	private World world;
 	private final BlockPos.Mutable cursor = new BlockPos.Mutable();
@@ -54,9 +64,21 @@ public final class WorldGroundProbe implements GroundProbe {
 		int top = (int) Math.floor(referenceY + MAX_STEP_UP);
 		int bottom = (int) Math.floor(referenceY - MAX_DROP);
 
+		// Highest water surface passed on the way down, if any.
+		double fluidSurface = Double.NaN;
+
 		for (int y = top; y >= bottom; y--) {
 			cursor.set(blockX, y, blockZ);
-			VoxelShape shape = world.getBlockState(cursor).getCollisionShape(world, cursor);
+			BlockState state = world.getBlockState(cursor);
+
+			if (Double.isNaN(fluidSurface)) {
+				FluidState fluid = state.getFluidState();
+				if (!fluid.isEmpty()) {
+					fluidSurface = y + fluid.getHeight(world, cursor);
+				}
+			}
+
+			VoxelShape shape = state.getCollisionShape(world, cursor);
 			if (shape.isEmpty()) continue;
 
 			// Surface height of this block, including partial blocks like slabs and stairs.
@@ -67,7 +89,25 @@ public final class WorldGroundProbe implements GroundProbe {
 
 			if (!hasHeadroom(blockX, blockZ, surface)) continue;
 
+			// A bottom within reach is stood on even with water over it — that is wading, and it is
+			// what a creature at the edge of a pond should do.
 			return (float) surface;
+		}
+
+		// Nothing standable, but the column is open water.
+		//
+		// Returning NaN here is what made creatures appear to stand on the surface of a lake. NaN
+		// means "no answer", and the animator's response to no answer is to search the four
+		// neighbouring columns for something to rescue the foot onto — a behaviour that exists so a
+		// foot at a cliff edge finds the ledge rather than dangling. At a shoreline those
+		// neighbours include the bank the creature is standing on, so the foot snapped back up to
+		// the land's height while sitting out over the water. Failing that, the final fallback is
+		// the creature's own foot level, which lands in exactly the same place.
+		//
+		// Water is not an absence of an answer. The foot goes just under the surface, which is both
+		// true and specific enough that neither rescue is reached.
+		if (!Double.isNaN(fluidSurface)) {
+			return (float) (fluidSurface - WADE_DEPTH);
 		}
 		return Float.NaN;
 	}

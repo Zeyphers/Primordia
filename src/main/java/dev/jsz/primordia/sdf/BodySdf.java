@@ -219,6 +219,22 @@ public final class BodySdf {
 	 * between the legs of many-limbed creatures. The trunk is then smooth-unioned with the limbs
 	 * as a whole, preserving the fairing where a limb meets the body.
 	 */
+	/**
+	 * Distance subtracted from every sample, growing the whole surface outward.
+	 * <p>
+	 * Used by voxel mode to rescue limbs thinner than one voxel. The ordinary pipeline handles those
+	 * by raising the sampling resolution until a cell is smaller than the thinnest limb — see
+	 * {@code MeshBaker.resolutionFor} and {@code PITFALLS.md} §3 — but a voxel grid's cell size is
+	 * fixed by the world, not by the creature, so that escape is unavailable. Thickening the field
+	 * instead is the only remaining move.
+	 */
+	private float inflate = 0f;
+
+	/** Set around an extraction pass and reset afterwards; a bake is single-threaded. */
+	public void setInflate(float distance) {
+		this.inflate = Math.max(0f, distance);
+	}
+
 	public float eval(float x, float y, float z) {
 		int cell = cellFor(x, y, z);
 		int from = binStart[cell], to = binStart[cell + 1];
@@ -287,7 +303,8 @@ public final class BodySdf {
 				d = MathX.smoothMax(d, -blobDistance(part - capsuleCount, x, y, z), blendRadius);
 			}
 		}
-		return d;
+		// Negative is inside, so subtracting moves the surface outward by this much.
+		return d - inflate;
 	}
 
 	/**

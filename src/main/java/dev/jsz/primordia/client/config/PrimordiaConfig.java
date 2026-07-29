@@ -53,6 +53,52 @@ public final class PrimordiaConfig {
 	/** Whether bioluminescent creatures actually emit light. */
 	public boolean emissiveGlow = true;
 
+	/**
+	 * Snaps the mesh to a world-aligned voxel grid instead of following the field smoothly.
+	 * <p>
+	 * Surface Nets places each dual vertex at the average of the cell's edge crossings, which is
+	 * exactly what makes a coarse grid still read as a curved surface. Pinning that vertex to the
+	 * centre of its cell instead turns every quad into an axis-aligned square of one cell — the same
+	 * result Blender's voxel remesh gives, and the same look as the blocks the creature is standing
+	 * on.
+	 */
+	public boolean voxelMode = true;
+
+	/**
+	 * Voxel edge in Minecraft pixels, where sixteen pixels is one block.
+	 * <p>
+	 * Measured in pixels rather than as a fraction of the creature so that the grid is a property of
+	 * the world and not of the animal: two creatures of different sizes standing next to each other
+	 * are built from voxels of the same size, which is the whole reason the effect reads as being
+	 * made of blocks rather than as being low-detail.
+	 */
+	public int voxelPixels = 1;
+
+	/**
+	 * Gives every face its own normal instead of sharing averaged ones with its neighbours.
+	 * <p>
+	 * The honest smooth-versus-sharp control. {@link #normalSmoothing} was never one: it blends two
+	 * ways of computing a <i>shared</i> vertex normal, and a shared normal is smooth whichever way
+	 * it is derived, which is why dragging that slider barely changed anything.
+	 * <p>
+	 * Read by the renderer, not by the mesher — the mesh is identical either way. Both renderers
+	 * already emit four unshared vertices per quad, so this only decides which normal those four
+	 * are handed, and it is free. See {@link dev.jsz.primordia.mesh.FaceNormal}.
+	 */
+	public boolean sharpShading = true;
+
+	/**
+	 * Gives every face one flat colour — the mean of its corners — instead of a gradient across it.
+	 * <p>
+	 * Colour lives in the vertices, so the hardware interpolates it over each face and a quad whose
+	 * corners sample four points of a pattern comes out as a small gradient. That is right on a
+	 * smooth body and wrong on a voxel one, where the shape says flat block and the shading says
+	 * curved surface.
+	 * <p>
+	 * Read by the renderer, like {@link #sharpShading}, so the mesh is identical either way.
+	 */
+	public boolean flatFaceColour = true;
+
 	private PrimordiaConfig() {
 	}
 
@@ -141,6 +187,9 @@ public final class PrimordiaConfig {
 				detailCeiling,
 				fullIkTier);
 		MeshBaker.setGradientWeight(normalSmoothing / 100f);
+		// Sixteen pixels to the block, so one pixel is one sixteenth of a world unit. Zero when the
+		// mode is off, which is what the mesher reads as "extract normally".
+		MeshBaker.setVoxelSize(voxelMode ? voxelPixels / 16f : 0f);
 		GenomeMeshCache.setMaxEntries(meshCacheSize);
 		GenomeMeshCache.clear();
 	}

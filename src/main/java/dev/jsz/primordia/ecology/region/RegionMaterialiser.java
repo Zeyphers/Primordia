@@ -1,6 +1,7 @@
 package dev.jsz.primordia.ecology.region;
 
 import dev.jsz.primordia.entity.CreatureEntity;
+import dev.jsz.primordia.genome.Archetype;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.registry.PrimordiaEntities;
 import net.minecraft.block.BlockState;
@@ -44,8 +45,26 @@ public final class RegionMaterialiser {
 	 * goals, and ninety of them is not a busy ecosystem, it is a frame-rate problem.
 	 */
 	public static final int CLUSTER_BUDGET = 30;
+
+	/**
+	 * Cave dwellers a region may have underground at once, budgeted separately from the surface.
+	 * <p>
+	 * Smaller than the surface allowance because they are tiny and a player underground sees a much
+	 * smaller volume than one standing in a field — six lights moving on the walls of a cave is a
+	 * populated cave.
+	 */
+	public static final int CAVE_ENTITY_BUDGET = 8;
 	/** Attempts to find a valid spawn position before giving up on an individual. */
 	private static final int PLACEMENT_ATTEMPTS = 12;
+	/**
+	 * Attempts allowed when placing underground.
+	 * <p>
+	 * Far more than on the surface, because the hit rate is far lower: every surface column has a
+	 * top, whereas most columns through a region are solid rock and fail before they are scanned.
+	 * Twelve tries found a cave floor so rarely that a region with a recorded population of sixty
+	 * put nothing on the ground at all. The attempt itself is a cheap block scan.
+	 */
+	private static final int CAVE_PLACEMENT_ATTEMPTS = 64;
 
 	private RegionMaterialiser() {
 	}
@@ -58,11 +77,31 @@ public final class RegionMaterialiser {
 	 * does nothing the second time.
 	 */
 	public static void topUp(ServerWorld world, RegionRecord record) {
-		int live = countLive(world, record.pos);
-		int room = ENTITY_BUDGET - live;
-		if (room <= 0) return;
+		topUp(world, record, true, true);
+	}
 
+	/**
+	 * Tops up one or both habitats. The caller gates them separately because they draw on separate
+	 * budgets — see {@code EcologyTicker}.
+	 */
+	public static void topUp(ServerWorld world, RegionRecord record,
+	                         boolean surface, boolean caves) {
 		Random random = new Random(record.seed ^ world.getTime());
+		// Surface and cave fauna are budgeted apart.
+		//
+		// They occupy different parts of the same region and are never in view together, so a
+		// shared budget is not a shared resource — it is the surface animals, which are placed
+		// first and are more numerous, quietly consuming every slot before the cave ones are
+		// considered. The symptom is an empty cave under a perfectly busy meadow.
+		if (surface) topUp(world, record, random, false, ENTITY_BUDGET);
+		if (caves) topUp(world, record, random, true, CAVE_ENTITY_BUDGET);
+	}
+
+	private static void topUp(ServerWorld world, RegionRecord record, Random random,
+	                          boolean subterranean, int budget) {
+		int live = countLive(world, record.pos, subterranean);
+		int room = budget - live;
+		if (room <= 0) return;
 
 		// The budget is shared out across every lineage present, in proportion to how many of each
 		// the region holds, with a floor of one so a rare predator is never invisible.
@@ -74,7 +113,11 @@ public final class RegionMaterialiser {
 		// animal for hundreds of blocks wanted the same bait.
 		float[] populations = new float[record.lineages.size()];
 		for (int i = 0; i < populations.length; i++) {
-			populations[i] = record.lineages.get(i).count;
+			LineageRecord lineage = record.lineages.get(i);
+			// Lineages from the other habitat are simply not candidates for this pass.
+			populations[i] = Archetype.isSubterranean(lineage.meanGenome()) == subterranean
+					? lineage.count
+					: 0f;
 		}
 		int[] quota = allocate(populations, room);
 
@@ -219,6 +262,17 @@ public final class RegionMaterialiser {
 		return liveIn(world, pos).size();
 	}
 
+	/** As above, counting only one habitat's animals. */
+	public static int countLive(ServerWorld world, RegionPos pos, boolean subterranean) {
+		int count = 0;
+		for (CreatureEntity creature : liveIn(world, pos)) {
+			Genome genome = creature.getGenome();
+			if (genome == null) continue;
+			if (Archetype.isSubterranean(genome) == subterranean) count++;
+		}
+		return count;
+	}
+
 	public static List<CreatureEntity> liveIn(ServerWorld world, RegionPos pos) {
 		Box box = new Box(
 				pos.minBlockX(), world.getBottomY(), pos.minBlockZ(),
@@ -242,14 +296,69 @@ public final class RegionMaterialiser {
 				&& !creature.hasCustomName();
 	}
 
+	/** Returned by {@link #findCaveFloor} when the column holds nothing habitable. */
+	private static final int NO_FLOOR = Integer.MIN_VALUE;
+	/** Blocks below the surface a cave has to be before it counts as one. */
+	private static final int CAVE_MIN_DEPTH = 8;
+	/** Ceiling height a cave floor needs above it. Two blocks: these are small animals. */
+	private static final int CAVE_HEADROOM = 2;
+	/** Light level at or below which a space is dark enough to be a cave rather than a hillside. */
+	private static final int CAVE_MAX_LIGHT = 7;
+
+	/**
+	 * Finds a dark, enclosed floor somewhere down the column, for a lineage that lives underground.
+	 * <p>
+	 * Scans downward from below the surface rather than upward from bedrock, so the animals collect
+	 * in the shallow cave systems a player actually walks through instead of at the bottom of the
+	 * world where nobody would ever meet them.
+	 * <p>
+	 * The light test is what distinguishes a cave from an overhang. Depth alone would place them
+	 * under any cliff face, and the point of a cave animal is that it is somewhere dark.
+	 */
+	private static int findCaveFloor(ServerWorld world, int x, int z, int surface, Random random) {
+		int top = surface - CAVE_MIN_DEPTH;
+		int bottom = Math.max(world.getBottomY() + 2, surface - 90);
+		if (top <= bottom) return NO_FLOOR;
+
+		// A random start, walked downward and wrapped, so repeated calls in the same column do not
+		// all pile onto the topmost cave in it.
+		int span = top - bottom;
+		int offset = random.nextInt(span);
+		BlockPos.Mutable cursor = new BlockPos.Mutable();
+
+		for (int i = 0; i < span; i++) {
+			int y = top - ((offset + i) % span);
+			cursor.set(x, y - 1, z);
+			if (!world.getBlockState(cursor).isSolidBlock(world, cursor)) continue;
+
+			boolean clear = true;
+			for (int h = 0; h < CAVE_HEADROOM && clear; h++) {
+				cursor.set(x, y + h, z);
+				clear = world.getBlockState(cursor).isAir();
+			}
+			if (!clear) continue;
+
+			cursor.set(x, y, z);
+			if (world.getLightLevel(cursor) > CAVE_MAX_LIGHT) continue;
+			return y;
+		}
+		return NO_FLOOR;
+	}
+
 	/** Places one individual of a lineage somewhere sensible in the region. */
 	private static boolean place(ServerWorld world, RegionPos pos, LineageRecord lineage, Random random) {
-		for (int attempt = 0; attempt < PLACEMENT_ATTEMPTS; attempt++) {
+		boolean underground = Archetype.isSubterranean(lineage.meanGenome());
+
+		int attempts = underground ? CAVE_PLACEMENT_ATTEMPTS : PLACEMENT_ATTEMPTS;
+		for (int attempt = 0; attempt < attempts; attempt++) {
 			int x = pos.minBlockX() + random.nextInt(RegionPos.BLOCKS);
 			int z = pos.minBlockZ() + random.nextInt(RegionPos.BLOCKS);
 			if (!world.isChunkLoaded(x >> 4, z >> 4)) continue;
 
-			int y = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, z);
+			int surface = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, z);
+			int y = underground ? findCaveFloor(world, x, z, surface, random) : surface;
+			if (y == NO_FLOOR) continue;
+
 			BlockPos ground = new BlockPos(x, y - 1, z);
 			BlockState state = world.getBlockState(ground);
 			if (!state.isSolidBlock(world, ground)) continue;

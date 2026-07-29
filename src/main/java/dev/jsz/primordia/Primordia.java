@@ -3,6 +3,7 @@ package dev.jsz.primordia;
 import dev.jsz.primordia.command.PrimordiaCommands;
 import dev.jsz.primordia.ecology.region.EcologyTicker;
 import dev.jsz.primordia.lab.NameLineagePayload;
+import dev.jsz.primordia.lab.SpawnSpeciesPayload;
 import dev.jsz.primordia.registry.PrimordiaBlockEntities;
 import dev.jsz.primordia.registry.PrimordiaBlocks;
 import dev.jsz.primordia.registry.PrimordiaEntities;
@@ -35,6 +36,7 @@ public class Primordia implements ModInitializer {
 		PrimordiaItemGroup.register();
 		PrimordiaCommands.register();
 		NameLineagePayload.register();
+		SpawnSpeciesPayload.register();
 		EcologyTicker.register();
 
 		// Deliberately no BiomeModifications.addSpawn. Creatures are no longer placed by the

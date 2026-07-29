@@ -20,6 +20,23 @@ public final class RegionClimate {
 	private RegionClimate() {
 	}
 
+	/**
+	 * Depth at which the cave biome is sampled.
+	 * <p>
+	 * Well below the surface, because the biome at sea level is the meadow or the desert and says
+	 * nothing about what is underneath it. Minecraft generates its cave biomes as a separate layer,
+	 * and this is the height at which lush caves and dripstone are actually found.
+	 */
+	/**
+	 * Depths at which the cave biome is sampled.
+	 * <p>
+	 * Minecraft generates its cave biomes as a separate layer over a wide vertical range, so one
+	 * height is not enough — a lush cave at Y 30 is invisible to a probe at Y 8.
+	 */
+	private static final int[] CAVE_SAMPLE_DEPTHS = {-24, -4, 16, 36};
+	/** Points per axis sampled across the region. */
+	private static final int CAVE_SAMPLE_GRID = 3;
+
 	public static RegionFounder.Climate sample(ServerWorld world, RegionPos pos) {
 		BlockPos centre = new BlockPos(pos.centreBlockX(), world.getSeaLevel(), pos.centreBlockZ());
 		RegistryEntry<Biome> entry = world.getBiome(centre);
@@ -29,7 +46,53 @@ public final class RegionClimate {
 		float temperature = clamp01((biome.getTemperature() + 0.7f) / 2.7f);
 		String name = entry.getKey().map(key -> key.getValue().getPath()).orElse("");
 
-		return new RegionFounder.Climate(temperature, humidity(name), productivity(name));
+		return new RegionFounder.Climate(temperature, humidity(name), productivity(name),
+				sampleCaves(world, pos));
+	}
+
+	/**
+	 * The richest cave biome anywhere under this region.
+	 * <p>
+	 * Sampled over a grid and at several depths, and reduced with {@code max} rather than averaged.
+	 * A region is 128 blocks square, and a lush cave occupying a corner of it is still a lush cave
+	 * to anyone who walks into it — averaging would dilute it to nothing, and the single centre
+	 * column this used to read would miss it outright. That was why teleporting to a lush cave
+	 * found no fauna: the biome under the region's midpoint was ordinary stone.
+	 */
+	private static float sampleCaves(ServerWorld world, RegionPos pos) {
+		float best = 0f;
+		int step = RegionPos.BLOCKS / (CAVE_SAMPLE_GRID + 1);
+
+		for (int ix = 1; ix <= CAVE_SAMPLE_GRID; ix++) {
+			for (int iz = 1; iz <= CAVE_SAMPLE_GRID; iz++) {
+				int x = pos.minBlockX() + ix * step;
+				int z = pos.minBlockZ() + iz * step;
+				for (int y : CAVE_SAMPLE_DEPTHS) {
+					if (y < world.getBottomY()) continue;
+					String name = world.getBiome(new BlockPos(x, y, z)).getKey()
+							.map(key -> key.getValue().getPath()).orElse("");
+					best = Math.max(best, caveRichness(name));
+					if (best >= 1f) return best;
+				}
+			}
+		}
+		return best;
+	}
+
+	/**
+	 * How much life the caves under this region can support, 0 to 1.
+	 * <p>
+	 * Lush caves are the only place underground with anything growing in it — moss, vines, glow
+	 * berries, water — and they are where a cave fauna belongs. Ordinary stone caves get a small
+	 * value rather than zero, so a lineage still turns up in them occasionally: a system where the
+	 * animals exist in exactly one biome and nowhere else reads as a spawn table, and the point of
+	 * the ledger is that populations spread from where they do well into where they merely persist.
+	 */
+	private static float caveRichness(String caveBiomeName) {
+		if (contains(caveBiomeName, "lush")) return 1.0f;
+		if (contains(caveBiomeName, "dripstone")) return 0.45f;
+		if (contains(caveBiomeName, "deep_dark")) return 0.20f;
+		return 0.18f;
 	}
 
 	/**

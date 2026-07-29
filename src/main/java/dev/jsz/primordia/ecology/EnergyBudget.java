@@ -33,6 +33,27 @@ public final class EnergyBudget {
 	public static final float FORAGE_THRESHOLD = 0.82f;
 	/** Above this, and mature, a creature will look for a mate. */
 	public static final float BREED_THRESHOLD = 0.74f;
+
+	/**
+	 * Energy above which a creature will settle down when its hours come round.
+	 * <p>
+	 * Deliberately far below {@link #FORAGE_THRESHOLD}. Sleep used to be gated on being above the
+	 * foraging threshold, which sounds reasonable and is not: energy drains continuously, so an
+	 * animal drops under that bar within a couple of minutes of spawning and then sits below it more
+	 * or less permanently. The effect was that almost nothing ever slept, and setting the world to
+	 * night appeared to do nothing at all.
+	 * <p>
+	 * The intent was only ever "do not lie down starving", so the bar belongs down here where only a
+	 * genuinely hungry animal is excluded.
+	 */
+	public static final float REST_THRESHOLD = 0.35f;
+	/**
+	 * Energy at which a sleeping creature gets up to find food whatever the hour.
+	 * <p>
+	 * Separate from {@link #REST_THRESHOLD} on purpose: one threshold for both directions makes a
+	 * creature at the boundary flicker between asleep and awake every few ticks.
+	 */
+	public static final float WAKE_HUNGRY = 0.18f;
 	/** What producing offspring costs each parent. Reproduction is expensive or it is not a choice. */
 	public static final float BREED_COST = 0.32f;
 	/** Energy spent on a chase that caught nothing. Failing to hunt has to hurt. */

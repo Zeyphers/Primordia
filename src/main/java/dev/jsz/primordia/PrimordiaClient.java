@@ -2,6 +2,7 @@ package dev.jsz.primordia;
 
 import dev.jsz.primordia.client.config.PrimordiaConfig;
 import dev.jsz.primordia.client.config.PrimordiaConfigScreen;
+import dev.jsz.primordia.client.DynamicLightsCompat;
 import dev.jsz.primordia.client.render.CreatureRenderer;
 import dev.jsz.primordia.client.screen.FieldGuideScreen;
 import dev.jsz.primordia.client.screen.GeneLabScreen;
@@ -12,6 +13,7 @@ import dev.jsz.primordia.registry.PrimordiaEntities;
 import dev.jsz.primordia.registry.PrimordiaItems;
 import dev.jsz.primordia.registry.PrimordiaScreenHandlers;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.item.v1.ItemTooltipCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
@@ -38,6 +40,10 @@ public class PrimordiaClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		EntityRendererRegistry.register(PrimordiaEntities.CREATURE, CreatureRenderer::new);
+
+		// Optional interop, no-op when the mod is absent. Deferred to client-started so that
+		// LambDynamicLights has certainly finished its own registration first.
+		ClientLifecycleEvents.CLIENT_STARTED.register(client -> DynamicLightsCompat.register());
 		HandledScreens.register(PrimordiaScreenHandlers.GENE_LAB, GeneLabScreen::new);
 		// The lab's model is not a full cube and its texture has transparent regions.
 		BlockRenderLayerMap.INSTANCE.putBlock(PrimordiaBlocks.BASIC_GENE_LAB,

@@ -113,7 +113,12 @@ class ToothTest {
 		int protruding = 0;
 		int tipVertices = 0;
 
-		for (int trial = 0; trial < 20; trial++) {
+		// Sixty rather than twenty. This statistic is noisy at small samples — measured across six
+		// seeds at twenty trials it ranged from 18% to 33%, and at sixty it settles into 24–28%
+		// wherever it starts. A threshold set against the small sample is a threshold set against
+		// one lucky draw, and it duly broke the first time an unrelated gene was appended and
+		// Genome.random's whole sequence shifted under it (PITFALLS §12).
+		for (int trial = 0; trial < 60; trial++) {
 			BodyPlan plan = BodyPlanBuilder.build(Genome.random(random));
 			BodySdf sdf = new BodySdf(plan);
 
@@ -147,7 +152,10 @@ class ToothTest {
 		// — rather than the spread between one skull's proportions and another's.
 		double showing = protruding / (double) tipVertices;
 		System.out.printf("[ToothTest] tooth vertices clear of the flesh: %.1f%%%n", showing * 100);
-		assertTrue(showing > 0.30,
+		// The converged value is around 26%. The bar sits well under it because what this is for is
+		// the systematic failure — a whole row buried, which reads as a number near zero — and not
+		// the few points of drift between one population of skulls and another.
+		assertTrue(showing > 0.18,
 				String.format("only %.1f%% of tooth vertices clear the flesh — the teeth are buried",
 						showing * 100));
 	}

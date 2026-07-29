@@ -31,12 +31,29 @@ public class RestGoal extends Goal {
 	private static final int DUSK = 12500;
 	private static final int DAWN = 23000;
 
+	/**
+	 * Largest shift either way on an individual's dusk and dawn, in ticks.
+	 * <p>
+	 * Twenty seconds. A herd still visibly settles one animal at a time rather than dropping in
+	 * unison, but the whole population is down well inside a minute of the hour arriving — which
+	 * matters because {@code /time set night} is how anyone actually checks this, and a stagger
+	 * measured in minutes is indistinguishable from the feature not working.
+	 */
+	private static final int SCHEDULE_JITTER = 400;
+
 	/** Radius within which an approaching threat will wake a sleeping creature. */
 	private static final double ALERT_RANGE = 10.0;
-	/** Ticks a newly placed creature must be awake for before it may rest. Half a minute. */
-	private static final int SETTLE_TICKS = 600;
-	/** Re-check interval while awake, so this is not surveying the neighbourhood every tick. */
-	private static final int CHECK_INTERVAL = 40;
+	/**
+	 * Ticks a newly placed creature must be awake before it may rest.
+	 * <p>
+	 * Only there so a player walking into freshly materialised terrain does not find a field of
+	 * animals that were asleep from the instant they existed. Five seconds is enough to read as
+	 * "they were up and then they settled"; it was half a minute, which is long enough to look like
+	 * the schedule is ignoring the clock.
+	 */
+	private static final int SETTLE_TICKS = 100;
+	/** Re-check interval while awake. One second, so a change of hour is acted on promptly. */
+	private static final int CHECK_INTERVAL = 20;
 	/** Re-check interval while asleep. Half a second is well inside a predator's approach. */
 	private static final int ALERT_CHECK_INTERVAL = 10;
 
@@ -63,8 +80,10 @@ public class RestGoal extends Goal {
 		if (creature.getLifeTicks() < SETTLE_TICKS) return false;
 		if (creature.getTarget() != null || creature.getAttacker() != null) return false;
 		if (creature.getControllingPassenger() != null) return false;
-		// Hunger beats sleep, always.
-		if (creature.getEnergy() < EnergyBudget.FORAGE_THRESHOLD) return false;
+		// Only starvation beats sleep. This was FORAGE_THRESHOLD, which energy drops below within
+		// minutes of spawning and rarely climbs back above — so in practice nothing ever slept and
+		// the world clock appeared to have no effect at all. See EnergyBudget#REST_THRESHOLD.
+		if (creature.getEnergy() < EnergyBudget.REST_THRESHOLD) return false;
 		if (!isRestPeriod()) return false;
 		return !threatNearby();
 	}
@@ -72,8 +91,9 @@ public class RestGoal extends Goal {
 	@Override
 	public boolean shouldContinue() {
 		if (creature.getAttacker() != null || creature.getTarget() != null) return false;
-		// Waking up starving is worse than losing sleep.
-		if (creature.getEnergy() <= EnergyBudget.HUNT_THRESHOLD) return false;
+		// Waking up starving is worse than losing sleep. Lower than the bar for lying down, so a
+		// creature hovering at the threshold does not flicker in and out of sleep.
+		if (creature.getEnergy() <= EnergyBudget.WAKE_HUNGRY) return false;
 		if (!isRestPeriod()) return false;
 		// Throttled: this runs every tick for every sleeping creature, and a box query per animal
 		// per tick is a real cost for a check whose answer cannot change meaningfully in half a
@@ -106,26 +126,35 @@ public class RestGoal extends Goal {
 		creature.getNavigation().stop();
 	}
 
-	/**
-	 * Whether it is currently this creature's half of the cycle to be asleep.
-	 * <p>
-	 * Each animal gets its own offset on the boundaries, derived from its structural seed. Without
-	 * it every member of a lineage shares one {@code NOCTURNALITY} value and therefore one schedule,
-	 * so an entire herd lies down on the same tick and gets up on the same tick — which does not
-	 * read as animals sleeping, it reads as the game having frozen them. Real populations stagger.
-	 */
 	private boolean isRestPeriod() {
 		Genome g = creature.getGenome();
 		if (g == null) return false;
-		long time = creature.getWorld().getTimeOfDay() % DAY;
-		// ±1500 ticks, about ninety seconds either side, keyed off the individual rather than the
-		// lineage so siblings still differ.
-		int offset = (int) Math.floorMod(g.seed() >> 12, 3000L) - 1500;
-		long dusk = DUSK + offset;
-		long dawn = DAWN + offset;
-		boolean night = time >= dusk && time < dawn;
-		boolean nocturnal = g.raw(Gene.NOCTURNALITY) > 0.5f;
-		return nocturnal != night;
+		return isRestingHour(creature.getWorld().getTimeOfDay(),
+				g.raw(Gene.NOCTURNALITY), g.seed());
+	}
+
+	/**
+	 * Whether the world clock currently says this animal should be asleep.
+	 * <p>
+	 * A pure function of the time of day — <b>not</b> of anything the creature has been counting.
+	 * {@code getTimeOfDay} is the same value the sun is drawn from and the same one {@code /time set}
+	 * writes, so moving the world to night moves every night-sleeping creature into its rest period
+	 * on the same tick, with no per-entity clock to catch up first.
+	 * <p>
+	 * Each animal gets a small offset on its dusk and dawn, derived from its structural seed. Without
+	 * it every member of a lineage shares one {@link Gene#NOCTURNALITY} value and therefore one
+	 * schedule, so an entire herd lies down on the same tick and gets up on the same tick — which
+	 * does not read as animals sleeping, it reads as the game having frozen them.
+	 *
+	 * @param timeOfDay    world time; only its position within the day matters
+	 * @param nocturnality {@link Gene#NOCTURNALITY}, above 0.5 meaning awake at night
+	 * @param seed         the individual's structural seed, so siblings stagger
+	 */
+	public static boolean isRestingHour(long timeOfDay, float nocturnality, long seed) {
+		long time = Math.floorMod(timeOfDay, DAY);
+		int offset = (int) Math.floorMod(seed >> 12, SCHEDULE_JITTER * 2L) - SCHEDULE_JITTER;
+		boolean night = time >= DUSK + offset && time < DAWN + offset;
+		return (nocturnality > 0.5f) != night;
 	}
 
 	/**

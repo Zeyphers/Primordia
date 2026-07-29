@@ -44,11 +44,51 @@ public final class SurfaceNets {
 	 * @param resolution number of cells along the longest axis; other axes are scaled to keep cells cubic
 	 */
 	public static Result extract(BodySdf sdf, Vector3f min, Vector3f max, int resolution) {
+		return extract(sdf, min, max, resolution, 0f);
+	}
+
+	/**
+	 * The cell this extraction will actually use in voxel mode.
+	 * <p>
+	 * Exposed because the caller has to reason about the same grid — {@code MeshBaker} sizes its
+	 * limb inflation against it — and recomputing it there would be two copies of a rule that has to
+	 * agree ({@code PITFALLS.md} §6).
+	 *
+	 * @param longest    longest span of the sampling volume
+	 * @param resolution cells the LOD tier asked for along that span
+	 * @param voxelSize  requested voxel edge, above zero
+	 */
+	public static float voxelCell(float longest, int resolution, float voxelSize) {
+		// A voxel grid is a property of the world, not of the creature, so the cell size comes from
+		// the request rather than from the body's proportions — two animals of different sizes
+		// standing together are then built out of the same size of block.
+		//
+		// Never finer than the LOD asked for, though. A six-block creature at one-pixel voxels is a
+		// 96-cell grid per axis, which is reasonable up close and ruinous for something the size of
+		// a dot on the horizon.
+		float cell = Math.max(voxelSize, longest / Math.max(2, resolution));
+		// Held to a power-of-two multiple of the base voxel so the grids of successive LOD tiers
+		// stay aligned with each other. Without that, a creature changes tier and every block in it
+		// shifts by a fraction of a voxel, which reads as the whole body twitching.
+		float steps = Math.max(1f, cell / voxelSize);
+		return voxelSize * Integer.highestOneBit(Math.max(1, (int) steps));
+	}
+
+	/**
+	 * @param voxelSize when above zero, the mesh is snapped to a world-aligned grid of this edge
+	 *                  length and every vertex sits at the centre of its cell — see
+	 *                  {@link #snapToVoxelGrid}. Zero gives the ordinary smooth extraction.
+	 */
+	public static Result extract(BodySdf sdf, Vector3f min, Vector3f max, int resolution,
+	                             float voxelSize) {
 		float spanX = Math.max(max.x - min.x, 1e-3f);
 		float spanY = Math.max(max.y - min.y, 1e-3f);
 		float spanZ = Math.max(max.z - min.z, 1e-3f);
 		float longest = Math.max(spanX, Math.max(spanY, spanZ));
-		float cell = longest / Math.max(2, resolution);
+		boolean voxels = voxelSize > 0f;
+		float cell = voxels
+				? voxelCell(longest, resolution, voxelSize)
+				: longest / Math.max(2, resolution);
 
 		int nx = Math.max(2, (int) Math.ceil(spanX / cell)) + 1;
 		int ny = Math.max(2, (int) Math.ceil(spanY / cell)) + 1;
@@ -107,9 +147,18 @@ public final class SurfaceNets {
 					}
 					if (crossings == 0) continue;
 
-					float wx = min.x + (x + sx / crossings) * cell;
-					float wy = min.y + (y + sy / crossings) * cell;
-					float wz = min.z + (z + sz / crossings) * cell;
+					// The averaged crossing is what makes Surface Nets smooth; pinning the vertex to
+					// the middle of its cell instead is what makes it blocky. Every vertex then sits
+					// at a cell centre, so every quad joining two neighbouring cells is an
+					// axis-aligned square exactly one cell across — a voxel surface, arrived at by
+					// removing a step rather than by adding a mode.
+					float ox = voxels ? 0.5f : sx / crossings;
+					float oy = voxels ? 0.5f : sy / crossings;
+					float oz = voxels ? 0.5f : sz / crossings;
+
+					float wx = min.x + (x + ox) * cell;
+					float wy = min.y + (y + oy) * cell;
+					float wz = min.z + (z + oz) * cell;
 
 					sdf.gradient(wx, wy, wz, normal);
 					positions.add(wx);

@@ -1,6 +1,7 @@
 package dev.jsz.primordia.ecology.region;
 
 import dev.jsz.primordia.ecology.EnergyBudget;
+import dev.jsz.primordia.genome.Archetype;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Mutation;
 import dev.jsz.primordia.util.MathX;
@@ -63,6 +64,18 @@ public final class RegionSimulation {
 	private static final float MIGRATION_RATE = 0.035f;
 	/** Population below which a lineage is gone. */
 	private static final float EXTINCTION_FLOOR = 0.5f;
+	/**
+	 * Share of its plant-side needs a cave dweller can always meet, from detritus and fungus.
+	 * <p>
+	 * Lean on purpose: enough that a cave population persists indefinitely, not enough that it
+	 * thrives without also catching something. That is what keeps them small and keeps their numbers
+	 * from behaving like a surface herd's.
+	 * <p>
+	 * Scaled by {@link RegionRecord#caveRichness}, so a lush cave carries a real population and a
+	 * plain stone one carries stragglers. That difference is the whole reason to go looking in the
+	 * right sort of cave rather than any cave.
+	 */
+	private static final float DETRITUS_SUPPLY = 0.90f;
 	/** Population a lineage needs before it can split in two. */
 	private static final float SPECIATION_MIN_POPULATION = 12f;
 
@@ -158,6 +171,7 @@ public final class RegionSimulation {
 			float available = 0f;
 			for (int j = 0; j < n; j++) {
 				if (j == i) continue;
+				if (!shareAHabitat(lineages.get(i), lineages.get(j))) continue;
 				if (EnergyBudget.isWorthHunting(mass[i], mass[j])) available += pop[j] * mass[j];
 			}
 			float catchable = available * PREDATION_EFFICIENCY;
@@ -167,6 +181,7 @@ public final class RegionSimulation {
 
 			for (int j = 0; j < n; j++) {
 				if (j == i) continue;
+				if (!shareAHabitat(lineages.get(i), lineages.get(j))) continue;
 				if (!EnergyBudget.isWorthHunting(mass[i], mass[j])) continue;
 				float share = (pop[j] * mass[j]) / available;
 				losses[j] += (taken * share) / mass[j];
@@ -177,12 +192,45 @@ public final class RegionSimulation {
 		float grazed = 0f;
 		for (int i = 0; i < n; i++) {
 			LineageRecord l = lineages.get(i);
-			float satisfaction = MathX.clamp01(
-					(1f - meatShare[i]) * plantRatio + meatShare[i] * meatRatio[i]);
-			grazed += plantDemand[i] * plantRatio;
+			// A cave dweller is not eating the meadow. Nothing photosynthesises underground, so its
+			// plant-side food is detritus and fungus — thin, but steady, and unaffected by whether
+			// the surface above happens to be jungle or desert. Tying it to the region's vegetation
+			// instead would have every cave in a badlands starve, and would let a herd overgrazing
+			// the surface wipe out animals that never see it.
+			boolean subterranean = Archetype.isSubterranean(l.meanGenome());
+			float satisfaction;
+			if (subterranean) {
+				// Detritus covers a cave dweller whatever its diet says, rather than only its
+				// plant-eating half.
+				//
+				// These are small and carnivorous-leaning, and the prey window means the only things
+				// they could hunt are their own size or smaller — which underground is nothing at
+				// all. Splitting their needs into plants and meat therefore starved them: the plant
+				// half was met by detritus and the meat half by nothing, and every cave population
+				// died in its first few simulated days. The distinction does not survive contact
+				// with a cave, where scavenging and grazing are the same activity.
+				// Weighted so even bare stone clears the starvation line. Scaled the other way — 0.35
+				// plus richness — a plain cave came out at 0.42 satisfaction, which is below
+				// replacement, and measured across sixty regions it left exactly zero of them with
+				// any cave fauna at all. "Occasional" has to mean occasional, not absent.
+				float detritus = DETRITUS_SUPPLY * (0.65f + 0.35f * record.caveRichness);
+				satisfaction = MathX.clamp01(Math.max(detritus,
+						(1f - meatShare[i]) * detritus + meatShare[i] * meatRatio[i]));
+			} else {
+				satisfaction = MathX.clamp01(
+						(1f - meatShare[i]) * plantRatio + meatShare[i] * meatRatio[i]);
+				// Only the surface animals draw down the vegetation they are eating.
+				grazed += plantDemand[i] * plantRatio;
+			}
 
 			float fecundity = 0.10f + 0.45f * l.meanOf(Gene.FECUNDITY);
-			float crowding = 1f - MathX.clamp01(pop[i] / LINEAGE_CEILING);
+			// How many a cave holds is what the biome decides, rather than whether they survive at
+			// all. A lush cave carries a real population; bare stone carries a handful that a
+			// player meets occasionally and does not find a colony of.
+			float ceiling = subterranean
+					? LINEAGE_CEILING * (0.06f + 0.94f * record.caveRichness)
+					: LINEAGE_CEILING;
+			float crowding = 1f - MathX.clamp01(pop[i] / ceiling);
 			float births = pop[i] * fecundity * satisfaction * crowding;
 
 			float lifespan = 0.5f + 1.4f * l.meanOf(Gene.LIFESPAN);
@@ -208,6 +256,17 @@ public final class RegionSimulation {
 		record.pruneExtinct();
 		migrate(ledger, record, random);
 		record.dirty = true;
+	}
+
+	/**
+	 * Whether two lineages ever meet.
+	 * <p>
+	 * A cave dweller and a surface animal do not, so neither can be the other's food. Without this
+	 * the model had wolves eating things that live forty blocks underground — and, worse, sized the
+	 * cave population against a predation pressure that does not exist down there.
+	 */
+	private static boolean shareAHabitat(LineageRecord a, LineageRecord b) {
+		return Archetype.isSubterranean(a.meanGenome()) == Archetype.isSubterranean(b.meanGenome());
 	}
 
 	/**

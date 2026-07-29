@@ -5,11 +5,14 @@ import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.lab.DecodeAccuracy;
 import dev.jsz.primordia.lab.GuideChapters;
 import dev.jsz.primordia.lab.GuideData;
-import dev.jsz.primordia.lab.NameLineagePayload;
+import dev.jsz.primordia.lab.SpawnSpeciesPayload;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import dev.jsz.primordia.lab.NameLineagePayload;
 import dev.jsz.primordia.lab.Phylogeny;
 import dev.jsz.primordia.entity.TamingPreference;
 import dev.jsz.primordia.client.render.CreaturePreview;
+import com.mojang.blaze3d.systems.RenderSystem;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.item.ItemStack;
@@ -58,6 +61,16 @@ public class FieldGuideScreen extends Screen {
 	private static final int MARGIN = 14;
 	private static final int LINE_H = 10;
 
+	/**
+	 * Height of the heading band under the tab strip: the section title and the rule beneath it.
+	 * <p>
+	 * The tree is a viewport that pans, so it needs a top edge to be clipped against, and that edge
+	 * is the bottom of this band rather than the top of the page. Clipping to the page meant a
+	 * panned tree drew its branches straight through the section title and the rule under it — the
+	 * heading is part of the book, not part of the diagram.
+	 */
+	private static final int HEADING_H = 22;
+
 	// Parchment, not the vanilla grey, so the guide reads as a document rather than a machine.
 	private static final int PAGE = 0xFFE9E2CC;
 	private static final int PAGE_EDGE = 0xFFF6F1E2;
@@ -97,6 +110,24 @@ public class FieldGuideScreen extends Screen {
 	 */
 	private float treeZoom = 1f;
 	private float treePanX, treePanY;
+
+	/**
+	 * Bounds of the species name on the open plate, and whose name it is.
+	 * <p>
+	 * Set while drawing rather than computed on click, because the plate's layout is decided as it
+	 * is laid out — recomputing where the heading "would have been" in the click handler is the
+	 * kind of duplicate that stays correct exactly until the layout changes.
+	 */
+	private int titleY = -1;
+	private int titleW;
+	private long titleLineage;
+
+	/** When and where the last left click landed, for spotting a double-click on the name. */
+	private long lastClickTime;
+	private long lastClickLineage;
+
+	/** Milliseconds within which a second click on the same name counts as a double-click. */
+	private static final long DOUBLE_CLICK_MS = 400;
 
 	/**
 	 * Turntable angle for the specimen plate, in radians.
@@ -316,7 +347,7 @@ public class FieldGuideScreen extends Screen {
 	}
 
 	private int nodeY(Phylogeny.TreeNode node, int bodyTop) {
-		return Math.round(node.depth * ROW_H * treeZoom + treePanY) + bodyTop + 20;
+		return Math.round(node.depth * ROW_H * treeZoom + treePanY) + bodyTop + HEADING_H;
 	}
 
 	/**
@@ -344,7 +375,13 @@ public class FieldGuideScreen extends Screen {
 		// Screen coordinates, not panel-local. enableScissor pushes the rectangle straight onto the
 		// scissor stack without putting it through the current matrix — verified in the bytecode
 		// after guessing wrong in both directions — so the panel offset has to be added by hand.
-		context.enableScissor(left + 2, top + bodyTop + 4, left + PANEL_W - 2, top + PANEL_H - 4);
+		// Rasterise everything queued so far before the clip goes on. DrawContext batches items and
+		// text rather than drawing them immediately, so the tab icons and the heading are still
+		// pending at this point — and anything that flushes the batch while this scissor is active
+		// would clip them to the viewport they have nothing to do with.
+		context.draw();
+		context.enableScissor(left + 2, top + bodyTop + HEADING_H,
+				left + PANEL_W - 2, top + PANEL_H - 4);
 
 		int size = nodeSize();
 		for (Phylogeny.TreeNode parent : treeNodes) {
@@ -364,7 +401,8 @@ public class FieldGuideScreen extends Screen {
 		for (Phylogeny.TreeNode node : treeNodes) {
 			int x = nodeX(node);
 			int y = nodeY(node, bodyTop);
-			if (x + size < 0 || x > PANEL_W || y + size < bodyTop || y > PANEL_H) continue;
+			if (x + size < 0 || x > PANEL_W
+					|| y + size < bodyTop + HEADING_H || y > PANEL_H) continue;
 
 			boolean over = mx >= x && mx < x + size && my >= y && my < y + size;
 			if (over) hovered = node;
@@ -389,7 +427,11 @@ public class FieldGuideScreen extends Screen {
 						INK_FAINT, false);
 			}
 		}
+		// Flush the tree's own geometry while the clip still applies, so nothing from inside the
+		// viewport is left queued to be drawn after it comes off.
+		context.draw();
 		context.disableScissor();
+		clearGuiDepth();
 		hoveredNode = hovered;
 	}
 
@@ -409,8 +451,14 @@ public class FieldGuideScreen extends Screen {
 		DecodeAccuracy accuracy = entry.accuracy();
 
 		int y = bodyTop + 26;
-		context.drawText(textRenderer, Text.literal(entry.displayName()).formatted(Formatting.BOLD),
-				MARGIN, y, INK_TITLE, false);
+		Text title = Text.literal(entry.displayName()).formatted(Formatting.BOLD);
+		context.drawText(textRenderer, title, MARGIN, y, INK_TITLE, false);
+		// Remembered so a double-click on the name can be hit-tested. Recorded every frame the
+		// plate is drawn, and cleared by every other section, so it can never point at a heading
+		// that is no longer on the page.
+		titleY = y;
+		titleW = textRenderer.getWidth(title);
+		titleLineage = entry.lineage();
 		y += LINE_H + 2;
 		// A named species keeps its marking underneath, because the marking is what the machines
 		// print and what the tree is drawn from — the name is the reader's, not the world's.
@@ -435,6 +483,15 @@ public class FieldGuideScreen extends Screen {
 						Text.literal("⊕ name this species").formatted(Formatting.ITALIC),
 						MARGIN, y, 0xFF2C6E5A, false);
 			}
+			y += LINE_H + 4;
+		}
+
+		// Shown only to someone who can actually use it. An undiscoverable gesture is the same as
+		// no gesture, and the heading gives no other sign that it can be clicked.
+		if (canConjure()) {
+			context.drawText(textRenderer,
+					Text.literal("⊕ double-click the name to conjure one").formatted(Formatting.ITALIC),
+					MARGIN, y, 0xFF6A5A8A, false);
 			y += LINE_H + 4;
 		}
 
@@ -489,6 +546,9 @@ public class FieldGuideScreen extends Screen {
 		boolean drawn = genome != null && CreaturePreview.render(context, genome,
 				plateX + plateW / 2, plateY + plateH / 2 + 8,
 				Math.min(plateW, plateH), plateSpin);
+		// The plate's specimen writes depth exactly as the tree's do, and this one turns constantly
+		// and sits under the tooltip region. Same wipe, same reason.
+		clearGuiDepth();
 		if (!drawn) {
 			Text waiting = Text.literal("sketching…");
 			context.drawText(textRenderer, waiting,
@@ -568,6 +628,29 @@ public class FieldGuideScreen extends Screen {
 			return true;
 		}
 
+		// Double-clicking the species heading conjures one, for a creative operator.
+		//
+		// Checked before the naming line and before the drag, because both of those would swallow
+		// the click. The gate here is only so the gesture does nothing surprising in survival — the
+		// server re-checks it, and is the only thing that decides.
+		if (button == 0 && !naming && titleY >= 0
+				&& my >= titleY - 1 && my < titleY + LINE_H
+				&& mx >= MARGIN && mx < MARGIN + titleW) {
+			long now = net.minecraft.util.Util.getMeasuringTimeMs();
+			boolean doubled = titleLineage == lastClickLineage
+					&& now - lastClickTime <= DOUBLE_CLICK_MS;
+			lastClickTime = now;
+			lastClickLineage = titleLineage;
+
+			if (doubled && canConjure()) {
+				ClientPlayNetworking.send(new SpawnSpeciesPayload(titleLineage));
+				// A second double-click should be a second animal, not a repeat of this one.
+				lastClickTime = 0;
+				lastClickLineage = 0;
+			}
+			return true;
+		}
+
 		// The naming line, when the open plate is offering one.
 		if (button == 0 && nameLineY >= 0 && !naming
 				&& my >= nameLineY - 1 && my < nameLineY + LINE_H
@@ -637,7 +720,10 @@ public class FieldGuideScreen extends Screen {
 			treeZoom = Math.max(0.35f, Math.min(2.5f, treeZoom * (vertical > 0 ? 1.15f : 1f / 1.15f)));
 			float ratio = treeZoom / previous;
 			treePanX = (float) (mx - MARGIN - (mx - MARGIN - treePanX) * ratio);
-			treePanY = (float) (my - TAB_H - 20 - (my - TAB_H - 20 - treePanY) * ratio);
+			// Anchored on the same origin the nodes are laid out from, or zooming walks the tree
+			// out from under the clip rectangle.
+			double originY = TAB_H + HEADING_H;
+			treePanY = (float) (my - originY - (my - originY - treePanY) * ratio);
 			return true;
 		}
 		turn(vertical > 0 ? -1 : 1);
@@ -713,6 +799,45 @@ public class FieldGuideScreen extends Screen {
 	}
 
 	/** Switches to the Specimens tab and pages straight to one bloodline's plate. */
+	/**
+	 * Wipes the depth the specimen previews just wrote, leaving the colour they drew.
+	 * <p>
+	 * The previews are real three-dimensional geometry rendered into a two-dimensional interface.
+	 * They depth-test and depth-write, and they sit at z≈200 — in front of the tab icons, which
+	 * {@code DrawContext.drawItem} renders as models at z≈150 and which write depth of their own.
+	 * Anything drawn afterwards that lands on those pixels at a lower z is discarded by the depth
+	 * test rather than painted over.
+	 * <p>
+	 * On its own that would be a static artefact. What makes it blink is that the specimens
+	 * <i>turn</i>: the depth they occupy changes every frame, so whatever they are occluding
+	 * appears and disappears in time with the rotation. Hovering makes it obvious because a tooltip
+	 * is suddenly being drawn across the same pixels.
+	 * <p>
+	 * Clearing depth once the previews are flushed puts the interface back to the flat
+	 * painter's-order surface the rest of it assumes. The colour buffer is untouched, so the
+	 * specimens stay on screen — they simply stop casting a depth shadow over the rest of the book.
+	 */
+	private static void clearGuiDepth() {
+		// 0x100 is GL_DEPTH_BUFFER_BIT. Written out rather than imported from LWJGL because the
+		// second argument already ties this to Minecraft's own wrapper, and pulling in GL11 for a
+		// single constant invites someone to reach for raw GL calls next to it.
+		RenderSystem.clear(0x100, MinecraftClient.IS_SYSTEM_MAC);
+	}
+
+	/**
+	 * Whether to offer the conjure gesture at all.
+	 * <p>
+	 * Cosmetic only — {@link SpawnSpeciesPayload} makes the same checks on arrival and is the one
+	 * that decides. This exists so the hint is not shown to a player who cannot use it, and so a
+	 * stray double-click in survival does nothing rather than sending a packet that will be
+	 * refused.
+	 */
+	private boolean canConjure() {
+		return client != null && client.player != null
+				&& client.player.isCreative()
+				&& client.player.hasPermissionLevel(2);
+	}
+
 	private void openPlateFor(long lineage) {
 		section = GuideChapters.REFERENCE_TAB;
 		buildSection();
@@ -759,6 +884,9 @@ public class FieldGuideScreen extends Screen {
 		// and leaves every pixel of the page exact.
 		context.fill(0, 0, width, height, 0xC0101018);
 		age += delta;
+		// Cleared before anything is drawn and set again only by drawPlate, so a heading can never
+		// stay clickable on a page that no longer shows one.
+		titleY = -1;
 		// Held still while dragged, turning again the moment it is let go — from the angle it was
 		// left at, because the angle is state rather than a function of the clock.
 		if (!(dragging && section == GuideChapters.REFERENCE_TAB)) {

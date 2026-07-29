@@ -11,6 +11,7 @@ import dev.jsz.primordia.ecology.FoodSurvey;
 import dev.jsz.primordia.ecology.SurvivalDrops;
 import dev.jsz.primordia.ecology.WorldImpact;
 import dev.jsz.primordia.ecology.region.RegionMaterialiser;
+import dev.jsz.primordia.entity.goal.ClimbWallGoal;
 import dev.jsz.primordia.entity.goal.CreatureAttackGoal;
 import dev.jsz.primordia.entity.goal.CreatureTemptGoal;
 import dev.jsz.primordia.entity.goal.DefendOwnerGoal;
@@ -68,6 +69,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Hand;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
@@ -95,6 +97,15 @@ public class CreatureEntity extends PathAwareEntity {
 			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
 	private static final TrackedData<Optional<UUID>> OWNER =
 			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.OPTIONAL_UUID);
+	/**
+	 * Horizontal direction of the wall this creature is on, as a {@link Direction} id, or -1.
+	 * <p>
+	 * Replicated because the renderer needs it: a climber is drawn rotated onto the surface it is
+	 * clinging to, and which surface that is cannot be worked out client-side without re-scanning
+	 * the blocks around every creature every frame.
+	 */
+	private static final TrackedData<Byte> CLIMB_FACING =
+			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BYTE);
 	private static final TrackedData<Boolean> CLIMBING =
 			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
 	private static final TrackedData<Boolean> DOMESTICATED =
@@ -191,6 +202,10 @@ public class CreatureEntity extends PathAwareEntity {
 	private int breedCooldown;
 	/** Ticks lived. Distinct from {@code age}, which vanilla resets; this one only ever climbs. */
 	private int lifeTicks;
+	/** Client-side easing of the turn onto a wall, 0 upright to 1 flat against it. */
+	private float climbBlend;
+	/** Share of the remaining angle covered per tick. About a third of a second end to end. */
+	private static final float CLIMB_BLEND_RATE = 0.18f;
 	/** Remaining food in this carcass, in the absolute units {@code EnergyBudget} works in. */
 	private float carcassNutrition;
 	/** Ticks this carcass has lain here. */
@@ -346,6 +361,44 @@ public class CreatureEntity extends PathAwareEntity {
 		discard();
 	}
 
+	/**
+	 * Whether this creature can go up a wall it walks into.
+	 * <p>
+	 * Light, many-legged animals climb, which is the same bargain a real climber makes — plenty of
+	 * contact points and little weight on each. A cave dweller climbs regardless of how it is
+	 * proportioned: a cave offers as much wall as floor, and one that could only use the floor would
+	 * be living in a fraction of its own habitat.
+	 */
+	public boolean canClimb() {
+		BodyPlan plan = getBodyPlan();
+		if (plan == null) return false;
+		Genome g = getGenome();
+		if (g != null && dev.jsz.primordia.genome.Archetype.isSubterranean(g)) return true;
+		return plan.legs.length >= 4 && plan.mass <= 0.38f;
+	}
+
+	/** Which wall this creature is clinging to, or null when it is on the floor. */
+	public Direction getClimbFacing() {
+		byte id = dataTracker.get(CLIMB_FACING);
+		return id < 0 || id >= Direction.values().length ? null : Direction.byId(id);
+	}
+
+	/** Server side; the goal reports the wall it is pressing into. */
+	public void setClimbFacing(Direction facing) {
+		if (getWorld().isClient()) return;
+		dataTracker.set(CLIMB_FACING, facing == null ? (byte) -1 : (byte) facing.getId());
+	}
+
+	/**
+	 * How far onto the wall the body has turned, 0 upright to 1 flat against it.
+	 * <p>
+	 * Client-side and eased, because the underlying flag is a boolean that flips on a single tick
+	 * and a creature that snaps through a right angle reads as a glitch rather than as a climber.
+	 */
+	public float getClimbBlend() {
+		return climbBlend;
+	}
+
 	@Override
 	public boolean isClimbing() {
 		return dataTracker.get(CLIMBING) || super.isClimbing();
@@ -376,6 +429,7 @@ public class CreatureEntity extends PathAwareEntity {
 		builder.add(POSING, false);
 		builder.add(POSE_WALKING, true);
 		builder.add(CLIMBING, false);
+		builder.add(CLIMB_FACING, (byte) -1);
 		builder.add(CARCASS, false);
 		builder.add(ASLEEP, false);
 	}
@@ -838,6 +892,9 @@ public class CreatureEntity extends PathAwareEntity {
 		// Above grazing and below fighting: a carcass is worth more than a mouthful of grass, but
 		// not worth standing over while something is trying to eat you.
 		goalSelector.add(4, new FeedOnCarcassGoal(this, 1.1));
+		// Below feeding, above wandering: a climber should still eat first, but should choose a
+		// wall over another circuit of the floor.
+		goalSelector.add(4, new ClimbWallGoal(this, 1.0));
 		// Below fighting, above foraging: a companion should finish the fight before it wanders
 		// back to heel, but should not stop to graze while its owner walks away.
 		goalSelector.add(4, new FollowOwnerGoal(this, 1.25, 10f, 3f, 20f));
@@ -1015,10 +1072,16 @@ public class CreatureEntity extends PathAwareEntity {
 			this.bodyYaw = MathHelper.stepUnwrappedAngleTowards(this.bodyYaw, this.getHeadYaw(), 7.5f);
 		}
 
-		boolean canClimb = getBodyPlan() != null && getBodyPlan().legs.length >= 4 && getBodyPlan().mass <= 0.38f;
-		if (canClimb) {
+		// Server-authoritative: the client's copy is replicated, and writing it here too would have
+		// each side briefly disagreeing about which way a creature is facing on a wall.
+		if (!getWorld().isClient() && canClimb()) {
 			dataTracker.set(CLIMBING, horizontalCollision);
+			if (!horizontalCollision) dataTracker.set(CLIMB_FACING, (byte) -1);
 		}
+		// Eased on the client so the body turns onto the wall over a few frames rather than
+		// snapping through ninety degrees on the tick the collision flag flips.
+		float target = isClimbing() && getClimbFacing() != null ? 1f : 0f;
+		climbBlend += (target - climbBlend) * CLIMB_BLEND_RATE;
 
 		if (getWorld().isClient()) return;
 

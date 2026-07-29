@@ -140,8 +140,10 @@ public final class Genome {
 	 * saturation by hue on top of this.
 	 */
 	public static Genome createForBiome(net.minecraft.util.math.random.Random random, String biomeCategory) {
-		Archetype archetype = Archetype.VALUES[random.nextInt(Archetype.VALUES.length)];
 		java.util.Random jRandom = new java.util.Random(random.nextLong());
+		// Surface archetypes only. A region's cave fauna is seeded separately, by RegionFounder,
+		// because it is not a variation on the fauna above it — it lives somewhere else.
+		Archetype archetype = Archetype.randomSurface(jRandom);
 		Genome g = archetype.create(jRandom);
 		float[] v = g.copyValues();
 

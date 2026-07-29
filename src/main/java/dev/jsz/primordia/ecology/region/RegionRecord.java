@@ -41,8 +41,26 @@ public final class RegionRecord {
 	 */
 	public float temperature = 0.5f;
 	public float humidity = 0.5f;
+	/**
+	 * How much life the caves under this region can support, 0 to 1.
+	 * <p>
+	 * Sampled from the cave biome layer rather than the surface, so it says something about what is
+	 * actually down there. Lush caves carry a real fauna; plain stone gets a fraction of it, which
+	 * is enough for the occasional wanderer without making them a fixture everywhere.
+	 */
+	public float caveRichness = 0.18f;
 	/** Whether founding fauna have been generated for this region yet. */
 	public boolean founded;
+
+	/**
+	 * Which generation of the ecology this record was written by.
+	 * <p>
+	 * Founding runs once and never again, so a feature added afterwards reaches only regions the
+	 * player has not visited yet — a save that has been played in gets none of it, anywhere, and
+	 * the feature looks broken rather than absent. This is what lets a record be brought forward
+	 * instead: see {@code RegionFounder.upgrade}.
+	 */
+	public int version;
 
 	public final List<LineageRecord> lineages = new ArrayList<>();
 
@@ -115,7 +133,9 @@ public final class RegionRecord {
 		nbt.putFloat("Productivity", productivity);
 		nbt.putFloat("Temperature", temperature);
 		nbt.putFloat("Humidity", humidity);
+		nbt.putFloat("CaveRichness", caveRichness);
 		nbt.putBoolean("Founded", founded);
+		nbt.putInt("Version", version);
 		NbtList list = new NbtList();
 		for (LineageRecord record : lineages) {
 			list.add(record.writeNbt());
@@ -132,7 +152,10 @@ public final class RegionRecord {
 		record.productivity = nbt.getFloat("Productivity");
 		record.temperature = nbt.contains("Temperature") ? nbt.getFloat("Temperature") : 0.5f;
 		record.humidity = nbt.contains("Humidity") ? nbt.getFloat("Humidity") : 0.5f;
+		record.caveRichness = nbt.contains("CaveRichness") ? nbt.getFloat("CaveRichness") : 0.18f;
 		record.founded = nbt.getBoolean("Founded");
+		// Absent on records written before versioning, which is precisely what marks them as old.
+		record.version = nbt.getInt("Version");
 		NbtList list = nbt.getList("Lineages", NbtElement.COMPOUND_TYPE);
 		for (int i = 0; i < list.size(); i++) {
 			record.lineages.add(LineageRecord.readNbt(list.getCompound(i)));

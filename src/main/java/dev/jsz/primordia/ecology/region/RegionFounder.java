@@ -1,5 +1,6 @@
 package dev.jsz.primordia.ecology.region;
 
+import dev.jsz.primordia.genome.Archetype;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.genome.Mutation;
@@ -42,6 +43,11 @@ public final class RegionFounder {
 	private static final float HERBIVORE_FOUNDERS = 24f;
 	private static final float OMNIVORE_FOUNDERS = 9f;
 	private static final float CARNIVORE_FOUNDERS = 3f;
+	/**
+	 * Cave dwellers founded per region. Higher than the surface predators because they are tiny,
+	 * and a cave system holding three of anything is a cave system you will never meet one in.
+	 */
+	private static final float CAVE_FOUNDERS = 18f;
 
 	/**
 	 * Ceiling on carnivore biomass as a fraction of the herbivore biomass beneath it.
@@ -62,6 +68,44 @@ public final class RegionFounder {
 	 * @param climate   normalised temperature and humidity, and productivity, sampled from the biome
 	 * @param biomeName the biome path name, used only for colouring the founding stock
 	 */
+	/**
+	 * Generation of the ecology this class writes. Bump when adding something that founding does
+	 * once and that an already-founded region would therefore never receive.
+	 */
+	public static final int VERSION = 1;
+
+	/**
+	 * Brings an already-founded record up to the current {@link #VERSION}.
+	 * <p>
+	 * Founding happens once per region and never again, so anything added to it afterwards reaches
+	 * only ground the player has never walked on. In a save that has been played in, that means the
+	 * feature is missing everywhere the player actually goes — which is indistinguishable from it
+	 * not working. Cave fauna arrived after the first regions were founded and this is how it
+	 * reaches them.
+	 * <p>
+	 * Deliberately additive. It never removes a lineage and never touches one that is already
+	 * there, so a region that genuinely lost its cave dwellers to extinction does not have them
+	 * conjured back — only a region that never had the chance gets one.
+	 */
+	public static void upgrade(RegionRecord record, Climate climate) {
+		if (!record.founded || record.version >= VERSION) return;
+
+		record.caveRichness = MathX.clamp01(climate.caveRichness());
+		boolean hasCaveFauna = false;
+		for (LineageRecord lineage : record.lineages) {
+			if (Archetype.isSubterranean(lineage.meanGenome())) {
+				hasCaveFauna = true;
+				break;
+			}
+		}
+		if (!hasCaveFauna) {
+			Random random = new Random(record.seed ^ 0x5EEDCAFEL);
+			caveFounder(record, new Random(random.nextLong()), random);
+		}
+		record.version = VERSION;
+		record.dirty = true;
+	}
+
 	public static void found(RegionNeighbourhood ledger, RegionRecord record, Climate climate,
 	                         String biomeName, long currentDay) {
 		if (record.founded) return;
@@ -70,6 +114,7 @@ public final class RegionFounder {
 		record.temperature = MathX.clamp01(climate.temperature());
 		record.humidity = MathX.clamp01(climate.humidity());
 		record.vegetation = record.productivity * 0.9f;
+		record.caveRichness = MathX.clamp01(climate.caveRichness());
 
 		Random random = new Random(record.seed);
 
@@ -86,6 +131,7 @@ public final class RegionFounder {
 		}
 
 		record.founded = true;
+		record.version = VERSION;
 		record.lastStep = currentDay;
 		record.dirty = true;
 
@@ -205,6 +251,12 @@ public final class RegionFounder {
 					0.40f + random.nextFloat() * 0.18f, OMNIVORE_FOUNDERS);
 		}
 
+		// Every region gets its cave fauna, whatever the biome above it. Caves are under the desert
+		// as much as under the jungle, and what lives in them answers to the cave rather than to the
+		// weather — which is why this is seeded unconditionally and its climate preferences are not
+		// taken from the surface.
+		caveFounder(record, mcRandomSource, random);
+
 		// One hunter, and only if the base below it can actually carry one.
 		if (herbivoreBiomass > 0f && random.nextFloat() < 0.7f) {
 			LineageRecord predator = founder(record, biomeName, mcRandomSource, random,
@@ -216,6 +268,32 @@ public final class RegionFounder {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Seeds the region's cave dwellers.
+	 * <p>
+	 * Founded from {@link Archetype#CAVE_CRAWLER} rather than from the biome, and deliberately not
+	 * passed through the surface climate: the temperature twenty blocks down is not the temperature
+	 * of the meadow above it, and pulling a cave animal's preferences toward a desert's would have
+	 * selection slowly drive it out of the only place it can live.
+	 */
+	private static void caveFounder(RegionRecord record, Random mcSource, RandomGenerator random) {
+		net.minecraft.util.math.random.Random mcRandom =
+				net.minecraft.util.math.random.Random.create(mcSource.nextLong());
+		Genome genome = Archetype.CAVE_CRAWLER.create(new Random(mcRandom.nextLong()));
+
+		// Scaled by what the caves under this region can actually support. A lush cave gets a
+		// founding population; a plain stone one gets a handful, which the pre-history will either
+		// carry or quietly lose — and either outcome is the right one.
+		float founders = CAVE_FOUNDERS * record.caveRichness;
+		if (founders < 1f) return;
+
+		LineageRecord lineage = LineageRecord.of(
+				new Genome(genome.copyValues(), genome.seed(), random.nextLong(), 0),
+				founders);
+		lineage.variance = 0.04f + random.nextFloat() * 0.04f;
+		record.add(lineage);
 	}
 
 	/** One founding lineage with its diet forced to a trophic level. */
@@ -261,6 +339,12 @@ public final class RegionFounder {
 	}
 
 	/** Biome-derived inputs to founding, normalised to the [0,1] scale the genome uses. */
-	public record Climate(float temperature, float humidity, float productivity) {
+	/**
+	 * Biome-derived inputs to founding, normalised to the [0,1] scale the genome uses.
+	 *
+	 * @param caveRichness how much the caves under the region can support — high in lush caves,
+	 *                     low but never zero elsewhere
+	 */
+	public record Climate(float temperature, float humidity, float productivity, float caveRichness) {
 	}
 }

@@ -4,7 +4,6 @@ import dev.jsz.primordia.entity.CreatureEntity;
 import net.minecraft.entity.ai.goal.Goal;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
 
 import java.util.EnumSet;
 
@@ -34,8 +33,6 @@ public class ClimbWallGoal extends Goal {
 	private static final int MAX_CLIMB_TICKS = 200;
 	/** Ticks allowed to reach the wall before the attempt is written off. */
 	private static final int APPROACH_TIMEOUT = 80;
-	/** How hard to press into the wall. Enough to keep the collision flag set, no more. */
-	private static final double PRESS = 0.18;
 
 	private final CreatureEntity creature;
 	private final double speed;
@@ -109,18 +106,26 @@ public class ClimbWallGoal extends Goal {
 			return;
 		}
 
-		// Close enough. The navigator would now steer around the obstacle, so it is stood down and
-		// the creature is pushed straight at the wall by hand: the collision flag is what the
-		// engine's climbing is gated on, and only pressing into it keeps that flag set.
+		// Close enough. From here the creature is driven at the wall through its move control
+		// rather than by the navigator, which would steer around the obstacle instead of into it.
+		//
+		// It has to be the move control and not a velocity nudge. LivingEntity.applyMovementInput
+		// rebuilds velocity from the mob's movement input every tick before it moves, so anything
+		// set by hand is overwritten before it can do anything — and with no input the creature
+		// stops pressing the wall, horizontalCollision goes false, and the engine's climb never
+		// triggers. That is the whole reason they were standing at the foot of a wall shuffling:
+		// the lift is gated on a collision that the goal had itself stopped producing.
 		creature.getNavigation().stop();
 		approachTicks = 0;
 		climbTicks++;
 
-		Vec3d velocity = creature.getVelocity();
-		creature.setVelocity(
-				velocity.x + into.getOffsetX() * PRESS,
-				velocity.y,
-				velocity.z + into.getOffsetZ() * PRESS);
+		// Aimed through the wall and above, so the input keeps pointing into it as the creature
+		// rises rather than being satisfied the moment it arrives.
+		creature.getMoveControl().moveTo(
+				creature.getX() + into.getOffsetX() * 2.0,
+				creature.getY() + 3.0,
+				creature.getZ() + into.getOffsetZ() * 2.0,
+				speed);
 		creature.setClimbFacing(into);
 	}
 

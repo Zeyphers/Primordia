@@ -21,7 +21,8 @@
 			"dev.jsz.primordia.client.config.PrimordiaModMenu"
 		]
 	},
-	"mixins": [
+	"accessWidener": "primordia.accesswidener",
+  "mixins": [
 		"primordia.mixins.json"
 	],
 	"depends": {

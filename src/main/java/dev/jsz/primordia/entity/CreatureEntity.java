@@ -952,9 +952,22 @@ public class CreatureEntity extends PathAwareEntity {
 		// etc.). Bonded creatures do not go looking: a companion that clears out the farm it is
 		// walking past is a liability, so they fight what their owner fights and nothing else.
 		targetSelector.add(2, new ActiveTargetGoal<>(this, net.minecraft.entity.passive.AnimalEntity.class, 10, true, false,
-				animal -> !isDomesticated() && wantsToHunt()
-						&& (getTemperament().huntsUnprovoked()
-						|| (getGenome() != null && getGenome().raw(Gene.DIET) > 0.45f))));
+				animal -> {
+					if (isDomesticated() || !wantsToHunt()) return false;
+					if (!getTemperament().huntsUnprovoked()
+							&& (getGenome() == null || getGenome().raw(Gene.DIET) <= 0.45f)) {
+						return false;
+					}
+					BodyPlan mine = getBodyPlan();
+					if (mine == null) return false;
+					// The same size window that governs hunting another creature. Without it a
+					// creature the size of a rabbit would set about a horse, and the two faunas
+					// would be playing by different rules on the same ground.
+					float theirs = dev.jsz.primordia.ecology.VanillaInteractions
+							.massOf(animal.getType());
+					// Not in the table means not in the food web — fish, bats, squid.
+					return theirs > 0f && EnergyBudget.isWorthHunting(mine.mass, theirs);
+				}));
 
 		// Committed predators treat the player as prey without being provoked first. A bonded
 		// creature never does, whatever its disposition says. Gated on hunger like everything else,

@@ -1,6 +1,7 @@
 package dev.jsz.primordia;
 
 import dev.jsz.primordia.command.PrimordiaCommands;
+import dev.jsz.primordia.ecology.VanillaInteractions;
 import dev.jsz.primordia.ecology.region.EcologyTicker;
 import dev.jsz.primordia.lab.NameLineagePayload;
 import dev.jsz.primordia.lab.SpawnSpeciesPayload;
@@ -38,6 +39,7 @@ public class Primordia implements ModInitializer {
 		NameLineagePayload.register();
 		SpawnSpeciesPayload.register();
 		EcologyTicker.register();
+		VanillaInteractions.register();
 
 		// Deliberately no BiomeModifications.addSpawn. Creatures are no longer placed by the
 		// vanilla spawner at all.

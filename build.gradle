@@ -11,6 +11,8 @@ base {
 }
 
 loom {
+	accessWidenerPath = file("src/main/resources/primordia.accesswidener")
+
 	runs {
 		client {
 			// Procedural meshing runs off-thread; give it headroom during dev.

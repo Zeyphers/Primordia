@@ -11,7 +11,6 @@ Nothing about a creature is authored. **There are no models, no textures, no ani
 
 ---
 
-
 ## Requirements
 
 - **JDK 25**: required by Minecraft 26.2.
@@ -291,7 +290,7 @@ The suite fuzzes hundreds of random genomes against the invariants that have no 
   and `SimpleContainerBlockEntity`, the generic container classes it and the (already-removed)
   Genome Bank shared, were removed alongside it since nothing else used them.
 - Grazing feeds a herbivore but does not yet consume the block, so plant food is effectively
-  infinite. Consuming it needs a regional stock to debit, which is Phase B in `docs/ECOLOGY.md`.
+  infinite. Consuming it needs a regional stock to debit, which is Phase B in `MD/ECOLOGY.md`.
 - Carcasses are `CreatureEntity` instances and count against the `CREATURE` spawn cap while they
   last. A heavily-hunted area may briefly suppress its own spawning.
 - Skinning is CPU-side. Moving it to a GPU vertex shader with a bone palette is the next big

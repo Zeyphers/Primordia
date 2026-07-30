@@ -62,7 +62,7 @@ public class Primordia implements ModInitializer {
 		//
 		// Population now lives in the region ledger, and creatures are placed from it by
 		// RegionMaterialiser: the record says how many of which lineage live here, and entities are
-		// a rendering of that. See docs/ECOLOGY.md.
+		// a rendering of that. See MD/ECOLOGY.md.
 		//
 		// The old note about not registering a second MONSTER spawn group still applies if anyone
 		// is tempted: the groups carry independent mob caps, so the entity spawned against both

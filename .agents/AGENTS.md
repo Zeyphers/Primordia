@@ -1,7 +1,7 @@
 # Primordia — Agent Rules
 
-Read [`HANDOFF.md`](../HANDOFF.md) for the current state and
-[`docs/PITFALLS.md`](../docs/PITFALLS.md) before touching the geometry pipeline. Several failure
+Read [`MD/HANDOFF.md`](../MD/HANDOFF.md) for the current state and
+[`MD/PITFALLS.md`](../MD/PITFALLS.md) before touching the geometry pipeline. Several failure
 modes here are silent — valid body plan, green tests, wrong creature — and that document is the list
 of them.
 
@@ -33,7 +33,7 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@21 ~/dev/tools/gradle-8.10/bin/gradle runCli
 > developed and tested here. There is no Primordia profile in the Modrinth App on this machine.
 
 `run/` is gitignored. The dev client has Sodium, Iris, Resourcify, Zoomify and their dependencies in
-`run/mods/`, at versions pinned by `loader_version=0.16.5` — see `HANDOFF.md` for the table and why
+`run/mods/`, at versions pinned by `loader_version=0.16.5` — see `MD/HANDOFF.md` for the table and why
 two of them are held back.
 
 ## In-game tooling

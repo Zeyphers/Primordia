@@ -1,7 +1,7 @@
 # Handoff
 
-Start here, then read [`README.md`](README.md) for what the mod is and
-[`docs/PITFALLS.md`](docs/PITFALLS.md) before changing anything in the geometry pipeline.
+Start here, then read [`README.md`](../README.md) for what the mod is and
+[`PITFALLS.md`](PITFALLS.md) before changing anything in the geometry pipeline.
 
 **State:** builds clean against Minecraft 1.21.1, 101 tests pass.
 
@@ -103,7 +103,7 @@ and a normal-smoothing slider. Bioluminescence emits on `entity_translucent_emis
 
 The complaint this addressed: walking into a new area in survival, the carnivores killed every
 herbivore within minutes and left beef and bones scattered everywhere. Six causes, diagnosed with
-line references in [`docs/ECOLOGY.md`](docs/ECOLOGY.md) — read that first, it also lays out the
+line references in [`ECOLOGY.md`](ECOLOGY.md) — read that first, it also lays out the
 four-level design the rest of the ecology is being built to.
 
 Creatures now carry an `energy` budget, hunt only when hungry, give up a chase they cannot win,
@@ -116,7 +116,7 @@ without that line there is no way to tell a predator that has just eaten from on
 
 ## Ecology, phases B–F
 
-The whole of [`docs/ECOLOGY.md`](docs/ECOLOGY.md) is now built except dens/nests and the journal UI.
+The whole of [`ECOLOGY.md`](ECOLOGY.md) is now built except dens/nests and the journal UI.
 
 Creatures are **no longer placed by the vanilla spawner at all** — `BiomeModifications.addSpawn` is
 gone. Population lives in a per-region ledger (`ecology/region/`), 128 blocks square, persisted with
@@ -186,7 +186,7 @@ Fifteen test classes. The ones that encode something non-obvious:
 | `PoseWalkTest` | a stationary creature fed a walking speed actually moves its feet |
 | `OrnamentTest` | every horn type, tail shape and glow region is reachable |
 
-Read `docs/PITFALLS.md` before adding to these. Several of them were written wrong first, passed,
+Read `PITFALLS.md` before adding to these. Several of them were written wrong first, passed,
 and hid the bug they existed to catch.
 
 

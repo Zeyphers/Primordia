@@ -1,6 +1,7 @@
 
 ![Primordia](https://cdn.modrinth.com/data/cached_images/5b3d6c167245848de481471729e64fb9cb9a7e2f.png)
 
+
 Spore's core loop, in Minecraft. Creatures are not modelled — they are **grown from a genome**,
 every time, at runtime. A gene vector becomes a skeleton, the skeleton becomes a signed distance
 field, the field becomes a mesh, and the mesh walks on procedurally animated legs solved with
@@ -11,56 +12,6 @@ Nothing about a creature is authored. There are no models, no textures, no anima
 
 ---
 
-## Status
-
-**Milestone 1 is implemented and in-game verified**: a genome spawns a creature that is generated,
-meshed, coloured, and walks with full procedural IK. Taming, saddling, and riding work. Predation,
-diet-based temperament, foraging, and breeding are functional. Wall-dwelling archetypes (six or
-more legs, low mass) climb with real pathfinding rather than scripted steering — the navigation
-graph gains climb edges instead of the creature simply being told which way is "up."
-
-**Verified:** compiles clean against Minecraft **26.2** on Fabric, and the full test suite passes —
-covering genome serialisation, body-plan generation over hundreds of random genomes, bind-pose
-skinning correctness, IK convergence, mesh validity, knee stability, limb separation and
-intersection, archetype coverage, ornament reachability, the hinged jaw, dentition, quad winding,
-the energy economy the food web is gated on, the region ledger the world's memory lives in, and
-wall-surface climb pathfinding.
-
-New here: start with [`HANDOFF.md`](HANDOFF.md) for the current state and how to build and run, and
-read [`docs/PITFALLS.md`](docs/PITFALLS.md) before changing the geometry pipeline — it lists the
-failure modes that leave the body plan valid and the tests green while the creature is wrong.
-
-**Release: `Primordia_1.0.0_26.2.jar`**, built for Minecraft 26.2 / Fabric Loader 0.19.3 / Fabric
-API 0.155.2+26.2. This release ships without the Preservation Case block — its dedicated block
-class and assets were pulled for this cut and will return once finished.
-
-| Milestone | What it delivers | State |
-|---|---|---|
-| **M1 — It lives** | Genome → skeleton → SDF → mesh → IK walk cycle | **done, verified in-game** |
-| **M2 — It eats** | Food webs, hunger, foraging, predation, death | **done** |
-| **M3 — It evolves** | Breeding, selection pressure, lineage divergence | **done, at both entity and region scale** |
-| M4 — It changes things | Grazing, burrowing, nest building, terrain effects | grazing and trails done; dens and nests not started |
-| M5 — You study it | Genome scanner item, field journal UI, lineage tree | scanner and region survey done; journal UI not started |
-
-The ecology is in [`docs/ECOLOGY.md`](docs/ECOLOGY.md) — read it before touching anything under
-`ecology/`. Two simulations run at different scales and hand populations back and forth:
-
-- **Where you are standing**, creatures carry an energy budget, hunt only when hungry, give up a
-  chase they cannot win, leave carcasses rather than item drops, breed on their own, sleep through
-  half of every day, crop the vegetation they eat, and wear paths into the ground.
-- **Everywhere else**, populations are numbers in a per-region ledger that keeps advancing: births,
-  deaths, predation, selection on a mean genome, speciation, extinction, and migration into
-  neighbouring regions — a day of ecology per step, integrated when you come back.
-
-A region is founded from the stock of whatever region is nearest, drifted by the distance, and then
-run through 100–300 days of its own history *before you ever see it*. Walking a long way is
-therefore a biogeographical observation: fauna change gradually with distance, sharply across a
-climate boundary, and an isolated region evolves its own endemics.
-
-The genetics engine (`Mutation`) is complete and tested ahead of M3, because the genome format
-is the hardest thing to change later — everything is keyed by it.
-
----
 
 ## Requirements
 

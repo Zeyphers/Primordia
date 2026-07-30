@@ -1,5 +1,6 @@
 ![Primordia](https://cdn.modrinth.com/data/cached_images/5b3d6c167245848de481471729e64fb9cb9a7e2f.png)
 
+---
 
 Spore's core loop, in Minecraft. Creatures are not modelled. They are **grown from a genome**,
 every time, at runtime. A gene vector becomes a skeleton, the skeleton becomes a signed distance

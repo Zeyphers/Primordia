@@ -44,6 +44,11 @@ public class PlayerGuideData extends SavedData {
 		return playerGuides.computeIfAbsent(playerId, id -> GuideData.empty());
 	}
 
+	/** True once {@link #getGuide} has been called for this player at least once before. */
+	public boolean hasGuide(UUID playerId) {
+		return playerGuides.containsKey(playerId);
+	}
+
 	public void putGuide(UUID playerId, GuideData data) {
 		playerGuides.put(playerId, data);
 		setDirty();

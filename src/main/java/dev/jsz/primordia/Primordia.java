@@ -45,10 +45,21 @@ public class Primordia implements ModInitializer {
 		net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			net.minecraft.server.level.ServerPlayer player = handler.getPlayer();
 			dev.jsz.primordia.lab.PlayerGuideData global = dev.jsz.primordia.lab.PlayerGuideData.get((net.minecraft.server.level.ServerLevel) player.level());
+			// The guide record is created lazily on first read, so its absence right now is the
+			// signal that this player has never joined this world under this mod before.
+			boolean firstJoin = !global.hasGuide(player.getUUID());
 			dev.jsz.primordia.lab.GuideData data = global.getGuide(player.getUUID());
 			net.minecraft.nbt.CompoundTag payloadData = new net.minecraft.nbt.CompoundTag();
 			data.writeInto(payloadData);
 			sender.sendPacket(new dev.jsz.primordia.lab.GuideDataSyncPayload(payloadData));
+
+			if (firstJoin) {
+				net.minecraft.world.item.ItemStack guide =
+						new net.minecraft.world.item.ItemStack(PrimordiaItems.FIELD_GUIDE);
+				if (!player.getInventory().add(guide)) {
+					player.drop(guide, false);
+				}
+			}
 		});
 
 		// Deliberately no BiomeModifications.addSpawn. Creatures are no longer placed by the

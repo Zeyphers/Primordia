@@ -1,8 +1,7 @@
-
 ![Primordia](https://cdn.modrinth.com/data/cached_images/5b3d6c167245848de481471729e64fb9cb9a7e2f.png)
 
 
-Spore's core loop, in Minecraft. Creatures are not modelled — they are **grown from a genome**,
+Spore's core loop, in Minecraft. Creatures are not modelled. They are **grown from a genome**,
 every time, at runtime. A gene vector becomes a skeleton, the skeleton becomes a signed distance
 field, the field becomes a mesh, and the mesh walks on procedurally animated legs solved with
 inverse kinematics. Populations then breed, mutate, diverge into lineages, and reshape the world
@@ -15,13 +14,13 @@ Nothing about a creature is authored. There are no models, no textures, no anima
 
 ## Requirements
 
-- **JDK 25** — required by Minecraft 26.2.
-- **Gradle 9.6.1+** — Loom 1.17.17 declares a plugin API version of 9.5.0 and fails variant
+- **JDK 25**: required by Minecraft 26.2.
+- **Gradle 9.6.1+**: Loom 1.17.17 declares a plugin API version of 9.5.0 and fails variant
   resolution against anything older (including the 9.4.0 that Fabric's own 26.1 notes suggest).
 - Minecraft **26.2**, Fabric Loader **0.19.3+**, Fabric API **0.155.2+26.2**.
 
 `setup-toolchain.ps1` installs a portable Temurin JDK 25 and Gradle 9.6.1 into `dev\tools\` without
-needing admin rights, and is safe to re-run — existing installs are detected and skipped:
+needing admin rights, and is safe to re-run: existing installs are detected and skipped:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File setup-toolchain.ps1
@@ -42,7 +41,7 @@ C:\Users\jacob.szczepaniak\dev\tools\gradle-9.6.1\bin\gradle.bat build
 The **1.0.0** release on the Releases page was built from this exact pipeline off `mod_version =
 0.2.0-26.2-alpha.24` and republished as `Primordia_1.0.0_26.2.jar`; the version string embedded in
 `fabric.mod.json` therefore still reads `0.2.0-26.2-alpha.24` even though the release is tagged
-1.0.0 — the tag is the release name, not a rewrite of the build's own version.
+1.0.0. The tag is the release name, not a rewrite of the build's own version.
 
 To deploy locally, copy the built jar to the Modrinth App profile:
 
@@ -50,7 +49,7 @@ To deploy locally, copy the built jar to the Modrinth App profile:
 C:\Users\jacob.szczepaniak\AppData\Roaming\ModrinthApp\profiles\Primordia\mods\
 ```
 
-Keep exactly one `primordia-*.jar` in that folder — older ones are archived to `old_versions/`
+Keep exactly one `primordia-*.jar` in that folder. Older ones are archived to `old_versions/`
 within the same directory. Launch the game from the **Modrinth App** (not `gradle runClient`,
 which spawns an invisible window on this machine).
 
@@ -75,13 +74,13 @@ In-game, with cheats on:
 | `/primordia stats` | Mesh cache and bake queue depth |
 | `/primordia editor` | Opens the browser-based 3D genome/body editor |
 
-`/primordia breed` is the interesting one — run it repeatedly on a pair and their descendants to
+`/primordia breed` is the interesting one: run it repeatedly on a pair and their descendants to
 watch a lineage drift, and eventually to see `(NEW LINEAGE)` when the offspring diverge past the
 speciation threshold.
 
 ## Options within the mod
 
-Everything below lives in `config/primordia.json` (client-only — nothing here is synchronised, so
+Everything below lives in `config/primordia.json` (client-only; nothing here is synchronised, so
 two players can run different settings and still see the same animals) and is editable in-game
 through the settings screen registered with **Mod Menu**, if installed.
 
@@ -98,36 +97,36 @@ individual slider is touched. A preset moves two independent axes together as a 
 
 **Individual settings**, editable on their own (which drops the preset to `Custom`):
 
-- **Creatures per tier** (`nearCreatures`, `midCreatures`, `farCreatures`) — how many creatures
+- **Creatures per tier** (`nearCreatures`, `midCreatures`, `farCreatures`): how many creatures
   draw at full tier detail before the rest spill down to the next tier.
-- **Tier distances** (`nearDistance`, `midDistance`, `farDistance`) — camera distance, in blocks,
+- **Tier distances** (`nearDistance`, `midDistance`, `farDistance`): camera distance, in blocks,
   where each tier gives way to the next.
-- **Tier resolutions** (`nearDetail`, `midDetail`, `farDetail`, `distantDetail`) — Surface Nets
+- **Tier resolutions** (`nearDetail`, `midDetail`, `farDetail`, `distantDetail`): Surface Nets
   cells along a creature's longest axis at each tier. A floor, not a fixed value: the mesher raises
   it for any genome whose limbs are thinner than one cell, up to `detailCeiling`.
-- **Detail ceiling** (`detailCeiling`) — hard cap on cells per axis regardless of how thin a
+- **Detail ceiling** (`detailCeiling`): hard cap on cells per axis regardless of how thin a
   creature's limbs are, so one slender genome can't demand a bake that takes seconds.
-- **Mesh cache size** (`meshCacheSize`) — distinct baked meshes held in memory before eviction.
-- **Full-IK tier** (`fullIkTier`) — the coarsest tier that still runs full inverse kinematics;
+- **Mesh cache size** (`meshCacheSize`): distinct baked meshes held in memory before eviction.
+- **Full-IK tier** (`fullIkTier`): the coarsest tier that still runs full inverse kinematics;
   tiers below it fall back to a canned animation cycle.
-- **Normal smoothing** (`normalSmoothing`, 0–100%) — blend between the analytic SDF gradient and
+- **Normal smoothing** (`normalSmoothing`, 0-100%): blend between the analytic SDF gradient and
   the mesh's own vertex normals.
-- **Emissive glow** (`emissiveGlow`) — whether bioluminescent creatures actually emit light.
-- **Sharp shading** (`sharpShading`) — each face gets its own unshared normal instead of a shared,
+- **Emissive glow** (`emissiveGlow`): whether bioluminescent creatures actually emit light.
+- **Sharp shading** (`sharpShading`): each face gets its own unshared normal instead of a shared,
   averaged one. A renderer-only switch; the mesh itself is identical either way.
-- **Flat face colour** (`flatFaceColour`) — each face is coloured with the mean of its corners
+- **Flat face colour** (`flatFaceColour`): each face is coloured with the mean of its corners
   instead of interpolating a gradient across it. Matches the look of voxel mode; wrong on a smooth
   body, where it flattens what should read as curved shading.
-- **Voxel mode** (`voxelMode`) — snaps the mesh to a world-aligned grid instead of following the
+- **Voxel mode** (`voxelMode`): snaps the mesh to a world-aligned grid instead of following the
   SDF smoothly, so creatures read as built from blocks rather than as sculpted. Off leaves the
   usual smooth Surface Nets output.
-- **Voxel size** (`voxelPixels`, 0.25–2 Minecraft pixels, quarter-pixel steps) — edge length of
+- **Voxel size** (`voxelPixels`, 0.25-2 Minecraft pixels, quarter-pixel steps): edge length of
   each voxel when voxel mode is on, measured in world pixels (16 px = 1 block) rather than as a
   fraction of the creature, so two different-sized creatures standing together are built from
   voxels of the same physical size.
 
 To change the single global tuning point for the LOD system itself (rather than a per-player
-setting), see `BUDGET` and `RESOLUTION` in `mesh/LodTier` — covered under Performance below.
+setting), see `BUDGET` and `RESOLUTION` in `mesh/LodTier`, covered under Performance below.
 
 ---
 
@@ -163,7 +162,7 @@ means a leg *fairs into* a hip, and the same code handles a genome with six legs
 two.
 
 **Surface Nets, not marching cubes.** Surface Nets emits quads, which is exactly what Minecraft's
-entity render layers consume — no custom render layer, no degenerate-triangle workaround. It also
+entity render layers consume: no custom render layer, no degenerate-triangle workaround. It also
 needs no 256-entry triangulation table, and its dual vertices sit at the average of the edge
 crossings, so a coarse grid still reads as smooth. Marching cubes at the same resolution looks
 visibly faceted.
@@ -174,12 +173,12 @@ mesh means lighting, shadows, fog and other mods all work with no special cases.
 by genome, so a herd of siblings costs one bake.
 
 **Vertex colours, not textures.** Colour is baked into the mesh, so there is no texture atlas and
-no UV unwrap, and every creature in the world shares one flat white texture — one render layer,
+no UV unwrap, and every creature in the world shares one flat white texture: one render layer,
 one batch, however many species are on screen.
 
 **FABRIK, not analytic IK.** Limbs have two *or* three segments depending on the genome. FABRIK
-handles both with one implementation and no trigonometry. Its one weakness — no opinion about
-which way a knee bends — is fixed by rolling the solved chain about the hip-to-foot axis until
+handles both with one implementation and no trigonometry. Its one weakness (no opinion about
+which way a knee bends) is fixed by rolling the solved chain about the hip-to-foot axis until
 the mid joint lines up with the limb's pole vector.
 
 **World-space foot plants.** A planted foot is stored in absolute world coordinates, so the body
@@ -194,7 +193,7 @@ clamped into the leg's reach so the knee never locks in the first place.
 
 **The ground probe rejects surfaces you could not step onto.** Returning the first solid block
 found scanning downward makes a foot latch onto the side of a wall or tree trunk as the creature
-walks past — the limb appears glued to it. A candidate surface must have clear headroom above it,
+walks past: the limb appears glued to it. A candidate surface must have clear headroom above it,
 which a wall column never does, and must be within step height of the creature's own feet. When
 neither holds, the probe reports no ground and the leg hangs naturally beside the obstacle.
 
@@ -206,7 +205,7 @@ are anchored by the limbs. Creatures whose legs give no front-to-rear spread to 
 
 **Legs are fitted to the ground, not the other way round.** `BodyPlanBuilder` picks a hip height,
 pins the foot to y = 0, and derives bone lengths from the curve between them. A creature therefore
-*cannot* generate with legs too short to stand on — the failure mode is designed out rather than
+*cannot* generate with legs too short to stand on. The failure mode is designed out rather than
 validated against.
 
 ---
@@ -226,11 +225,11 @@ of creatures degrades gracefully instead of tanking the frame rate.
 
 Resolution is a *floor*, not a fixed value. `MeshBaker` raises it until sampling cells are smaller
 than the creature's thinnest limb, because a limb narrower than one cell falls between samples and
-disappears from the mesh entirely — the leg is not coarse, it is absent. The lift is capped at
+disappears from the mesh entirely: the leg is not coarse, it is absent. The lift is capped at
 1.8× the tier value and at `MAX_RESOLUTION`, so one slender genome cannot demand a grid that takes
 seconds to bake. Worst observed near-tier mesh is ~8,600 quads.
 
-Meshes bake on daemon worker threads and are never built on the render thread — a creature that
+Meshes bake on daemon worker threads and are never built on the render thread. A creature that
 is still baking is simply skipped for a frame, and coarser tiers finish first so a new species
 pops in low-detail immediately and sharpens a moment later.
 
@@ -247,36 +246,36 @@ C:\Users\jacob.szczepaniak\dev\tools\gradle-9.6.1\bin\gradle.bat test
 
 The suite fuzzes hundreds of random genomes against the invariants that have no visual tell:
 
-- **`BodyPlanTest`** — every genome yields a valid skeleton: parents precede children, limbs are
+- **`BodyPlanTest`**: every genome yields a valid skeleton: parents precede children, limbs are
   mirrored, feet sit on the ground plane, every leg has slack for IK to bend into, development is
   deterministic (which the mesh cache depends on).
-- **`SkeletonTest`** — a zero pose produces exactly identity skinning matrices. If this breaks,
+- **`SkeletonTest`**: a zero pose produces exactly identity skinning matrices. If this breaks,
   every creature renders subtly deformed and it looks like the generator just made an odd animal.
-- **`FabrikTest`** — the solver reaches reachable targets, never stretches a bone, keeps the hip
+- **`FabrikTest`**: the solver reaches reachable targets, never stretches a bone, keeps the hip
   pinned, honours the pole vector, and is stable across repeated solves.
-- **`MeshBakeTest`** — meshes are non-empty and internally consistent, skin weights sum to 1,
+- **`MeshBakeTest`**: meshes are non-empty and internally consistent, skin weights sum to 1,
   normals are unit length, and skinning at bind pose reproduces the baked mesh exactly.
-- **`GenomeTest`** — serialisation round-trips, malformed codes degrade to null rather than
+- **`GenomeTest`**: serialisation round-trips, malformed codes degrade to null rather than
   throwing, mutation never escapes [0,1], and offspring really are closer to their parents than to
   strangers.
-- **`JawTest`** — the mandible is a hinged bone parented to the skull, in a blend group of its
+- **`JawTest`**: the mandible is a hinged bone parented to the skull, in a blend group of its
   own, baked slightly ajar so there is a seam to open along, and it swings *down*. The sign of
-  that rotation is one character and a jaw closing up into the braincase looks, from most camera
-  angles, merely odd — so the test measures the hinge in the skull's own frame rather than in
+  that rotation is one character, and a jaw closing up into the braincase looks, from most camera
+  angles, merely odd. So the test measures the hinge in the skull's own frame rather than in
   world space, where head pitch would swamp it.
-- **`ToothClippingTest`** — no tooth comes through the jaw it closes against once the mouth shuts.
+- **`ToothClippingTest`**: no tooth comes through the jaw it closes against once the mouth shuts.
   Only observable in the closed pose: the mesh is baked with the mouth wide open, where every tooth
   sits harmlessly in the gap. It reads baked mesh vertices rather than recomputing where teeth
   ought to be, because an earlier version that recomputed them reported no clipping while creatures
   were visibly full of it.
-- **`QuadWindingTest`** — quads face the way their shading normals point. Invisible in vanilla,
+- **`QuadWindingTest`**: quads face the way their shading normals point. Invisible in vanilla,
   which lights entities from the vertex normal alone; shader packs branch on `gl_FrontFacing` and
   render a mis-wound quad inside-out.
-- **`PoseWalkTest`** — a stationary creature fed a walking speed still moves its feet, which is what
+- **`PoseWalkTest`**: a stationary creature fed a walking speed still moves its feet, which is what
   the `/primordia test` grid depends on.
-- **`OrnamentTest`** — every horn type, tail shape and glow region is reachable from some genome
-  and meshes. These traits have no invariant of their own to break — a hornless creature is
-  perfectly valid — so the thing worth testing is that no branch of the generator is unreachable,
+- **`OrnamentTest`**: every horn type, tail shape and glow region is reachable from some genome
+  and meshes. These traits have no invariant of their own to break (a hornless creature is
+  perfectly valid), so the thing worth testing is that no branch of the generator is unreachable,
   which nothing else in the suite would notice. It also pins the arachnid body plan: eight legs
   clustered on a front segment, an abdomen behind them, and knees above the hip.
 
@@ -287,7 +286,7 @@ The suite fuzzes hundreds of random genomes against the invariants that have no 
 - `CreatureRenderer` bundles its own `assets/primordia/textures/misc/white.png` rather than
   depending on vanilla's, after that asset moved during the 26.2 port; if a future version relocates
   or removes it again, creatures render magenta until `TEXTURE` is repointed.
-- The Preservation Case block is not in this release — its dedicated block class, container
+- The Preservation Case block is not in this release: its dedicated block class, container
   behaviour, and assets were pulled from `1.0.0` and will return once finished. `SimpleContainerBlock`
   and `SimpleContainerBlockEntity`, the generic container classes it and the (already-removed)
   Genome Bank shared, were removed alongside it since nothing else used them.
@@ -302,4 +301,4 @@ The suite fuzzes hundreds of random genomes against the invariants that have no 
 
 ## License
 
-[CC BY-NC 4.0](LICENSE) — sharing and adapting is fine with attribution; commercial use is not.
+[CC BY-NC 4.0](LICENSE)

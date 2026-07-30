@@ -72,7 +72,6 @@ In-game, with cheats on:
 | `/primordia mutate` | Spawn a mutated clone of the nearest creature |
 | `/primordia clear 32` | Remove creatures within 32 blocks |
 | `/primordia stats` | Mesh cache and bake queue depth |
-| `/primordia editor` | Opens the browser-based 3D genome/body editor |
 
 `/primordia breed` is the interesting one: run it repeatedly on a pair and their descendants to
 watch a lineage drift, and eventually to see `(NEW LINEAGE)` when the offspring diverge past the

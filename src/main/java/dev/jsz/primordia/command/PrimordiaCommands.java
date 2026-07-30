@@ -114,22 +114,7 @@ public final class PrimordiaCommands {
 						.then(Commands.literal("mutate")
 								.executes(PrimordiaCommands::mutate))
 						.then(Commands.literal("stats")
-								.executes(PrimordiaCommands::stats))
-						.then(Commands.literal("editor")
-								.executes(PrimordiaCommands::openEditor))));
-	}
-
-	private static int openEditor(CommandContext<CommandSourceStack> ctx) {
-		try {
-			var player = ctx.getSource().getPlayerOrException();
-			dev.jsz.primordia.editor.EditorServer.start(player);
-			net.minecraft.util.Util.getPlatform().openUri(dev.jsz.primordia.editor.EditorServer.getUrl());
-			ctx.getSource().sendSuccess(() -> Component.literal("Opening 3D Spore Creature Editor at " + dev.jsz.primordia.editor.EditorServer.getUrl()).withStyle(ChatFormatting.GREEN), false);
-			return 1;
-		} catch (Exception e) {
-			ctx.getSource().sendFailure(Component.literal("Must be run by a player"));
-			return 0;
-		}
+								.executes(PrimordiaCommands::stats))));
 	}
 
 	// ------------------------------------------------------------------ actions

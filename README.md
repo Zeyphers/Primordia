@@ -1,5 +1,7 @@
 # Primordia
 
+![Primordia](https://cdn.modrinth.com/data/cached_images/5b3d6c167245848de481471729e64fb9cb9a7e2f.png)
+
 Spore's core loop, in Minecraft. Creatures are not modelled — they are **grown from a genome**,
 every time, at runtime. A gene vector becomes a skeleton, the skeleton becomes a signed distance
 field, the field becomes a mesh, and the mesh walks on procedurally animated legs solved with
@@ -14,19 +16,24 @@ Nothing about a creature is authored. There are no models, no textures, no anima
 
 **Milestone 1 is implemented and in-game verified**: a genome spawns a creature that is generated,
 meshed, coloured, and walks with full procedural IK. Taming, saddling, and riding work. Predation,
-diet-based temperament, foraging, and breeding are functional.
+diet-based temperament, foraging, and breeding are functional. Wall-dwelling archetypes (six or
+more legs, low mass) climb with real pathfinding rather than scripted steering — the navigation
+graph gains climb edges instead of the creature simply being told which way is "up."
 
-**Verified:** compiles clean against Minecraft 1.21.1, and all 101 tests pass — covering genome
-serialisation, body-plan generation over hundreds of random genomes, bind-pose skinning
-correctness, IK convergence, mesh validity, knee stability, limb separation and intersection,
-archetype coverage, ornament reachability, the hinged jaw, dentition, quad winding, the energy
-economy the food web is gated on, and the region ledger the world's memory lives in.
+**Verified:** compiles clean against Minecraft **26.2** on Fabric, and the full test suite passes —
+covering genome serialisation, body-plan generation over hundreds of random genomes, bind-pose
+skinning correctness, IK convergence, mesh validity, knee stability, limb separation and
+intersection, archetype coverage, ornament reachability, the hinged jaw, dentition, quad winding,
+the energy economy the food web is gated on, the region ledger the world's memory lives in, and
+wall-surface climb pathfinding.
 
 New here: start with [`HANDOFF.md`](HANDOFF.md) for the current state and how to build and run, and
 read [`docs/PITFALLS.md`](docs/PITFALLS.md) before changing the geometry pipeline — it lists the
 failure modes that leave the body plan valid and the tests green while the creature is wrong.
 
-**Current deployed version:** `primordia-0.1.2.jar` in Modrinth App profile.
+**Release: `Primordia_1.0.0_26.2.jar`**, built for Minecraft 26.2 / Fabric Loader 0.19.3 / Fabric
+API 0.155.2+26.2. This release ships without the Preservation Case block — its dedicated block
+class and assets were pulled for this cut and will return once finished.
 
 | Milestone | What it delivers | State |
 |---|---|---|
@@ -58,11 +65,13 @@ is the hardest thing to change later — everything is keyed by it.
 
 ## Requirements
 
-- **JDK 21** — required by Minecraft 1.21.
-- Minecraft **1.21.1**, Fabric Loader 0.16+, Fabric API.
+- **JDK 25** — required by Minecraft 26.2.
+- **Gradle 9.6.1+** — Loom 1.17.17 declares a plugin API version of 9.5.0 and fails variant
+  resolution against anything older (including the 9.4.0 that Fabric's own 26.1 notes suggest).
+- Minecraft **26.2**, Fabric Loader **0.19.3+**, Fabric API **0.155.2+26.2**.
 
-This machine has no system JDK, so `setup-toolchain.ps1` installs a portable Temurin JDK 21 and
-Gradle into `dev\tools\` without needing admin rights. Run it once:
+`setup-toolchain.ps1` installs a portable Temurin JDK 25 and Gradle 9.6.1 into `dev\tools\` without
+needing admin rights, and is safe to re-run — existing installs are detected and skipped:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File setup-toolchain.ps1
@@ -71,19 +80,29 @@ powershell -ExecutionPolicy Bypass -File setup-toolchain.ps1
 ## Build
 
 ```powershell
-$env:JAVA_HOME = 'C:\Users\jacob.szczepaniak\dev\tools\jdk-21'
-C:\Users\jacob.szczepaniak\dev\tools\gradle-8.10\bin\gradle.bat build
+$env:JAVA_HOME = 'C:\Users\jacob.szczepaniak\dev\tools\jdk-25'
+C:\Users\jacob.szczepaniak\dev\tools\gradle-9.6.1\bin\gradle.bat build
 ```
 
-The built jar lands in `build/libs/`. To deploy, copy it to the Modrinth App profile:
+`build` runs `compileJava`, bundles resources, and executes the test suite before producing:
+
+- `build/libs/primordia-<version>.jar` — the mod
+- `build/libs/primordia-<version>-sources.jar` — sources jar, generated alongside it
+
+The **1.0.0** release on the Releases page was built from this exact pipeline off `mod_version =
+0.2.0-26.2-alpha.24` and republished as `Primordia_1.0.0_26.2.jar`; the version string embedded in
+`fabric.mod.json` therefore still reads `0.2.0-26.2-alpha.24` even though the release is tagged
+1.0.0 — the tag is the release name, not a rewrite of the build's own version.
+
+To deploy locally, copy the built jar to the Modrinth App profile:
 
 ```
 C:\Users\jacob.szczepaniak\AppData\Roaming\ModrinthApp\profiles\Primordia\mods\
 ```
 
-Previous versions are archived in the `old_versions/` subfolder within that directory.
-Launch the game from the **Modrinth App** (not `gradle runClient`, which spawns an
-invisible window on this machine).
+Keep exactly one `primordia-*.jar` in that folder — older ones are archived to `old_versions/`
+within the same directory. Launch the game from the **Modrinth App** (not `gradle runClient`,
+which spawns an invisible window on this machine).
 
 ## Try it
 
@@ -94,16 +113,71 @@ In-game, with cheats on:
 | `/primordia spawn` | One random creature |
 | `/primordia spawn 10` | Ten of them |
 | `/primordia spawn 5 1234` | Five, reproducibly, from seed 1234 |
+| `/primordia spawn 5 cave_crawler 1234` | Five of one archetype, from seed 1234 |
+| `/primordia test` | A grid of test creatures for visual comparison |
+| `/primordia test walk` / `stand` | Toggle whether the test grid animates |
 | `/primordia info` | Full breakdown of the nearest creature's genome, body and ecological state |
+| `/primordia collect 48` | File every creature within radius into your field guide |
 | `/primordia region` | The ledger for the region you are standing in: populations, trends, vegetation |
 | `/primordia breed` | Cross the two nearest creatures; reports genetic divergence |
 | `/primordia mutate` | Spawn a mutated clone of the nearest creature |
 | `/primordia clear 32` | Remove creatures within 32 blocks |
 | `/primordia stats` | Mesh cache and bake queue depth |
+| `/primordia editor` | Opens the browser-based 3D genome/body editor |
 
 `/primordia breed` is the interesting one — run it repeatedly on a pair and their descendants to
 watch a lineage drift, and eventually to see `(NEW LINEAGE)` when the offspring diverge past the
 speciation threshold.
+
+## Options within the mod
+
+Everything below lives in `config/primordia.json` (client-only — nothing here is synchronised, so
+two players can run different settings and still see the same animals) and is editable in-game
+through the settings screen registered with **Mod Menu**, if installed.
+
+**Quality presets** — `Potato`, `Low`, `Balanced` (default), `High`, `Ultra`, or `Custom` once any
+individual slider is touched. A preset moves two independent axes together as a starting point:
+
+| Preset | Near/Mid/Far/Distant resolution | Near/Mid/Far budget | Max resolution | Mesh cache | Full-IK tier |
+|---|---|---|---|---|---|
+| Potato | 20 / 14 / 10 / 6 | 3 / 6 / 15 | 40 | 192 | NEAR only |
+| Low | 28 / 18 / 12 / 8 | 5 / 12 / 25 | 56 | 256 | NEAR only |
+| Balanced | 40 / 26 / 15 / 9 | 8 / 18 / 40 | 80 | 384 | NEAR + MID |
+| High | 48 / 34 / 20 / 12 | 16 / 36 / 80 | 96 | 768 | NEAR + MID |
+| Ultra | 60 / 44 / 28 / 16 | 32 / 72 / 160 | 128 | 1536 | NEAR + MID + FAR |
+
+**Individual settings**, editable on their own (which drops the preset to `Custom`):
+
+- **Creatures per tier** (`nearCreatures`, `midCreatures`, `farCreatures`) — how many creatures
+  draw at full tier detail before the rest spill down to the next tier.
+- **Tier distances** (`nearDistance`, `midDistance`, `farDistance`) — camera distance, in blocks,
+  where each tier gives way to the next.
+- **Tier resolutions** (`nearDetail`, `midDetail`, `farDetail`, `distantDetail`) — Surface Nets
+  cells along a creature's longest axis at each tier. A floor, not a fixed value: the mesher raises
+  it for any genome whose limbs are thinner than one cell, up to `detailCeiling`.
+- **Detail ceiling** (`detailCeiling`) — hard cap on cells per axis regardless of how thin a
+  creature's limbs are, so one slender genome can't demand a bake that takes seconds.
+- **Mesh cache size** (`meshCacheSize`) — distinct baked meshes held in memory before eviction.
+- **Full-IK tier** (`fullIkTier`) — the coarsest tier that still runs full inverse kinematics;
+  tiers below it fall back to a canned animation cycle.
+- **Normal smoothing** (`normalSmoothing`, 0–100%) — blend between the analytic SDF gradient and
+  the mesh's own vertex normals.
+- **Emissive glow** (`emissiveGlow`) — whether bioluminescent creatures actually emit light.
+- **Sharp shading** (`sharpShading`) — each face gets its own unshared normal instead of a shared,
+  averaged one. A renderer-only switch; the mesh itself is identical either way.
+- **Flat face colour** (`flatFaceColour`) — each face is coloured with the mean of its corners
+  instead of interpolating a gradient across it. Matches the look of voxel mode; wrong on a smooth
+  body, where it flattens what should read as curved shading.
+- **Voxel mode** (`voxelMode`) — snaps the mesh to a world-aligned grid instead of following the
+  SDF smoothly, so creatures read as built from blocks rather than as sculpted. Off leaves the
+  usual smooth Surface Nets output.
+- **Voxel size** (`voxelPixels`, 0.25–2 Minecraft pixels, quarter-pixel steps) — edge length of
+  each voxel when voxel mode is on, measured in world pixels (16 px = 1 block) rather than as a
+  fraction of the creature, so two different-sized creatures standing together are built from
+  voxels of the same physical size.
+
+To change the single global tuning point for the LOD system itself (rather than a per-player
+setting), see `BUDGET` and `RESOLUTION` in `mesh/LodTier` — covered under Performance below.
 
 ---
 
@@ -218,7 +292,7 @@ point; nothing else needs to change.
 ## Tests
 
 ```powershell
-C:\Users\jacob.szczepaniak\dev\tools\gradle-8.10\bin\gradle.bat test
+C:\Users\jacob.szczepaniak\dev\tools\gradle-9.6.1\bin\gradle.bat test
 ```
 
 The suite fuzzes hundreds of random genomes against the invariants that have no visual tell:
@@ -260,14 +334,22 @@ The suite fuzzes hundreds of random genomes against the invariants that have no 
 
 ## Known rough edges
 
-- `CreatureRenderer` uses vanilla's `textures/misc/white.png`. If a future Minecraft version drops
-  that asset, creatures render magenta; ship a 1×1 white PNG and repoint `TEXTURE`.
-- Version-sensitive API surface, if porting off 1.21.1: `EntityType.Builder#build(String)` takes a
-  `RegistryKey` from 1.21.2, `writeCustomDataToNbt` is renamed in 1.21.5, and the
-  `EntityAttributes.GENERIC_*` constants lose their prefix in 1.21.2.
+- `CreatureRenderer` bundles its own `assets/primordia/textures/misc/white.png` rather than
+  depending on vanilla's, after that asset moved during the 26.2 port; if a future version relocates
+  or removes it again, creatures render magenta until `TEXTURE` is repointed.
+- The Preservation Case block is not in this release — its dedicated block class, container
+  behaviour, and assets were pulled from `1.0.0` and will return once finished. `SimpleContainerBlock`
+  and `SimpleContainerBlockEntity`, the generic container classes it and the (already-removed)
+  Genome Bank shared, were removed alongside it since nothing else used them.
 - Grazing feeds a herbivore but does not yet consume the block, so plant food is effectively
   infinite. Consuming it needs a regional stock to debit, which is Phase B in `docs/ECOLOGY.md`.
 - Carcasses are `CreatureEntity` instances and count against the `CREATURE` spawn cap while they
   last. A heavily-hunted area may briefly suppress its own spawning.
 - Skinning is CPU-side. Moving it to a GPU vertex shader with a bone palette is the next big
   performance lever if creature counts need to go well past the current budget.
+
+---
+
+## License
+
+[CC BY-NC 4.0](LICENSE) — sharing and adapting is fine with attribution; commercial use is not.

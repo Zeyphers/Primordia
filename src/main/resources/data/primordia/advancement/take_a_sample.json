@@ -1,7 +1,7 @@
 {
   "parent": "primordia:something_moves",
   "display": {
-    "icon": { "id": "primordia:tissue_sample" },
+    "icon": { "id": "primordia:tissue_sample", "components": { "minecraft:custom_data": {} } },
     "title": { "text": "Under the Skin" },
     "description": { "text": "Take a tissue sample from a living creature. It will notice." },
     "frame": "task",

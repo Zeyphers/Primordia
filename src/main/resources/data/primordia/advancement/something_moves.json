@@ -4,6 +4,7 @@
     "icon": { "id": "primordia:field_guide" },
     "title": { "text": "Something Moves" },
     "description": { "text": "You saw a creature that nothing designed. Find out what it is." },
+    "background": "primordia:gui/advancements/backgrounds/brown_gradient",
     "frame": "task",
     "show_toast": true,
     "announce_to_chat": false,

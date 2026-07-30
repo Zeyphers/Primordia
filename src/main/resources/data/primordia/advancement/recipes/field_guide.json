@@ -1,0 +1,11 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_book": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": { "items": [ { "items": "minecraft:book" } ] }
+    }
+  },
+  "requirements": [[ "has_book" ]],
+  "rewards": { "recipes": [ "primordia:field_guide" ] }
+}

@@ -10,5 +10,6 @@
     "hidden": false
   },
   "criteria": { "trigger": { "trigger": "minecraft:inventory_changed", "conditions": { "items": [ { "items": "primordia:tissue_sample" } ] } } },
-  "requirements": [[ "trigger" ]]
+  "requirements": [[ "trigger" ]],
+  "rewards": { "recipes": [ "primordia:basic_gene_lab" ] }
 }

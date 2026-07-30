@@ -5,7 +5,7 @@
 	"name": "Primordia",
 	"description": "Procedurally generated, evolving creatures. Genomes grow skeletons, skeletons grow SDF bodies, bodies walk with IK, and populations evolve and reshape the world.",
 	"authors": [
-		"jsz"
+		"Zeypher"
 	],
 	"icon": "assets/primordia/icon.png",
 	"license": "CC-BY-NC-4.0",

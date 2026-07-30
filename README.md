@@ -7,7 +7,7 @@ field, the field becomes a mesh, and the mesh walks on procedurally animated leg
 inverse kinematics. Populations then breed, mutate, diverge into lineages, and reshape the world
 they live in.
 
-Nothing about a creature is authored. There are no models, no textures, no animation files.
+Nothing about a creature is authored. **There are no models, no textures, no animation files**.
 
 ---
 

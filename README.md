@@ -1,4 +1,3 @@
-# Primordia
 
 ![Primordia](https://cdn.modrinth.com/data/cached_images/5b3d6c167245848de481471729e64fb9cb9a7e2f.png)
 

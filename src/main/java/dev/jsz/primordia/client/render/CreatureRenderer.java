@@ -1,8 +1,10 @@
 package dev.jsz.primordia.client.render;
 
+import dev.jsz.primordia.Primordia;
 import dev.jsz.primordia.anim.AnimationContext;
 import dev.jsz.primordia.anim.CreatureAnimator;
 import dev.jsz.primordia.body.BodyPlan;
+import dev.jsz.primordia.body.BoneDef;
 import dev.jsz.primordia.client.WorldGroundProbe;
 import dev.jsz.primordia.client.config.PrimordiaConfig;
 import dev.jsz.primordia.entity.CreatureActivity;
@@ -14,18 +16,18 @@ import dev.jsz.primordia.mesh.GenomeMeshCache;
 import dev.jsz.primordia.mesh.LodTier;
 import dev.jsz.primordia.mesh.MeshData;
 import dev.jsz.primordia.mesh.SkinnedMesh;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.OverlayTexture;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.render.entity.EntityRenderer;
-import net.minecraft.client.render.entity.EntityRendererFactory;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.RotationAxis;
-import net.minecraft.util.math.Vec3d;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.mojang.math.Axis;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.entity.EntityRenderer;
+import net.minecraft.client.renderer.entity.EntityRendererProvider;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.Mth;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Renders a procedural creature: pick a LOD tier, fetch the baked mesh for the genome, run the
@@ -38,25 +40,50 @@ import net.minecraft.util.math.Vec3d;
  * Colour lives in the vertices, so every creature in the world shares one flat white texture and
  * therefore one render layer and one draw batch, no matter how many distinct species are on
  * screen.
+ * <p>
+ * <b>Two phases.</b> Since 1.21.2 the entity is only reachable during {@link #extractRenderState},
+ * and drawing happens later in {@link #submit} against nothing but the state object. Everything
+ * that reads the entity — pose, gait, LOD choice, skinning — therefore happens in extract, and
+ * submit is only transforms and vertices. Custom geometry reaches the pipeline through
+ * {@code submitCustomGeometry}, which hands back a {@link VertexConsumer} at draw time; that is
+ * the one door left open for a mesh vanilla knows nothing about.
  */
-public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
+public class CreatureRenderer extends EntityRenderer<CreatureEntity, CreatureRenderState> {
 	/**
-	 * Vanilla's 16×16 pure white texture. Vertex colours multiply against it, so it acts as a
-	 * neutral base. If a future version drops this asset, ship a 1×1 white PNG and point here.
+	 * A 16×16 pure white sheet. Vertex colours multiply against it, so it acts as a neutral base.
+	 * <p>
+	 * This used to be vanilla's {@code minecraft:textures/misc/white.png}, and the note here said to
+	 * ship our own if a future version ever dropped it. 26.2 dropped it, and every creature rendered
+	 * untextured — so the asset now lives in this mod, where nothing upstream can take it away.
 	 */
-	private static final Identifier TEXTURE = Identifier.ofVanilla("textures/misc/white.png");
+	static final Identifier TEXTURE = Primordia.id("textures/misc/white.png");
 
-	/** Shared across every creature: rendering is single-threaded and each is emitted in full. */
-	private static final SkinnedMesh SKINNED = new SkinnedMesh();
+	/**
+	 * Fraction of its colour a carcass keeps.
+	 * <p>
+	 * A dead creature is drawn from the same mesh and the same palette as the live one, and lying on
+	 * its side is not always enough to tell them apart at a glance — particularly for a resting
+	 * animal, which is also horizontal. Draining most of the colour separates the two immediately
+	 * without changing the silhouette, and reads as the thing it is meant to.
+	 * <p>
+	 * Not zero on purpose: a fully grey body loses the markings that identify which species it was,
+	 * which is exactly the question a player standing over a carcass is asking.
+	 */
+	private static final float CARCASS_CHROMA = 0.3f;
+
+	/** Rec. 709 luminance weights, so desaturation preserves perceived brightness. */
+	private static final float LUMA_R = 0.2126f, LUMA_G = 0.7152f, LUMA_B = 0.0722f;
+
 	private static final LodTier.Budget BUDGET = new LodTier.Budget();
 
+	/** Scratch for the extract pass only, which is single-threaded and consumes it immediately. */
 	private final AnimationContext context = new AnimationContext();
 	private final WorldGroundProbe probe = new WorldGroundProbe();
 
-	public CreatureRenderer(EntityRendererFactory.Context ctx) {
+	public CreatureRenderer(EntityRendererProvider.Context ctx) {
 		super(ctx);
 		this.shadowRadius = 0.5f;
-		this.shadowOpacity = 0.6f;
+		this.shadowStrength = 0.6f;
 	}
 
 	/** Resets the per-frame LOD budget. Hooked to the start of world rendering. */
@@ -65,26 +92,25 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 	}
 
 	@Override
-	public Identifier getTexture(CreatureEntity entity) {
-		return TEXTURE;
+	public CreatureRenderState createRenderState() {
+		return new CreatureRenderState();
 	}
 
 	@Override
-	public void render(CreatureEntity entity, float yaw, float tickDelta, MatrixStack matrices,
-	                   VertexConsumerProvider vertexConsumers, int light) {
+	public void extractRenderState(CreatureEntity entity, CreatureRenderState state, float partialTick) {
+		super.extractRenderState(entity, state, partialTick);
+
+		state.ready = false;
 		Genome genome = entity.getGenome();
 		CreatureAnimator animator = entity.getOrCreateAnimator();
 		// The genome arrives a tick or two after the spawn packet; until then there is nothing to draw.
-		if (genome == null || animator == null) {
-			super.render(entity, yaw, tickDelta, matrices, vertexConsumers, light);
-			return;
-		}
+		if (genome == null || animator == null) return;
 
 		BodyPlan plan = animator.skeleton().plan;
-		this.shadowRadius = MathHelper.clamp(plan.width() * 0.5f, 0.25f, 2.0f);
+		state.genome = genome;
+		state.plan = plan;
+		this.shadowRadius = Mth.clamp(plan.width() * 0.5f * entity.getGrowth(), 0.25f, 2.0f);
 
-		Vec3d camera = MinecraftClient.getInstance().gameRenderer.getCamera().getPos();
-		double distanceSq = camera.squaredDistanceTo(entity.getX(), entity.getY(), entity.getZ());
 		// Test specimens render at full detail regardless of distance or crowding, for two
 		// reasons. Comparison: a grid whose near rows are finely meshed and whose far rows are
 		// coarse cannot be used to judge a change, because half the difference on screen is the
@@ -93,63 +119,106 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 		// pose no matter what the walk flag said — which is exactly what "the walk command
 		// doesn't work" looked like. Thirty creatures at near detail is the cost of the rig, and
 		// the quality presets are there to pay it.
-		int tier = entity.isPosing() ? LodTier.NEAR : BUDGET.allocate(distanceSq);
+		int tier = entity.isPosing() ? LodTier.NEAR : BUDGET.allocate(state.distanceToCameraSq);
 
 		MeshData mesh = resolveMesh(genome, tier);
 		if (mesh == null || mesh.quadCount == 0) {
 			// Still baking. Skipping a frame is far better than stalling the render thread.
-			super.render(entity, yaw, tickDelta, matrices, vertexConsumers, light);
 			return;
 		}
+		state.mesh = mesh;
 
-		fillContext(entity, yaw, tickDelta, tier);
+		float yaw = Mth.rotLerp(partialTick, entity.yBodyRotO, entity.yBodyRot);
+		state.bodyYawDeg = yaw;
+		// state.climbBlend = entity.getClimbBlend(); // DISABLED: wall climbing commented out
+		state.growth = entity.getGrowth();
+		// Divided through by the growth scale because it is used inside it. Everything else in the
+		// submit pass is a model measurement that scales with the body; this one is a world measurement
+		// off the collision box, and would otherwise be applied twice on a juvenile.
+		state.halfWidth = entity.getBbWidth() * 0.5f / state.growth;
+		state.carcass = entity.isCarcass() || entity.isDeadOrDying() || entity.getHealth() <= 0f;
+
+		fillContext(entity, yaw, partialTick, tier);
 		animator.update(context);
-		SKINNED.skin(mesh, animator.skeleton());
+		// Skinned into this creature's own buffer, because submit runs long after extract.
+		state.skinned.skin(mesh, animator.skeleton());
+		state.ready = true;
+	}
 
-		matrices.push();
+	@Override
+	public void submit(CreatureRenderState state, PoseStack poseStack, SubmitNodeCollector collector,
+	                   CameraRenderState cameraState) {
+		if (!state.ready) {
+			super.submit(state, poseStack, collector, cameraState);
+			return;
+		}
+		BodyPlan plan = state.plan;
+
+		poseStack.pushPose();
 		// Model space is built facing +Z; Minecraft yaw 0 also faces +Z but increases toward -X,
 		// so the model rotates by the negated yaw.
-		matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-yaw));
-
-		float climb = entity.getClimbBlend();
-		if (climb > 0.01f) {
-			// Tip the whole animal onto the wall it is holding.
-			//
-			// Minecraft's own climbers do not do this — a spider goes up a wall standing upright,
-			// which is fine for a silhouette made of boxes and looks wrong on something with legs
-			// that visibly reach for a surface. Here the body turns until its feet are on the wall
-			// and its back is to the room, which is what a climbing animal looks like.
-			//
-			// A pitch of -90° about the model's own X takes forward to up and up to backward: the
-			// creature ends up facing the way it is climbing, lying against the surface. The
-			// creature's yaw already points into the wall, because ClimbWallGoal walks it there and
-			// keeps it looking at it, so no separate wall direction is needed here.
-			matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(-90f * climb));
-			// Rotating about the feet would swing the body out into the room. Lifting to hip height
-			// first turns it about its own middle, and the drop afterwards settles it against the
-			// surface rather than floating a body's width off it.
-			matrices.translate(0f, plan.hipHeight * 0.5f * climb, 0f);
+		poseStack.mulPose(Axis.YP.rotationDegrees(-state.bodyYawDeg));
+		// Outermost, so every measurement below it stays in model units and shrinks with the body. A
+		// juvenile is the same animal drawn smaller — there is no separate child model, which is the
+		// only way this could work for creatures whose shape is not known until they are born.
+		if (state.growth != 1f) {
+			poseStack.scale(state.growth, state.growth, state.growth);
 		}
-		if (entity.isCarcass()) {
-			// A dead animal lies on its side. Rolling the whole body is the right level to do this
-			// at — the alternative is posing every bone into a heap, which the skeleton has no
-			// concept of and which would need a second solver to look like anything.
+
+		// DISABLED: wall climbing commented out — climb rotation block bypassed.
+		// float climb = state.climbBlend;
+		// if (climb > 0.01f) {
+		//     poseStack.translate(0f, 0f, (state.halfWidth + plan.hipHeight * 0.5f) * climb);
+		//     poseStack.mulPose(Axis.XP.rotationDegrees(-90f * climb));
+		//     poseStack.translate(0f, plan.hipHeight * 0.5f * climb, 0f);
+		// }
+		if (state.carcass) {
+			// A dead animal ends up on its back, legs in the air. Rolling the whole body is the right
+			// level to do this at — the alternative is posing every bone into a heap, which the
+			// skeleton has no concept of and which would need a second solver to look like anything.
 			//
 			// Read bottom-up, which is the order the geometry passes through: drop the trunk from
-			// standing height onto the model origin, roll it over, then lift by half the body's
-			// width so the side it is now lying on meets the ground. Rolling first would swing the
-			// whole animal out sideways, because the model origin is between its feet rather than
+			// standing height onto the model origin, turn it over, then lift by half the body's
+			// thickness so the back it is now lying on meets the ground. Turning first would swing the
+			// whole animal through the floor, because the model origin is between its feet rather than
 			// through the middle of it.
-			matrices.translate(0f, plan.width() * 0.45f, 0f);
-			matrices.multiply(RotationAxis.POSITIVE_Z.rotationDegrees(90f));
-			matrices.translate(0f, -plan.hipHeight, 0f);
+			//
+			poseStack.translate(0f, carcassLift(plan), 0f);
+			poseStack.mulPose(Axis.ZP.rotationDegrees(180f));
+			poseStack.translate(0f, -plan.hipHeight, 0f);
 		}
-		VertexConsumer consumer = vertexConsumers.getBuffer(RenderLayer.getEntityCutoutNoCull(TEXTURE));
-		emit(mesh, matrices.peek(), consumer, light);
-		emitGlow(mesh, matrices.peek(), vertexConsumers);
-		matrices.pop();
 
-		super.render(entity, yaw, tickDelta, matrices, vertexConsumers, light);
+		collector.submitCustomGeometry(poseStack, RenderTypes.entityCutout(TEXTURE),
+				(pose, consumer) -> emit(state, pose, consumer));
+
+		if (PrimordiaConfig.get().emissiveGlow && hasGlow(state.mesh)) {
+			collector.submitCustomGeometry(poseStack, RenderTypes.entityTranslucentEmissive(TEXTURE),
+					(pose, consumer) -> emitGlow(state, pose, consumer));
+		}
+		poseStack.popPose();
+
+		super.submit(state, poseStack, collector, cameraState);
+	}
+
+	/**
+	 * How far a body on its back has to be raised for its spine to rest on the ground.
+	 * <p>
+	 * Turned over, the animal's back is its lowest point, so this is the trunk's dorsal surface
+	 * measured from the hip — read off the spine bone, which carries the trunk's own radius.
+	 * <p>
+	 * Half the bounding box width used to stand in for it, and for anything that holds its legs out
+	 * wide — which is most of them, and all the climbers — that width is mostly legs. The body was
+	 * lifted by half a leg span and lay in the air. The other obvious candidate, the bounding box above
+	 * the hip, is worse: it is measured to the top of the head, so the corpse balances on its skull
+	 * with the spine higher still.
+	 * <p>
+	 * Dorsal plates, fins and horns are not counted and will pass through the floor. That is the right
+	 * way round — a body sunk slightly into the ground reads as a body on the ground, and one hovering
+	 * above it does not.
+	 */
+	private static float carcassLift(BodyPlan plan) {
+		// Lift the flipped body by its dorsal height above the hip so its back rests flat on the ground plane (y = 0).
+		return Math.max(0.1f, plan.boundsMax.y - plan.hipHeight);
 	}
 
 	/**
@@ -168,21 +237,20 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 	}
 
 	private void fillContext(CreatureEntity entity, float yaw, float tickDelta, int tier) {
-		Vec3d pos = entity.getLerpedPos(tickDelta);
+		Vec3 pos = entity.getPosition(tickDelta);
 		context.x = pos.x;
 		context.y = pos.y;
 		context.z = pos.z;
 
-		context.bodyYaw = yaw * MathHelper.RADIANS_PER_DEGREE;
+		context.bodyYaw = yaw * Mth.DEG_TO_RAD;
 
-		float headYaw = MathHelper.lerpAngleDegrees(tickDelta, entity.prevHeadYaw, entity.headYaw);
-		context.lookYaw = MathHelper.wrapDegrees(headYaw - yaw) * MathHelper.RADIANS_PER_DEGREE;
-		context.lookPitch = MathHelper.lerp(tickDelta, entity.prevPitch, entity.getPitch())
-				* MathHelper.RADIANS_PER_DEGREE;
+		float headYaw = Mth.rotLerp(tickDelta, entity.yHeadRotO, entity.yHeadRot);
+		context.lookYaw = Mth.wrapDegrees(headYaw - yaw) * Mth.DEG_TO_RAD;
+		context.lookPitch = Mth.lerp(tickDelta, entity.xRotO, entity.getXRot()) * Mth.DEG_TO_RAD;
 
 		// Per-tick deltas scaled to per-second, which is the unit the animator works in.
-		double dx = entity.getX() - entity.prevX;
-		double dz = entity.getZ() - entity.prevZ;
+		double dx = entity.getX() - entity.xo;
+		double dz = entity.getZ() - entity.zo;
 		context.speed = (float) Math.sqrt(dx * dx + dz * dz) * 20f;
 		// A posed specimen is not moving, so the measured speed is zero and the gait would never
 		// run. Feeding the animator a nominal walking speed cycles the legs on the spot, which is
@@ -202,23 +270,40 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 			context.turnRate = 0f;
 			context.riderSteer = 0f;
 		}
-		context.turnRate = MathHelper.wrapDegrees(entity.bodyYaw - entity.prevBodyYaw)
-				* MathHelper.RADIANS_PER_DEGREE * 20f;
+		context.turnRate = Mth.wrapDegrees(entity.yBodyRot - entity.yBodyRotO) * Mth.DEG_TO_RAD * 20f;
 
 		// Steering intent, only while someone is actually driving. Measured against the body
 		// rather than the head so it survives the head easing that riding already applies.
 		context.riderSteer = 0f;
-		if (entity.getControllingPassenger() instanceof net.minecraft.entity.LivingEntity rider) {
-			context.riderSteer = MathHelper.wrapDegrees(rider.getYaw() - yaw)
-					* MathHelper.RADIANS_PER_DEGREE;
+		if (entity.getControllingPassenger() instanceof net.minecraft.world.entity.LivingEntity rider) {
+			context.riderSteer = Mth.wrapDegrees(rider.getYRot() - yaw) * Mth.DEG_TO_RAD;
 		}
 
-		context.time = (entity.age + tickDelta) / 20f;
-		context.airborne = !entity.isOnGround();
-		context.swimming = entity.isTouchingWater();
+		context.time = (entity.tickCount + tickDelta) / 20f;
+		context.airborne = !entity.onGround();
+		if (entity.isClimbing()) {
+			// A climbing creature has almost no horizontal speed — it is held flat against the wall — and
+			// it is never on the ground, so the gait read it as an animal hanging motionless in mid-air
+			// and froze every leg. Both of the things the walk cycle keys off have to be answered in the
+			// wall's frame instead: it is standing on the surface, and its speed is how fast it is
+			// travelling over it.
+			double climbY = entity.getY() - entity.yo;
+			double climbX = entity.getX() - entity.xo;
+			double climbZ = entity.getZ() - entity.zo;
+			context.speed = (float) Math.sqrt(
+					climbX * climbX + climbY * climbY + climbZ * climbZ) * 20f;
+			context.airborne = false;
+			// Nothing should lean: the turn onto the wall is a whole-body rotation the renderer applies,
+			// and feeding it to the spine as a turn as well banks the creature into the rock.
+			context.turnRate = 0f;
+			context.lookYaw = 0f;
+			context.lookPitch = 0f;
+		}
+		context.swimming = entity.isInWater();
 		// A carcass is fully slack; a sleeping animal is settled but still holding itself together.
-		context.collapse = entity.isCarcass() ? 1f : (entity.isAsleep() ? 0.55f : 0f);
-		if (entity.isCarcass()) {
+		boolean isDead = entity.isCarcass() || entity.isDeadOrDying() || entity.getHealth() <= 0f;
+		context.collapse = isDead ? 1f : (entity.isAsleep() ? 0.55f : 0f);
+		if (isDead) {
 			// Nothing about a body on the ground should read as locomotion, and the gait would
 			// otherwise keep cycling from residual drift in the entity's position.
 			context.speed = 0f;
@@ -227,7 +312,14 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 			context.lookPitch = 0f;
 		}
 		context.tier = tier;
-		context.ground = probe.forWorld(entity.getWorld());
+		// On a wall the surface underfoot is the wall. The world probe deliberately refuses the sides of
+		// blocks — a foot must not glue itself to a passing tree trunk — so a climber asking it where to
+		// stand gets no answer anywhere and the legs fall back to a rescue meant for a foot over a cliff
+		// edge. A flat plane at the creature's own feet is exactly the surface it is on, once the
+		// renderer has turned the body onto the rock.
+		context.ground = entity.isClimbing()
+				? dev.jsz.primordia.anim.GroundProbe.flat((float) context.y)
+				: probe.forWorld(entity.level());
 
 		// Activity progress is timed locally from when the client first saw the state change,
 		// rather than synced. Attacks last well under a second, so a tick of network skew is
@@ -269,13 +361,20 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 	 */
 	private static final float GLOW_QUAD_THRESHOLD = 0.12f;
 
-	private void emit(MeshData mesh, MatrixStack.Entry entry, VertexConsumer consumer, int light) {
-		float[] positions = SKINNED.positions();
-		float[] normals = SKINNED.normals();
+	/** Scratch for the current face's normal and colour. Drawing is single-threaded. */
+	private final org.joml.Vector3f faceNormal = new org.joml.Vector3f();
+	private final org.joml.Vector3f faceColour = new org.joml.Vector3f();
+
+	private void emit(CreatureRenderState state, PoseStack.Pose pose, VertexConsumer consumer) {
+		MeshData mesh = state.mesh;
+		SkinnedMesh skinned = state.skinned;
+		float[] positions = skinned.positions();
+		float[] normals = skinned.normals();
 		float[] colors = mesh.colors;
 		float[] emissive = mesh.emissive;
 		int[] quads = mesh.quads;
-		int overlay = OverlayTexture.DEFAULT_UV;
+		int overlay = OverlayTexture.NO_OVERLAY;
+		int light = state.lightCoords;
 
 		// Sharp shading hands all four corners of a face the face's own normal instead of their
 		// individual smooth ones. Nothing about the mesh changes — this loop already emits four
@@ -283,6 +382,11 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 		PrimordiaConfig config = PrimordiaConfig.get();
 		boolean sharp = config.sharpShading;
 		boolean flatColour = config.flatFaceColour;
+
+		// Colour drains out of a body once it is dead. Hoisted out of the loop because it is one
+		// value for the whole creature, and left at exactly 1 for the living so the arithmetic below
+		// is skipped entirely rather than multiplying every vertex by one.
+		float chroma = state.carcass ? CARCASS_CHROMA : 1f;
 
 		for (int i = 0; i < quads.length; i += 4) {
 			if (sharp) {
@@ -312,19 +416,38 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 				float cb = flatColour ? faceColour.z : colors[p + 2];
 				float ce = flatColour ? faceEmissive : emissive[v];
 
-				consumer.vertex(entry, positions[p], positions[p + 1], positions[p + 2])
-						.color(cr, cg, cb, 1f)
-						.texture(u, t)
-						.overlay(overlay)
-						.light(emissiveLight(light, ce))
-						.normal(entry, nx, ny, nz);
+				if (chroma < 1f) {
+					// Pulled toward its own luminance rather than toward flat grey, so a pale animal
+					// and a dark one keep the difference between them and only the colour goes out of
+					// both. Weights are Rec. 709, which is what makes the grey match the brightness
+					// the eye reads rather than the average of the channels.
+					float luma = cr * LUMA_R + cg * LUMA_G + cb * LUMA_B;
+					cr = luma + (cr - luma) * chroma;
+					cg = luma + (cg - luma) * chroma;
+					cb = luma + (cb - luma) * chroma;
+				}
+
+				consumer.addVertex(pose, positions[p], positions[p + 1], positions[p + 2])
+						.setColor(cr, cg, cb, 1f)
+						.setUv(u, t)
+						.setOverlay(overlay)
+						.setLight(emissiveLight(light, ce))
+						.setNormal(pose, nx, ny, nz);
 			}
 		}
 	}
 
-	/** Scratch for the current face's normal and colour. Rendering is single-threaded, as {@link #SKINNED} is. */
-	private final org.joml.Vector3f faceNormal = new org.joml.Vector3f();
-	private final org.joml.Vector3f faceColour = new org.joml.Vector3f();
+	/** True if any quad is emissive enough to be worth a second pass. */
+	private static boolean hasGlow(MeshData mesh) {
+		float[] emissive = mesh.emissive;
+		int[] quads = mesh.quads;
+		for (int i = 0; i < quads.length; i += 4) {
+			float strength = (emissive[quads[i]] + emissive[quads[i + 1]]
+					+ emissive[quads[i + 2]] + emissive[quads[i + 3]]) * 0.25f;
+			if (strength > GLOW_QUAD_THRESHOLD) return true;
+		}
+		return false;
+	}
 
 	/**
 	 * Draws the bioluminescent parts again on the emissive render layer.
@@ -341,40 +464,32 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 	 * quads opaquely, so this only has to add the light on top. Quads are selected whole — a quad
 	 * is either glowing or it is not — because the layer switch cannot be made per vertex.
 	 */
-	private void emitGlow(MeshData mesh, MatrixStack.Entry entry, VertexConsumerProvider providers) {
+	private void emitGlow(CreatureRenderState state, PoseStack.Pose pose, VertexConsumer glow) {
+		MeshData mesh = state.mesh;
+		SkinnedMesh skinned = state.skinned;
 		float[] emissive = mesh.emissive;
-		if (!PrimordiaConfig.get().emissiveGlow) return;
-
-		float[] positions = SKINNED.positions();
-		float[] normals = SKINNED.normals();
+		float[] positions = skinned.positions();
+		float[] normals = skinned.normals();
 		float[] colors = mesh.colors;
 		int[] quads = mesh.quads;
 
-		VertexConsumer glow = null;
 		for (int i = 0; i < quads.length; i += 4) {
 			float strength = (emissive[quads[i]] + emissive[quads[i + 1]]
 					+ emissive[quads[i + 2]] + emissive[quads[i + 3]]) * 0.25f;
 			if (strength <= GLOW_QUAD_THRESHOLD) continue;
 
-			// Deferred so a creature with no light organs never touches the layer at all, which
-			// keeps it out of the buffer and out of the pack's bloom pass.
-			if (glow == null) {
-				glow = providers.getBuffer(RenderLayer.getEntityTranslucentEmissive(TEXTURE));
-			}
-
 			for (int k = 0; k < 4; k++) {
 				int v = quads[i + k];
 				int p = v * 3;
-				int corner = k;
-				float u = (corner == 1 || corner == 2) ? UV_HI : UV_LO;
-				float t = corner >= 2 ? UV_HI : UV_LO;
+				float u = (k == 1 || k == 2) ? UV_HI : UV_LO;
+				float t = k >= 2 ? UV_HI : UV_LO;
 
-				glow.vertex(entry, positions[p], positions[p + 1], positions[p + 2])
-						.color(colors[p], colors[p + 1], colors[p + 2], strength)
-						.texture(u, t)
-						.overlay(OverlayTexture.DEFAULT_UV)
-						.light(FULL_BRIGHT)
-						.normal(entry, normals[p], normals[p + 1], normals[p + 2]);
+				glow.addVertex(pose, positions[p], positions[p + 1], positions[p + 2])
+						.setColor(colors[p], colors[p + 1], colors[p + 2], strength)
+						.setUv(u, t)
+						.setOverlay(OverlayTexture.NO_OVERLAY)
+						.setLight(FULL_BRIGHT)
+						.setNormal(pose, normals[p], normals[p + 1], normals[p + 2]);
 			}
 		}
 	}
@@ -386,10 +501,10 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity> {
 	 */
 	private static int emissiveLight(int light, float emissive) {
 		if (emissive <= 0.02f) return light;
-		if (!dev.jsz.primordia.client.config.PrimordiaConfig.get().emissiveGlow) return light;
+		if (!PrimordiaConfig.get().emissiveGlow) return light;
 		int block = light & 0xFFFF;
 		int sky = (light >>> 16) & 0xFFFF;
-		int lit = Math.round(MathHelper.lerp(Math.min(emissive, 1f), block, FULL_BLOCK_LIGHT));
+		int lit = Math.round(Mth.lerp(Math.min(emissive, 1f), block, FULL_BLOCK_LIGHT));
 		return (sky << 16) | Math.max(block, lit);
 	}
 }

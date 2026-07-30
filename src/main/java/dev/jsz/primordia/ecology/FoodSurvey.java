@@ -2,10 +2,10 @@ package dev.jsz.primordia.ecology;
 
 import dev.jsz.primordia.body.DietGroup;
 import dev.jsz.primordia.entity.CreatureEntity;
-import net.minecraft.registry.tag.BlockTags;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.world.World;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.level.Level;
 
 /**
  * Measures how much food a patch of world can supply, and therefore how large an animal it can
@@ -34,22 +34,22 @@ public final class FoodSurvey {
 	/**
 	 * Vegetation density in the surrounding area, roughly 0 (barren) to 1 (jungle floor).
 	 */
-	public static float plantDensity(World world, BlockPos origin) {
+	public static float plantDensity(Level world, BlockPos origin) {
 		int sampled = 0;
 		int edible = 0;
-		BlockPos.Mutable cursor = new BlockPos.Mutable();
+		BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 
 		for (int dx = -RADIUS; dx <= RADIUS; dx += STEP) {
 			for (int dz = -RADIUS; dz <= RADIUS; dz += STEP) {
 				for (int dy = -HEIGHT; dy <= HEIGHT; dy += STEP) {
 					cursor.set(origin.getX() + dx, origin.getY() + dy, origin.getZ() + dz);
-					if (!world.isChunkLoaded(cursor)) continue;
+					if (!world.hasChunkAt(cursor)) continue;
 					sampled++;
 					var state = world.getBlockState(cursor);
-					if (state.isIn(BlockTags.REPLACEABLE_BY_TREES)
-							|| state.isIn(BlockTags.LEAVES)
-							|| state.isIn(BlockTags.FLOWERS)
-							|| state.isIn(BlockTags.CROPS)) {
+					if (state.is(BlockTags.REPLACEABLE_BY_TREES)
+							|| state.is(BlockTags.LEAVES)
+							|| state.is(BlockTags.FLOWERS)
+							|| state.is(BlockTags.CROPS)) {
 						edible++;
 					}
 				}
@@ -61,15 +61,15 @@ public final class FoodSurvey {
 	}
 
 	/** Prey availability for hunters: the biomass of smaller creatures within range. */
-	public static float preyDensity(World world, CreatureEntity hunter) {
-		Box box = hunter.getBoundingBox().expand(RADIUS, HEIGHT, RADIUS);
+	public static float preyDensity(Level world, CreatureEntity hunter) {
+		AABB box = hunter.getBoundingBox().inflate(RADIUS, HEIGHT, RADIUS);
 		var plan = hunter.getBodyPlan();
 		float hunterMass = plan == null ? 0.2f : plan.mass;
 
 		float biomass = 0f;
 		// Carcasses are food, but they are not a standing prey population — counting them would
 		// report a valley as well stocked precisely because everything in it has been killed.
-		for (CreatureEntity other : world.getEntitiesByClass(CreatureEntity.class, box,
+		for (CreatureEntity other : world.getEntitiesOfClass(CreatureEntity.class, box,
 				e -> e != hunter && e.isAlive() && !e.isCarcass())) {
 			var theirs = other.getBodyPlan();
 			if (theirs == null || theirs.mass >= hunterMass * 0.85f) continue;
@@ -84,7 +84,7 @@ public final class FoodSurvey {
 	 * Carnivores get a lower ceiling from the same landscape: a food chain loses most of its energy
 	 * at each step, so predators are always rarer and smaller than the herbivores beneath them.
 	 */
-	public static float carryingCapacity(World world, BlockPos origin, DietGroup diet, float preyDensity) {
+	public static float carryingCapacity(Level world, BlockPos origin, DietGroup diet, float preyDensity) {
 		float plants = plantDensity(world, origin);
 		return switch (diet) {
 			case HERBIVORE -> 0.05f + plants * 1.6f;

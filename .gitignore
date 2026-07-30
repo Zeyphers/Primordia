@@ -24,3 +24,9 @@ remappedSrc/
 
 # runtime
 logs/
+
+# scratch from the 26.2 port: captured compiler output and one-off API probes
+build_errors.log
+build_errors_full.txt
+capture_errors.ps1
+check_api*.ps1

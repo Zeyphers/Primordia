@@ -3,7 +3,7 @@ package dev.jsz.primordia;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.lab.GuideData;
 import dev.jsz.primordia.lab.Phylogeny;
-import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.CompoundTag;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class PhylogenyLayoutTest {
 
 	/** Files {@code count} specimens of a stock drifted {@code drift} from a founder. */
-	private static void fileStock(NbtCompound stack, Genome founder, long lineage,
+	private static void fileStock(CompoundTag stack, Genome founder, long lineage,
 	                              float drift, int count, Random random) {
 		float[] values = founder.copyValues();
 		for (int i = 0; i < values.length; i++) {
@@ -44,7 +44,7 @@ class PhylogenyLayoutTest {
 	@Test
 	void everyFiledBloodlineAppearsExactlyOnceInTheTree() {
 		Random random = new Random(2024);
-		NbtCompound stack = new NbtCompound();
+		CompoundTag stack = new CompoundTag();
 		Genome founder = Genome.random(random);
 		for (int i = 0; i < 5; i++) {
 			fileStock(stack, founder, founder.lineage() + i, 0.03f * i, 2, random);
@@ -63,7 +63,7 @@ class PhylogenyLayoutTest {
 	@Test
 	void noTwoNodesLandOnTheSameSquare() {
 		Random random = new Random(77);
-		NbtCompound stack = new NbtCompound();
+		CompoundTag stack = new CompoundTag();
 		Genome founder = Genome.random(random);
 		for (int i = 0; i < 8; i++) {
 			fileStock(stack, founder, founder.lineage() + i, 0.02f * i, 1, random);
@@ -85,7 +85,7 @@ class PhylogenyLayoutTest {
 	@Test
 	void aParentSitsOverItsChildren() {
 		Random random = new Random(31337);
-		NbtCompound stack = new NbtCompound();
+		CompoundTag stack = new CompoundTag();
 		Genome founder = Genome.random(random);
 		for (int i = 0; i < 6; i++) {
 			fileStock(stack, founder, founder.lineage() + i, 0.025f * i, 3, random);
@@ -111,7 +111,7 @@ class PhylogenyLayoutTest {
 	@Test
 	void columnsStartAtZeroAndStayCompact() {
 		Random random = new Random(9);
-		NbtCompound stack = new NbtCompound();
+		CompoundTag stack = new CompoundTag();
 		Genome founder = Genome.random(random);
 		for (int i = 0; i < 7; i++) {
 			fileStock(stack, founder, founder.lineage() + i, 0.02f * i, 1, random);
@@ -133,6 +133,6 @@ class PhylogenyLayoutTest {
 
 	@Test
 	void anEmptyGuideProducesNoTreeRatherThanThrowing() {
-		assertTrue(Phylogeny.layout(GuideData.fromNbt(new NbtCompound()).entries()).isEmpty());
+		assertTrue(Phylogeny.layout(GuideData.fromNbt(new CompoundTag()).entries()).isEmpty());
 	}
 }

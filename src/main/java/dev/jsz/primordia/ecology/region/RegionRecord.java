@@ -1,8 +1,8 @@
 package dev.jsz.primordia.ecology.region;
 
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtList;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.nbt.ListTag;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -125,8 +125,8 @@ public final class RegionRecord {
 
 	// ---------------------------------------------------------------------- nbt
 
-	public NbtCompound writeNbt() {
-		NbtCompound nbt = new NbtCompound();
+	public CompoundTag writeNbt() {
+		CompoundTag nbt = new CompoundTag();
 		nbt.putLong("Seed", seed);
 		nbt.putLong("LastStep", lastStep);
 		nbt.putFloat("Vegetation", vegetation);
@@ -136,7 +136,7 @@ public final class RegionRecord {
 		nbt.putFloat("CaveRichness", caveRichness);
 		nbt.putBoolean("Founded", founded);
 		nbt.putInt("Version", version);
-		NbtList list = new NbtList();
+		ListTag list = new ListTag();
 		for (LineageRecord record : lineages) {
 			list.add(record.writeNbt());
 		}
@@ -144,21 +144,20 @@ public final class RegionRecord {
 		return nbt;
 	}
 
-	public static RegionRecord readNbt(RegionPos pos, NbtCompound nbt) {
+	public static RegionRecord readNbt(RegionPos pos, CompoundTag nbt) {
 		RegionRecord record = new RegionRecord(pos);
-		record.seed = nbt.getLong("Seed");
-		record.lastStep = nbt.getLong("LastStep");
-		record.vegetation = nbt.getFloat("Vegetation");
-		record.productivity = nbt.getFloat("Productivity");
-		record.temperature = nbt.contains("Temperature") ? nbt.getFloat("Temperature") : 0.5f;
-		record.humidity = nbt.contains("Humidity") ? nbt.getFloat("Humidity") : 0.5f;
-		record.caveRichness = nbt.contains("CaveRichness") ? nbt.getFloat("CaveRichness") : 0.18f;
-		record.founded = nbt.getBoolean("Founded");
-		// Absent on records written before versioning, which is precisely what marks them as old.
-		record.version = nbt.getInt("Version");
-		NbtList list = nbt.getList("Lineages", NbtElement.COMPOUND_TYPE);
+		record.seed = nbt.getLongOr("Seed", 0L);
+		record.lastStep = nbt.getLongOr("LastStep", 0L);
+		record.vegetation = nbt.getFloatOr("Vegetation", 0f);
+		record.productivity = nbt.getFloatOr("Productivity", 0f);
+		record.temperature = nbt.contains("Temperature") ? nbt.getFloatOr("Temperature", 0f) : 0.5f;
+		record.humidity = nbt.contains("Humidity") ? nbt.getFloatOr("Humidity", 0f) : 0.5f;
+		record.caveRichness = nbt.contains("CaveRichness") ? nbt.getFloatOr("CaveRichness", 0f) : 0.18f;
+		record.founded = nbt.getBooleanOr("Founded", false);
+		record.version = nbt.getIntOr("Version", 0);
+		ListTag list = nbt.getListOrEmpty("Lineages");
 		for (int i = 0; i < list.size(); i++) {
-			record.lineages.add(LineageRecord.readNbt(list.getCompound(i)));
+			record.lineages.add(LineageRecord.readNbt(list.getCompoundOrEmpty(i)));
 		}
 		return record;
 	}

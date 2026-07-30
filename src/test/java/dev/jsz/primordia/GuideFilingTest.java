@@ -6,7 +6,7 @@ import dev.jsz.primordia.lab.DecodeAccuracy;
 import dev.jsz.primordia.lab.GuideChapters;
 import dev.jsz.primordia.lab.GuideData;
 import dev.jsz.primordia.lab.SampleData;
-import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.CompoundTag;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -25,8 +25,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class GuideFilingTest {
 
 	/** A blank guide's storage. The item itself needs a registry a headless test cannot start. */
-	private static NbtCompound guide() {
-		return new NbtCompound();
+	private static CompoundTag guide() {
+		return new CompoundTag();
 	}
 
 	@Test
@@ -34,7 +34,7 @@ class GuideFilingTest {
 		Random random = new Random(4242);
 		Genome specimen = Genome.random(random);
 
-		NbtCompound stack = guide();
+		CompoundTag stack = guide();
 		GuideData data = GuideData.fromNbt(stack);
 		data.file(specimen);
 		data.writeInto(stack);
@@ -55,7 +55,7 @@ class GuideFilingTest {
 	void manySpecimensOfOneLineageCollapseIntoOneEntry() {
 		Random random = new Random(99);
 		Genome founder = Genome.random(random);
-		NbtCompound stack = guide();
+		CompoundTag stack = guide();
 
 		// Twelve individuals of the same lineage — the whole point of the guide is that this is one
 		// line in a book rather than twelve items in a backpack.
@@ -77,7 +77,7 @@ class GuideFilingTest {
 	@Test
 	void separateLineagesStaySeparateEntries() {
 		Random random = new Random(7);
-		NbtCompound stack = guide();
+		CompoundTag stack = guide();
 		for (int i = 0; i < 5; i++) {
 			GuideData data = GuideData.fromNbt(stack);
 			data.file(Genome.random(random));   // each gets its own lineage
@@ -95,7 +95,7 @@ class GuideFilingTest {
 		Genome recent = new Genome(Genome.random(random).copyValues(),
 				random.nextLong(), old.lineage(), 40);
 
-		NbtCompound stack = guide();
+		CompoundTag stack = guide();
 		GuideData data = GuideData.fromNbt(stack);
 		data.file(old);
 		data.file(recent);
@@ -119,7 +119,7 @@ class GuideFilingTest {
 	@Test
 	void namingIsRefusedUntilTheSpeciesIsFullyCharacterised() {
 		Random random = new Random(606);
-		NbtCompound stack = guide();
+		CompoundTag stack = guide();
 		Genome founder = Genome.random(random);
 
 		// Part-way there: the right to name it has not been earned.
@@ -155,7 +155,7 @@ class GuideFilingTest {
 	@Test
 	void aNameSurvivesFurtherSpecimensAndOverLongOnesAreClipped() {
 		Random random = new Random(707);
-		NbtCompound stack = guide();
+		CompoundTag stack = guide();
 		Genome founder = Genome.random(random);
 		for (int i = 0; i < 12; i++) {
 			GuideData data = GuideData.fromNbt(stack);
@@ -185,7 +185,7 @@ class GuideFilingTest {
 
 	@Test
 	void sealedEntriesOpenOnlyOnceTheWorkIsDone() {
-		NbtCompound stack = guide();
+		CompoundTag stack = guide();
 		GuideData empty = GuideData.fromNbt(stack);
 
 		// A fresh guide must read as a book with things still to find. If everything were legible
@@ -216,7 +216,7 @@ class GuideFilingTest {
 	@Test
 	void aThoroughlyStudiedCollectionOpensTheWholeBook() {
 		Random random = new Random(1234);
-		NbtCompound stack = guide();
+		CompoundTag stack = guide();
 
 		// Three related bloodlines, all studied to completion. Three because two of the entries
 		// are gated on having met enough kinds to notice they differ — a reader who has genuinely
@@ -287,7 +287,7 @@ class GuideFilingTest {
 	void theGuideNeverReportsFiguresItHasNotEarned() {
 		Random random = new Random(31);
 		Genome specimen = Genome.random(random);
-		NbtCompound stack = guide();
+		CompoundTag stack = guide();
 		GuideData data = GuideData.fromNbt(stack);
 		data.file(specimen);
 		data.writeInto(stack);

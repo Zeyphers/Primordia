@@ -6,21 +6,21 @@ import dev.jsz.primordia.lab.Discoveries;
 import dev.jsz.primordia.lab.GuideData;
 import dev.jsz.primordia.lab.SampleData;
 import dev.jsz.primordia.registry.PrimordiaItems;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.NbtComponent;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.tooltip.TooltipType;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.sound.SoundCategory;
-import net.minecraft.sound.SoundEvents;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Hand;
-import net.minecraft.util.TypedActionResult;
-import net.minecraft.world.World;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.level.Level;
 
 import java.util.List;
 
@@ -38,26 +38,26 @@ public class GenomeReportItem extends Item {
 	private static final String KEY_ACCURACY = "Accuracy";
 	private static final String KEY_PRIOR = "Prior";
 
-	public GenomeReportItem(Settings settings) {
+	public GenomeReportItem(Properties settings) {
 		super(settings);
 	}
 
 	/** Stamps the confidence this report was produced at onto the stack. */
 	public static void writeAccuracy(ItemStack stack, DecodeAccuracy accuracy, int priorDecodes) {
-		NbtComponent existing = stack.get(DataComponentTypes.CUSTOM_DATA);
-		NbtCompound root = existing == null ? new NbtCompound() : existing.copyNbt();
-		NbtCompound nbt = new NbtCompound();
+		CustomData existing = stack.get(DataComponents.CUSTOM_DATA);
+		CompoundTag root = existing == null ? new CompoundTag() : existing.copyTag();
+		CompoundTag nbt = new CompoundTag();
 		nbt.putString(KEY_ACCURACY, accuracy.name());
 		nbt.putInt(KEY_PRIOR, priorDecodes);
 		root.put(ROOT, nbt);
-		stack.set(DataComponentTypes.CUSTOM_DATA, NbtComponent.of(root));
+		stack.set(DataComponents.CUSTOM_DATA, CustomData.of(root));
 	}
 
 	public static DecodeAccuracy readAccuracy(ItemStack stack) {
-		NbtCompound nbt = root(stack);
+		CompoundTag nbt = root(stack);
 		if (nbt == null) return DecodeAccuracy.UNKNOWN;
 		try {
-			return DecodeAccuracy.valueOf(nbt.getString(KEY_ACCURACY));
+			return DecodeAccuracy.valueOf(nbt.getStringOr(KEY_ACCURACY, ""));
 		} catch (IllegalArgumentException e) {
 			// A report written by a future version naming a level this one does not have. Reading
 			// it as the lowest is honest: we genuinely cannot interpret it.
@@ -66,15 +66,15 @@ public class GenomeReportItem extends Item {
 	}
 
 	public static int readPriorDecodes(ItemStack stack) {
-		NbtCompound nbt = root(stack);
-		return nbt == null ? 0 : nbt.getInt(KEY_PRIOR);
+		CompoundTag nbt = root(stack);
+		return nbt == null ? 0 : nbt.getIntOr(KEY_PRIOR, 0);
 	}
 
-	private static NbtCompound root(ItemStack stack) {
-		NbtComponent component = stack.get(DataComponentTypes.CUSTOM_DATA);
+	private static CompoundTag root(ItemStack stack) {
+		CustomData component = stack.get(DataComponents.CUSTOM_DATA);
 		if (component == null) return null;
-		NbtCompound root = component.copyNbt();
-		return root.contains(ROOT) ? root.getCompound(ROOT) : null;
+		CompoundTag root = component.copyTag();
+		return root.contains(ROOT) ? root.getCompound(ROOT).orElse(null) : null;
 	}
 
 	/**
@@ -91,9 +91,15 @@ public class GenomeReportItem extends Item {
 	 * scan walks the player's whole inventory looking for a guide.
 	 */
 	@Override
-	public void inventoryTick(ItemStack stack, World world, Entity entity, int slot, boolean selected) {
-		if (world.isClient() || !(entity instanceof PlayerEntity player)) return;
-		if ((player.age + slot) % FILE_INTERVAL != 0) return;
+	public void inventoryTick(ItemStack stack, net.minecraft.server.level.ServerLevel world, Entity entity, net.minecraft.world.entity.EquipmentSlot slot) {
+		if (!(entity instanceof Player player)) return;
+		// The slot is null for anything that is not being worn or held — which is every report in a
+		// normal inventory, and so very much the common case rather than an edge one. It replaced an
+		// int slot index that this used to stagger the scan across slots; there is no index to
+		// stagger by any more, and the interval alone is throttle enough for a walk that only happens
+		// while a report and a guide are both in the same inventory.
+		int stagger = slot == null ? 0 : slot.ordinal();
+		if ((player.tickCount + stagger) % FILE_INTERVAL != 0) return;
 
 		SampleData data = SampleData.get(stack);
 		if (data == null) return;
@@ -101,62 +107,76 @@ public class GenomeReportItem extends Item {
 		ItemStack guide = findGuide(player);
 		if (guide.isEmpty()) return;
 
-		GuideData record = GuideData.get(guide);
+		dev.jsz.primordia.lab.PlayerGuideData global = dev.jsz.primordia.lab.PlayerGuideData.get(world);
+		GuideData record = global.getGuide(player.getUUID());
+		
+		// If the guide item still has legacy data on it, merge it before filing.
+		GuideData legacy = GuideData.get(guide);
+		if (legacy.speciesCount() > 0 && record.speciesCount() == 0) {
+			record.merge(legacy);
+			guide.remove(net.minecraft.core.component.DataComponents.CUSTOM_DATA);
+		}
+		
 		record.file(data.genome());
-		record.write(guide);
-		if (player instanceof net.minecraft.server.network.ServerPlayerEntity server) {
+		global.putGuide(player.getUUID(), record);
+		
+		if (player instanceof net.minecraft.server.level.ServerPlayer server) {
 			Discoveries.checkGuide(server, record);
+			CompoundTag payloadData = new CompoundTag();
+			record.writeInto(payloadData);
+			net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(
+					server, new dev.jsz.primordia.lab.GuideDataSyncPayload(payloadData));
 		}
 
-		stack.decrement(1);
-		world.playSound(null, player.getBlockPos(), SoundEvents.ITEM_BOOK_PAGE_TURN,
-				SoundCategory.PLAYERS, 0.5f, 1.5f);
-		player.sendMessage(Text.literal("Filed specimen ").formatted(Formatting.DARK_GRAY)
-				.append(Text.literal(data.lineageHex()).formatted(Formatting.AQUA))
-				.append(Text.literal(" into the field guide").formatted(Formatting.DARK_GRAY)), true);
+		stack.shrink(1);
+		world.playSound(null, player.blockPosition(), SoundEvents.BOOK_PAGE_TURN,
+				SoundSource.PLAYERS, 0.5f, 1.5f);
+		player.sendOverlayMessage(Component.literal("Filed specimen ").withStyle(ChatFormatting.DARK_GRAY)
+				.append(Component.literal(data.lineageHex()).withStyle(ChatFormatting.AQUA))
+				.append(Component.literal(" into the field guide").withStyle(ChatFormatting.DARK_GRAY)));
 	}
 
-	/** Ticks between filing attempts, offset per slot so a stack of reports files one at a time. */
 	private static final int FILE_INTERVAL = 10;
 
-	private static ItemStack findGuide(PlayerEntity player) {
-		for (int i = 0; i < player.getInventory().size(); i++) {
-			ItemStack candidate = player.getInventory().getStack(i);
-			if (candidate.isOf(PrimordiaItems.FIELD_GUIDE)) return candidate;
+	private static ItemStack findGuide(Player player) {
+		for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+			ItemStack candidate = player.getInventory().getItem(i);
+			if (candidate.is(PrimordiaItems.FIELD_GUIDE)) return candidate;
 		}
 		return ItemStack.EMPTY;
 	}
 
-	/** Right-click to print the full report into chat, where it can actually be read. */
 	@Override
-	public TypedActionResult<ItemStack> use(World world, PlayerEntity player, Hand hand) {
-		ItemStack stack = player.getStackInHand(hand);
-		if (world.isClient()) return TypedActionResult.success(stack, true);
+	public InteractionResult use(Level world, Player player, InteractionHand hand) {
+		ItemStack stack = player.getItemInHand(hand);
+		if (world.isClientSide()) return InteractionResult.SUCCESS;
 
 		SampleData data = SampleData.get(stack);
 		if (data == null) {
-			player.sendMessage(Text.literal("This report is unreadable.").formatted(Formatting.RED), false);
-			return TypedActionResult.consume(stack);
+			player.sendSystemMessage(Component.literal("This report is unreadable.").withStyle(ChatFormatting.RED));
+			return InteractionResult.CONSUME;
 		}
 
-		for (Text line : GenomeReport.lines(data.genome(), readAccuracy(stack), readPriorDecodes(stack))) {
-			player.sendMessage(line, false);
+		for (Component line : GenomeReport.lines(data.genome(), readAccuracy(stack), readPriorDecodes(stack))) {
+			player.sendSystemMessage(line);
 		}
-		world.playSound(null, player.getBlockPos(), SoundEvents.ITEM_BOOK_PAGE_TURN,
-				SoundCategory.PLAYERS, 0.7f, 1.1f);
-		player.getItemCooldownManager().set(this, 10);
-		return TypedActionResult.consume(stack);
+		world.playSound(null, player.blockPosition(), SoundEvents.BOOK_PAGE_TURN,
+				SoundSource.PLAYERS, 0.7f, 1.1f);
+		player.getCooldowns().addCooldown(stack, 10);
+		return InteractionResult.CONSUME;
 	}
 
 	@Override
-	public void appendTooltip(ItemStack stack, TooltipContext context, List<Text> tooltip, TooltipType type) {
+	public void appendHoverText(ItemStack stack, TooltipContext context, net.minecraft.world.item.component.TooltipDisplay display, java.util.function.Consumer<Component> tooltipAdder, TooltipFlag flag) {
 		SampleData data = SampleData.get(stack);
 		if (data == null) {
-			tooltip.add(Text.literal("Unreadable report").formatted(Formatting.DARK_RED, Formatting.ITALIC));
+			tooltipAdder.accept(Component.literal("Unreadable report").withStyle(ChatFormatting.DARK_RED, ChatFormatting.ITALIC));
 			return;
 		}
-		tooltip.addAll(GenomeReport.tooltip(data.genome(), readAccuracy(stack)));
-		tooltip.add(Text.literal("Right-click to read in full.")
-				.formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
+		for (Component c : GenomeReport.tooltip(data.genome(), readAccuracy(stack))) {
+			tooltipAdder.accept(c);
+		}
+		tooltipAdder.accept(Component.literal("Right-click to read in full.")
+				.withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
 	}
 }

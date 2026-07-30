@@ -4,8 +4,8 @@ import dev.jsz.primordia.ecology.EnergyBudget;
 import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
-import net.minecraft.entity.ai.goal.Goal;
-import net.minecraft.util.math.Box;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.phys.AABB;
 
 import java.util.EnumSet;
 
@@ -62,43 +62,30 @@ public class RestGoal extends Goal {
 
 	public RestGoal(CreatureEntity creature) {
 		this.creature = creature;
-		setControls(EnumSet.of(Control.MOVE, Control.LOOK, Control.JUMP));
+		setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK, Flag.JUMP));
 	}
 
 	@Override
-	public boolean canStart() {
+	public boolean canUse() {
 		if (cooldown-- > 0) return false;
 		cooldown = CHECK_INTERVAL;
 
 		if (creature.isCarcass() || creature.isPosing()) return false;
-		// A companion keeps its owner's hours, not its own.
 		if (creature.isDomesticated()) return false;
-		// A creature that has just been placed into the world by the region materialiser should be
-		// seen to be alive before it lies down. Otherwise a player arriving in a new area finds a
-		// field of animals that were asleep from the instant they existed, which reads as broken
-		// rather than as nocturnal.
 		if (creature.getLifeTicks() < SETTLE_TICKS) return false;
-		if (creature.getTarget() != null || creature.getAttacker() != null) return false;
+		if (creature.getTarget() != null || creature.getLastHurtByMob() != null) return false;
 		if (creature.getControllingPassenger() != null) return false;
-		// Only starvation beats sleep. This was FORAGE_THRESHOLD, which energy drops below within
-		// minutes of spawning and rarely climbs back above — so in practice nothing ever slept and
-		// the world clock appeared to have no effect at all. See EnergyBudget#REST_THRESHOLD.
 		if (creature.getEnergy() < EnergyBudget.REST_THRESHOLD) return false;
 		if (!isRestPeriod()) return false;
 		return !threatNearby();
 	}
 
 	@Override
-	public boolean shouldContinue() {
-		if (creature.getAttacker() != null || creature.getTarget() != null) return false;
-		// Waking up starving is worse than losing sleep. Lower than the bar for lying down, so a
-		// creature hovering at the threshold does not flicker in and out of sleep.
+	public boolean canContinueToUse() {
+		if (creature.getLastHurtByMob() != null || creature.getTarget() != null) return false;
 		if (creature.getEnergy() <= EnergyBudget.WAKE_HUNGRY) return false;
 		if (!isRestPeriod()) return false;
-		// Throttled: this runs every tick for every sleeping creature, and a box query per animal
-		// per tick is a real cost for a check whose answer cannot change meaningfully in half a
-		// second. The cheap conditions above stay unthrottled because they are field reads.
-		if (creature.age % ALERT_CHECK_INTERVAL != 0) return true;
+		if (creature.tickCount % ALERT_CHECK_INTERVAL != 0) return true;
 		return !threatNearby();
 	}
 
@@ -115,21 +102,19 @@ public class RestGoal extends Goal {
 	}
 
 	@Override
-	public boolean canStop() {
+	public boolean isInterruptable() {
 		return true;
 	}
 
 	@Override
 	public void tick() {
-		// Sleeping is the absence of doing anything; holding the navigation stopped is the whole
-		// behaviour. Energy drain drops to the resting multiplier in CreatureEntity#tickEnergy.
 		creature.getNavigation().stop();
 	}
 
 	private boolean isRestPeriod() {
 		Genome g = creature.getGenome();
 		if (g == null) return false;
-		return isRestingHour(creature.getWorld().getTimeOfDay(),
+		return isRestingHour(creature.level().getOverworldClockTime(),
 				g.raw(Gene.NOCTURNALITY), g.seed());
 	}
 
@@ -165,8 +150,8 @@ public class RestGoal extends Goal {
 	private boolean threatNearby() {
 		var mine = creature.getBodyPlan();
 		if (mine == null) return false;
-		Box box = creature.getBoundingBox().expand(ALERT_RANGE, 5.0, ALERT_RANGE);
-		return !creature.getWorld().getEntitiesByClass(CreatureEntity.class, box,
+		AABB box = creature.getBoundingBox().inflate(ALERT_RANGE, 5.0, ALERT_RANGE);
+		return !creature.level().getEntitiesOfClass(CreatureEntity.class, box,
 				other -> other != creature && other.isAlive() && !other.isCarcass()
 						&& !other.isAsleep()
 						&& other.getDietGroup().hunts()

@@ -1,7 +1,7 @@
 package dev.jsz.primordia.ecology.region;
 
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
 
 /**
  * Coordinates of one ecological region: an 8×8 block of chunks, 128 blocks square.
@@ -36,7 +36,7 @@ public record RegionPos(int x, int z) {
 	}
 
 	public static RegionPos ofChunk(ChunkPos pos) {
-		return new RegionPos(pos.x >> CHUNK_SHIFT, pos.z >> CHUNK_SHIFT);
+		return new RegionPos(pos.x() >> CHUNK_SHIFT, pos.z() >> CHUNK_SHIFT);
 	}
 
 	/** Packed into a long for use as a map key, avoiding a boxed object per lookup. */

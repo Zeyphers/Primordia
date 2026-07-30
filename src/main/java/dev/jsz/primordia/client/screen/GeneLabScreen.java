@@ -3,11 +3,12 @@ package dev.jsz.primordia.client.screen;
 import dev.jsz.primordia.Primordia;
 import dev.jsz.primordia.block.GeneLabBlockEntity;
 import dev.jsz.primordia.screen.GeneLabScreenHandler;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.entity.player.PlayerInventory;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 
 import java.util.List;
 
@@ -23,11 +24,11 @@ import java.util.List;
  * had run out of fuel and was doing nothing. Stalling is now shown by the live route turning red,
  * with the reason named beneath.
  */
-public class GeneLabScreen extends HandledScreen<GeneLabScreenHandler> {
+public class GeneLabScreen extends AbstractContainerScreen<GeneLabScreenHandler> {
 
 	private static final Identifier BACKGROUND = Primordia.id("textures/gui/basic_gene_lab.png");
 	private static final Identifier FURNACE =
-			Identifier.ofVanilla("textures/gui/container/furnace.png");
+			Identifier.withDefaultNamespace("textures/gui/container/furnace.png");
 
 	private static final int FLAME_U = 176, FLAME_V = 0, FLAME_W = 14, FLAME_H = 14;
 
@@ -98,44 +99,49 @@ public class GeneLabScreen extends HandledScreen<GeneLabScreenHandler> {
 					new Leg(124, 56, 7, 5, Dir.RIGHT)},
 	};
 
-	public GeneLabScreen(GeneLabScreenHandler handler, PlayerInventory inventory, Text title) {
-		super(handler, inventory, title);
-		backgroundWidth = GeneLabScreenHandler.BACKGROUND_WIDTH;
-		backgroundHeight = GeneLabScreenHandler.BACKGROUND_HEIGHT;
-		playerInventoryTitleY = backgroundHeight - 94;
+	public GeneLabScreen(GeneLabScreenHandler handler, Inventory inventory, Component title) {
+		// imageWidth and imageHeight are final in 26.2, so the panel size goes through the
+		// constructor rather than being assigned afterwards.
+		super(handler, inventory, title,
+				GeneLabScreenHandler.BACKGROUND_WIDTH, GeneLabScreenHandler.BACKGROUND_HEIGHT);
+		inventoryLabelY = imageHeight - 94;
 	}
 
 	@Override
 	protected void init() {
 		super.init();
-		titleX = (backgroundWidth - textRenderer.getWidth(title)) / 2;
+		titleLabelX = (imageWidth - font.width(title)) / 2;
 	}
 
 	@Override
-	protected void drawBackground(DrawContext context, float delta, int mouseX, int mouseY) {
-		int x = (width - backgroundWidth) / 2;
-		int y = (height - backgroundHeight) / 2;
-		context.drawTexture(BACKGROUND, x, y, 0, 0, backgroundWidth, backgroundHeight, 256, 256);
+	public void extractBackground(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+		// 26.2 folded the dimmed backdrop behind the panel into this same hook — what used to be a
+		// separate renderBackground call — so the panel is drawn on top of super's, not instead of it.
+		super.extractBackground(context, mouseX, mouseY, delta);
+
+		int x = (width - imageWidth) / 2;
+		int y = (height - imageHeight) / 2;
+		context.blit(RenderPipelines.GUI_TEXTURED, BACKGROUND, x, y, 0, 0, imageWidth, imageHeight, 256, 256);
 
 		for (int i = 0; i < ROUTES.length; i++) {
-			drawRoute(context, x, y, ROUTES[i], handler.lineFill(i), colourFor(i));
+			drawRoute(context, x, y, ROUTES[i], menu.lineFill(i), colourFor(i));
 		}
 
 		// Flame above the fuel slot, on the route fuel pays for.
-		float burn = handler.burnFraction();
+		float burn = menu.burnFraction();
 		if (burn > 0f) {
 			int lit = (int) Math.ceil(burn * FLAME_H);
-			context.drawTexture(FURNACE,
+			context.blit(RenderPipelines.GUI_TEXTURED, FURNACE,
 					x + GeneLabScreenHandler.FUEL_X + 1,
 					y + GeneLabScreenHandler.FUEL_Y - 17 + FLAME_H - lit,
-					FLAME_U, FLAME_V + FLAME_H - lit, FLAME_W, lit);
+					FLAME_U, FLAME_V + FLAME_H - lit, FLAME_W, lit, 256, 256);
 		}
 
 		// Redstone drawn so far, as a block of pips above its slot. Sixteen dust is a real cost and
 		// watching them fill counts it out; the pips are spaced so they read as separate squares
 		// rather than merging into one bar, which is what a tighter grid did.
-		if (handler.stage() == GeneLabBlockEntity.Stage.DECODING) {
-			int used = handler.redstoneUsed();
+		if (menu.stage() == GeneLabBlockEntity.Stage.DECODING) {
+			int used = menu.redstoneUsed();
 			int px = x + GeneLabScreenHandler.REDSTONE_X;
 			int py = y + GeneLabScreenHandler.REDSTONE_Y - 19;
 			for (int i = 0; i < GeneLabBlockEntity.REDSTONE_PER_DECODE; i++) {
@@ -148,7 +154,7 @@ public class GeneLabScreen extends HandledScreen<GeneLabScreenHandler> {
 	}
 
 	/** Paints {@code fill} of a route, spending the budget leg by leg so bends fill in order. */
-	private void drawRoute(DrawContext context, int ox, int oy, Leg[] route, float fill, int colour) {
+	private void drawRoute(GuiGraphicsExtractor context, int ox, int oy, Leg[] route, float fill, int colour) {
 		if (fill <= 0f) return;
 		int total = 0;
 		for (Leg leg : route) total += leg.length();
@@ -170,8 +176,8 @@ public class GeneLabScreen extends HandledScreen<GeneLabScreenHandler> {
 
 	/** Colour of one route: what it is doing, or why it is not. */
 	private int colourFor(int index) {
-		if (!handler.lineActive(index)) return DONE;
-		if (handler.isStalled()) return STALLED;
+		if (!menu.lineActive(index)) return DONE;
+		if (menu.isStalled()) return STALLED;
 		return switch (index) {
 			case 0 -> RUNNING;
 			case 1 -> DECODING;
@@ -186,62 +192,62 @@ public class GeneLabScreen extends HandledScreen<GeneLabScreenHandler> {
 	 * it can, so a lab out of fuel says so instead of claiming to be working.
 	 */
 	@Override
-	protected void handledScreenTick() {
-		super.handledScreenTick();
+	protected void containerTick() {
+		super.containerTick();
 		ticks++;
 	}
 
 	@Override
-	protected void drawForeground(DrawContext context, int mouseX, int mouseY) {
-		super.drawForeground(context, mouseX, mouseY);
+	protected void extractLabels(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+		super.extractLabels(context, mouseX, mouseY);
 
 		// Decoding gets a scrolling readout instead of a caption. Everything else gets one line,
 		// centred, saying what is actually true.
-		if (handler.stage() == GeneLabBlockEntity.Stage.DECODING && !handler.isStalled()) {
+		if (menu.stage() == GeneLabBlockEntity.Stage.DECODING && !menu.isStalled()) {
 			drawTerminal(context);
 			return;
 		}
 
 		String message;
 		int colour;
-		switch (handler.stage()) {
+		switch (menu.stage()) {
 			case IDLE -> {
-				boolean empty = handler.getSlot(GeneLabBlockEntity.SLOT_SAMPLE).getStack().isEmpty();
+				boolean empty = menu.getSlot(GeneLabBlockEntity.SLOT_SAMPLE).getItem().isEmpty();
 				message = empty ? "Awaiting sample" : "Ready";
 				colour = 0x808080;
 			}
 			case SEQUENCING -> {
-				message = handler.isStalled() ? "Stalled — no fuel" : "Reading tissue";
-				colour = handler.isStalled() ? 0xB03028 : 0x3A7A3A;
+				message = menu.isStalled() ? "Stalled — no fuel" : "Reading tissue";
+				colour = menu.isStalled() ? 0xB03028 : 0x3A7A3A;
 			}
 			default -> {
 				message = "Stalled — no redstone";
 				colour = 0xB03028;
 			}
 		}
-		Text text = Text.literal(message);
-		context.drawText(textRenderer, text,
-				(backgroundWidth - textRenderer.getWidth(text)) / 2, 96, colour, false);
+		Component text = Component.literal(message);
+		context.text(font, text,
+				(imageWidth - font.width(text)) / 2, 96, colour, false);
 	}
 
 	/** Two lines of log: the one just finished, dimmed, above the one running now. */
-	private void drawTerminal(DrawContext context) {
+	private void drawTerminal(GuiGraphicsExtractor context) {
 		int step = ticks / TERMINAL_INTERVAL;
-		if (handler.lineFill(2) > 0f) {
+		if (menu.lineFill(2) > 0f) {
 			// The last stretch is the report being written, which is worth saying plainly.
-			Text done = Text.literal("> writing report");
-			context.drawText(textRenderer, done, TERMINAL_X, TERMINAL_Y + TERMINAL_LINE_HEIGHT,
+			Component done = Component.literal("> writing report");
+			context.text(font, done, TERMINAL_X, TERMINAL_Y + TERMINAL_LINE_HEIGHT,
 					0x8A7A28, false);
-			context.drawText(textRenderer, Text.literal("  " + terminalLine(step - 1)),
+			context.text(font, Component.literal("  " + terminalLine(step - 1)),
 					TERMINAL_X, TERMINAL_Y, 0x8A9A8A, false);
 			return;
 		}
-		context.drawText(textRenderer, Text.literal("  " + terminalLine(step - 1)),
+		context.text(font, Component.literal("  " + terminalLine(step - 1)),
 				TERMINAL_X, TERMINAL_Y, 0x8A9A8A, false);
 		// A caret on the live line, blinking on the same clock, so the log reads as still running
 		// rather than as having stopped on its last message.
 		String caret = (ticks / 8) % 2 == 0 ? "_" : "";
-		context.drawText(textRenderer, Text.literal("> " + terminalLine(step) + caret),
+		context.text(font, Component.literal("> " + terminalLine(step) + caret),
 				TERMINAL_X, TERMINAL_Y + TERMINAL_LINE_HEIGHT, 0x2A6B2A, false);
 	}
 
@@ -268,30 +274,30 @@ public class GeneLabScreen extends HandledScreen<GeneLabScreenHandler> {
 	}
 
 	@Override
-	public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-		renderBackground(context, mouseX, mouseY, delta);
-		super.render(context, mouseX, mouseY, delta);
-		drawMouseoverTooltip(context, mouseX, mouseY);
+	public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+		// The panel background and the hovered-slot tooltip are both part of the base container
+		// screen's own extract pass in 26.2, so this only adds the hints on top of it.
+		super.extractRenderState(context, mouseX, mouseY, delta);
 		renderSlotHints(context, mouseX, mouseY);
 	}
 
 	/** Explains the two fuel slots on hover; nothing else in the game pairs coal with redstone. */
-	private void renderSlotHints(DrawContext context, int mouseX, int mouseY) {
-		if (!handler.getCursorStack().isEmpty()) return;
-		int ox = (width - backgroundWidth) / 2;
-		int oy = (height - backgroundHeight) / 2;
+	private void renderSlotHints(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+		if (!menu.getCarried().isEmpty()) return;
+		int ox = (width - imageWidth) / 2;
+		int oy = (height - imageHeight) / 2;
 
 		if (isOver(mouseX, mouseY, ox + GeneLabScreenHandler.FUEL_X, oy + GeneLabScreenHandler.FUEL_Y)
-				&& handler.getSlot(GeneLabBlockEntity.SLOT_FUEL).getStack().isEmpty()) {
-			context.drawTooltip(textRenderer, List.of(
-					Text.literal("Sequencing fuel"),
-					Text.literal("§7Any furnace fuel — reads the tissue")), mouseX, mouseY);
+				&& menu.getSlot(GeneLabBlockEntity.SLOT_FUEL).getItem().isEmpty()) {
+			context.setComponentTooltipForNextFrame(font, List.of(
+					Component.literal("Sequencing fuel"),
+					Component.literal("§7Any furnace fuel — reads the tissue")), mouseX, mouseY);
 		} else if (isOver(mouseX, mouseY, ox + GeneLabScreenHandler.REDSTONE_X,
 				oy + GeneLabScreenHandler.REDSTONE_Y)
-				&& handler.getSlot(GeneLabBlockEntity.SLOT_REDSTONE).getStack().isEmpty()) {
-			context.drawTooltip(textRenderer, List.of(
-					Text.literal("Decoding power"),
-					Text.literal("§7" + GeneLabBlockEntity.REDSTONE_PER_DECODE
+				&& menu.getSlot(GeneLabBlockEntity.SLOT_REDSTONE).getItem().isEmpty()) {
+			context.setComponentTooltipForNextFrame(font, List.of(
+					Component.literal("Decoding power"),
+					Component.literal("§7" + GeneLabBlockEntity.REDSTONE_PER_DECODE
 							+ " redstone per decode")), mouseX, mouseY);
 		}
 	}

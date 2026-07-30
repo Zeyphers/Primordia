@@ -6,12 +6,12 @@ import dev.jsz.primordia.client.config.PrimordiaConfig;
 import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.registry.PrimordiaEntities;
 import dev.jsz.primordia.util.MathX;
-import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.entity.EntityType;
-
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
+import dev.lambdaurora.lambdynlights.api.DynamicLightsContext;
+import dev.lambdaurora.lambdynlights.api.DynamicLightsInitializer;
+import dev.lambdaurora.lambdynlights.api.entity.EntityLightSourceManager;
+import dev.lambdaurora.lambdynlights.api.entity.luminance.EntityLuminance;
+import dev.lambdaurora.lambdynlights.api.item.ItemLightSourceManager;
+import net.minecraft.world.entity.Entity;
 
 /**
  * Makes bioluminescent creatures cast real light, when LambDynamicLights is installed.
@@ -21,25 +21,15 @@ import java.lang.reflect.Proxy;
  * Dynamic lights is what closes that, and a creature that grew light organs ought to light the cave
  * it walks through.
  * <p>
- * <b>Bound by reflection, deliberately.</b> A compile dependency on LambDynamicLights would mean a
- * new maven repository, a version to keep in step, and a build that fails when that repository is
- * unreachable — for an integration that only matters when the player happens to have installed one
- * optional mod. The API surface used here is two types and one method, all resolved through
- * {@link FabricLoader#isModLoaded} first and wrapped so that a change on their side degrades to a
- * log line rather than a crash.
- * <p>
- * The trade is that this cannot be checked by the compiler, so the signatures were read out of the
- * shipped jar rather than guessed:
- * <pre>
- * DynamicLightHandlers.registerDynamicLightHandler(EntityType&lt;T&gt;, DynamicLightHandler&lt;T&gt;)
- * DynamicLightHandler#getLuminance(T) : int
- * DynamicLightHandler#isWaterSensitive(T) : boolean   (default)
- * </pre>
+ * <b>Reached through an entrypoint, not reflection.</b> This was bound by reflection while
+ * {@code DynamicLightHandlers} existed; 4.x replaced that with a declared entrypoint and a luminance
+ * interface, and the reflective lookup had been quietly failing ever since. Being an entrypoint costs
+ * nothing in optionality — Fabric only loads this class when something queries
+ * {@code lambdynlights:initializer}, and the only thing that ever queries it is LambDynamicLights
+ * itself. With the mod absent, nothing here is loaded and none of its types are ever asked for, which
+ * is why the API is a {@code compileOnly} dependency and no guard is needed.
  */
-public final class DynamicLightsCompat {
-	private static final String LAMBDYNLIGHTS = "lambdynlights";
-	private static final String HANDLERS_CLASS = "dev.lambdaurora.lambdynlights.api.DynamicLightHandlers";
-	private static final String HANDLER_CLASS = "dev.lambdaurora.lambdynlights.api.DynamicLightHandler";
+public final class DynamicLightsCompat implements DynamicLightsInitializer {
 
 	/**
 	 * Light levels a glowing creature spans.
@@ -51,38 +41,25 @@ public final class DynamicLightsCompat {
 	private static final float MIN_LIGHT = 4f;
 	private static final float MAX_LIGHT = 12f;
 
-	private DynamicLightsCompat() {
+	/** Set once the light source is actually in the table, so the log line means something. */
+	private static boolean announced;
+
+	@Override
+	public void onInitializeDynamicLights(DynamicLightsContext context) {
+		// Registration is an event rather than a one-off call because LambDynamicLights rebuilds its
+		// light-source table on every resource reload — data packs get to contribute — so anything
+		// registered once at startup would vanish the first time the player pressed F3+T.
+		context.entityLightSourceManager().onRegisterEvent().register(DynamicLightsCompat::onRegister);
 	}
 
-	/**
-	 * Registers the handler if the mod is present.
-	 * <p>
-	 * Called once the client has finished starting rather than from the client initialiser, so that
-	 * LambDynamicLights has certainly run its own registration first. Nothing here depends on that
-	 * ordering today — the handler is keyed to our entity type, which theirs never touches — but the
-	 * cost of being certain is one event subscription.
-	 */
-	public static void register() {
-		if (!FabricLoader.getInstance().isModLoaded(LAMBDYNLIGHTS)) return;
-
-		try {
-			Class<?> handlers = Class.forName(HANDLERS_CLASS);
-			Class<?> handlerType = Class.forName(HANDLER_CLASS);
-
-			Object handler = Proxy.newProxyInstance(
-					DynamicLightsCompat.class.getClassLoader(),
-					new Class<?>[]{handlerType},
-					new Handler());
-
-			handlers.getMethod("registerDynamicLightHandler", EntityType.class, handlerType)
-					.invoke(null, PrimordiaEntities.CREATURE, handler);
-
+	private static void onRegister(EntityLightSourceManager.RegisterContext context) {
+		context.register(PrimordiaEntities.CREATURE, Bioluminescence.INSTANCE);
+		// Announced from here rather than from the entrypoint above, because reaching the entrypoint
+		// only proves the two mods found each other; this proves the creature is in the light table.
+		// Once, not once per resource reload.
+		if (!announced) {
+			announced = true;
 			Primordia.LOGGER.info("Bioluminescent creatures will emit light through LambDynamicLights");
-		} catch (Throwable t) {
-			// Never fatal. The creatures still glow on their own surfaces; they simply do not light
-			// what is around them.
-			Primordia.LOGGER.warn("LambDynamicLights is installed but its light-handler API did not "
-					+ "resolve — bioluminescence will not light the world", t);
 		}
 	}
 
@@ -94,7 +71,7 @@ public final class DynamicLightsCompat {
 	 * the gene, say — would let the two drift apart, and a creature that lit the ground while
 	 * appearing dark would be a puzzle with no visible cause.
 	 */
-	static int luminanceOf(Object entity) {
+	static int luminanceOf(Entity entity) {
 		if (!(entity instanceof CreatureEntity creature)) return 0;
 		// A player who has turned the glow off has turned it off.
 		if (!PrimordiaConfig.get().emissiveGlow) return 0;
@@ -111,19 +88,28 @@ public final class DynamicLightsCompat {
 				MathX.remap(strength, 0.25f, 0.85f, MIN_LIGHT, MAX_LIGHT), 0f, 15f));
 	}
 
-	/** Bridges the proxy's calls onto {@link #luminanceOf}. */
-	private static final class Handler implements InvocationHandler {
+	/**
+	 * The creature's glow, as a luminance LambDynamicLights can ask for.
+	 * <p>
+	 * A registered type rather than an anonymous one because {@link EntityLuminance} is codec-backed:
+	 * the type is how a luminance names itself when written out, and one that cannot name itself would
+	 * break the moment anything tried to serialise the table it sits in. Nothing here is water
+	 * sensitive — real bioluminescence mostly lives in the sea — so this deliberately skips
+	 * {@code WaterSensitiveEntityLuminance}.
+	 */
+	private static final class Bioluminescence implements EntityLuminance {
+		static final Bioluminescence INSTANCE = new Bioluminescence();
+		/** Declared after {@link #INSTANCE} so the unit codec has something to hold. */
+		static final Type TYPE = Type.registerSimple(Primordia.id("bioluminescence"), INSTANCE);
+
 		@Override
-		public Object invoke(Object proxy, Method method, Object[] args) {
-			return switch (method.getName()) {
-				case "getLuminance" -> luminanceOf(args[0]);
-				// Bioluminescence is not put out by water. Real ones mostly live in it.
-				case "isWaterSensitive" -> Boolean.FALSE;
-				case "toString" -> "Primordia bioluminescence handler";
-				case "hashCode" -> System.identityHashCode(proxy);
-				case "equals" -> proxy == args[0];
-				default -> throw new UnsupportedOperationException(method.getName());
-			};
+		public Type type() {
+			return TYPE;
+		}
+
+		@Override
+		public int getLuminance(ItemLightSourceManager itemLightSourceManager, Entity entity) {
+			return luminanceOf(entity);
 		}
 	}
 }

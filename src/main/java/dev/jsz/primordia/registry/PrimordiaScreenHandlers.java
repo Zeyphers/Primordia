@@ -2,16 +2,16 @@ package dev.jsz.primordia.registry;
 
 import dev.jsz.primordia.Primordia;
 import dev.jsz.primordia.screen.GeneLabScreenHandler;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.Registry;
-import net.minecraft.resource.featuretoggle.FeatureFlags;
-import net.minecraft.screen.ScreenHandlerType;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.Registry;
+import net.minecraft.world.flag.FeatureFlags;
+import net.minecraft.world.inventory.MenuType;
 
 public final class PrimordiaScreenHandlers {
 
-	public static final ScreenHandlerType<GeneLabScreenHandler> GENE_LAB =
-			Registry.register(Registries.SCREEN_HANDLER, Primordia.id("gene_lab"),
-					new ScreenHandlerType<>(GeneLabScreenHandler::new, FeatureFlags.VANILLA_FEATURES));
+	public static final MenuType<GeneLabScreenHandler> GENE_LAB =
+			Registry.register(BuiltInRegistries.MENU, Primordia.id("gene_lab"),
+					new MenuType<>(GeneLabScreenHandler::new, FeatureFlags.VANILLA_SET));
 
 	private PrimordiaScreenHandlers() {
 	}

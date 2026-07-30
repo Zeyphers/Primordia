@@ -1,12 +1,12 @@
 package dev.jsz.primordia.entity.goal;
 
 import dev.jsz.primordia.entity.CreatureEntity;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.ai.goal.Goal;
-import net.minecraft.entity.ai.pathing.MobNavigation;
-import net.minecraft.entity.ai.pathing.PathNodeType;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
+import net.minecraft.world.level.pathfinder.PathType;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.Level;
 
 import java.util.EnumSet;
 
@@ -38,36 +38,36 @@ public class FollowOwnerGoal extends Goal {
 		this.startDistance = startDistance;
 		this.stopDistance = stopDistance;
 		this.teleportDistance = teleportDistance;
-		setControls(EnumSet.of(Control.MOVE, Control.LOOK));
+		setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
 	}
 
 	@Override
-	public boolean canStart() {
+	public boolean canUse() {
 		if (!creature.isDomesticated() || creature.isSitting()) return false;
-		if (creature.hasPassengers()) return false;
+		if (creature.isVehicle()) return false;
 
 		LivingEntity candidate = creature.getOwner();
 		if (candidate == null || candidate.isSpectator()) return false;
-		if (creature.squaredDistanceTo(candidate) < startDistance * startDistance) return false;
+		if (creature.distanceToSqr(candidate) < startDistance * startDistance) return false;
 
 		owner = candidate;
 		return true;
 	}
 
 	@Override
-	public boolean shouldContinue() {
-		if (creature.getNavigation().isIdle()) return false;
+	public boolean canContinueToUse() {
+		if (creature.getNavigation().isDone()) return false;
 		if (!creature.isDomesticated() || creature.isSitting()) return false;
-		if (creature.hasPassengers()) return false;
-		return owner != null && creature.squaredDistanceTo(owner) > stopDistance * stopDistance;
+		if (creature.isVehicle()) return false;
+		return owner != null && creature.distanceToSqr(owner) > stopDistance * stopDistance;
 	}
 
 	@Override
 	public void start() {
 		updateCountdown = 0;
-		if (creature.getNavigation() instanceof MobNavigation) {
-			oldWaterPathPenalty = creature.getPathfindingPenalty(PathNodeType.WATER);
-			creature.setPathfindingPenalty(PathNodeType.WATER, 0f);
+		if (creature.getNavigation() instanceof GroundPathNavigation) {
+			oldWaterPathPenalty = creature.getPathfindingMalus(PathType.WATER);
+			creature.setPathfindingMalus(PathType.WATER, 0f);
 		}
 	}
 
@@ -75,31 +75,29 @@ public class FollowOwnerGoal extends Goal {
 	public void stop() {
 		owner = null;
 		creature.getNavigation().stop();
-		if (creature.getNavigation() instanceof MobNavigation) {
-			creature.setPathfindingPenalty(PathNodeType.WATER, oldWaterPathPenalty);
+		if (creature.getNavigation() instanceof GroundPathNavigation) {
+			creature.setPathfindingMalus(PathType.WATER, oldWaterPathPenalty);
 		}
 	}
 
 	@Override
 	public void tick() {
 		if (owner == null) return;
-		creature.getLookControl().lookAt(owner, 10f, creature.getMaxLookPitchChange());
+		creature.getLookControl().setLookAt(owner, 10f, creature.getMaxHeadXRot());
 
 		if (--updateCountdown > 0) return;
-		updateCountdown = getTickCount(10);
+		updateCountdown = 10;
 
 		if (creature.isLeashed()) return;
-		if (creature.squaredDistanceTo(owner) >= teleportDistance * teleportDistance) {
+		if (creature.distanceToSqr(owner) >= teleportDistance * teleportDistance) {
 			tryTeleportNear(owner);
 			return;
 		}
-		creature.getNavigation().startMovingTo(owner, speed);
+		creature.getNavigation().moveTo(owner, speed);
 	}
 
 	private void tryTeleportNear(LivingEntity target) {
-		BlockPos origin = target.getBlockPos();
-		// A handful of tries around the owner rather than an exhaustive search: this runs every
-		// half second per follower, and failing this tick simply means trying again next tick.
+		BlockPos origin = target.blockPosition();
 		for (int attempt = 0; attempt < 10; attempt++) {
 			int dx = randomOffset(-3, 3);
 			int dy = randomOffset(-1, 1);
@@ -115,22 +113,17 @@ public class FollowOwnerGoal extends Goal {
 	private boolean tryTeleportTo(int x, int y, int z) {
 		if (Math.abs(x - owner.getX()) < 2.0 && Math.abs(z - owner.getZ()) < 2.0) return false;
 		if (!canTeleportTo(new BlockPos(x, y, z))) return false;
-		creature.refreshPositionAndAngles(x + 0.5, y, z + 0.5, creature.getYaw(), creature.getPitch());
+		creature.snapTo(x + 0.5, y, z + 0.5, creature.getYRot(), creature.getXRot());
 		creature.getNavigation().stop();
 		return true;
 	}
 
-	/**
-	 * Checked by hand rather than through the path-node classifier: that helper's signature has
-	 * moved between Minecraft versions, and the three conditions that actually matter here are
-	 * short enough to state directly — solid floor, clear head, and room for the whole body.
-	 */
 	private boolean canTeleportTo(BlockPos pos) {
-		World world = creature.getWorld();
-		BlockPos below = pos.down();
-		if (!world.getBlockState(below).isSolidBlock(world, below)) return false;
-		if (world.getBlockState(pos).isSolidBlock(world, pos)) return false;
-		BlockPos offset = pos.subtract(creature.getBlockPos());
-		return world.isSpaceEmpty(creature, creature.getBoundingBox().offset(offset));
+		Level world = creature.level();
+		BlockPos below = pos.below();
+		if (!world.getBlockState(below).isSolidRender()) return false;
+		if (world.getBlockState(pos).isSolidRender()) return false;
+		BlockPos offset = pos.subtract(creature.blockPosition());
+		return world.noCollision(creature, creature.getBoundingBox().move(offset));
 	}
 }

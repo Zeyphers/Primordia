@@ -7,6 +7,7 @@ import dev.jsz.primordia.mesh.GenomeMeshCache;
 import dev.jsz.primordia.mesh.LodTier;
 import dev.jsz.primordia.mesh.MeshBaker;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.util.Mth;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -71,8 +72,25 @@ public final class PrimordiaConfig {
 	 * the world and not of the animal: two creatures of different sizes standing next to each other
 	 * are built from voxels of the same size, which is the whole reason the effect reads as being
 	 * made of blocks rather than as being low-detail.
+	 * <p>
+	 * Fractional, so the grid can go finer than the world's own texel. Cost scales with the cube of
+	 * the count, so a quarter-pixel voxel is sixty-four times the work of a whole one — see
+	 * {@link #VOXEL_PIXELS_MIN}.
 	 */
-	public int voxelPixels = 1;
+	public float voxelPixels = 1f;
+
+	/**
+	 * Bounds and step for {@link #voxelPixels}, in Minecraft pixels.
+	 * <p>
+	 * A quarter of a pixel is four times the world's texel resolution per axis. Below that the bake
+	 * cost stops buying visible detail — the mesh is already finer than anything it stands next to —
+	 * and two whole pixels is the point past which a creature reads as a pile of cubes rather than
+	 * as an animal. The step is a quarter so every position on the slider is a exact fraction of a
+	 * texel rather than an arbitrary float.
+	 */
+	public static final float VOXEL_PIXELS_MIN = 0.25f;
+	public static final float VOXEL_PIXELS_MAX = 2f;
+	public static final float VOXEL_PIXELS_STEP = 0.25f;
 
 	/**
 	 * Gives every face its own normal instead of sharing averaged ones with its neighbours.
@@ -121,7 +139,13 @@ public final class PrimordiaConfig {
 				PrimordiaConfig loaded = GSON.fromJson(Files.readString(file), PrimordiaConfig.class);
 				// A truncated or hand-edited file deserialises to null rather than throwing, and a
 				// null config would NPE on the first frame rendered.
-				if (loaded != null) return loaded;
+				if (loaded != null) {
+					// The one setting where a hand-edited value is genuinely dangerous rather than
+					// merely wrong: zero divides the creature into infinitely many voxels and hangs
+					// the bake thread, and the cost of anything below the minimum is cubic.
+					loaded.voxelPixels = Mth.clamp(loaded.voxelPixels, VOXEL_PIXELS_MIN, VOXEL_PIXELS_MAX);
+					return loaded;
+				}
 			} catch (Exception e) {
 				Primordia.LOGGER.warn("Could not read {}, falling back to defaults", file, e);
 			}

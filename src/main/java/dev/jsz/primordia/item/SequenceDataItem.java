@@ -1,11 +1,11 @@
 package dev.jsz.primordia.item;
 
 import dev.jsz.primordia.lab.SampleData;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.tooltip.TooltipType;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
 
 import java.util.List;
 
@@ -27,7 +27,7 @@ public class SequenceDataItem extends Item {
 	private static final int PREVIEW_ROWS = 3;
 	private static final int PREVIEW_COLUMNS = 24;
 
-	public SequenceDataItem(Settings settings) {
+	public SequenceDataItem(Properties settings) {
 		super(settings);
 	}
 
@@ -42,33 +42,33 @@ public class SequenceDataItem extends Item {
 	 * A blank one keeps the generic name, since there is no specimen to name it after.
 	 */
 	@Override
-	public Text getName(ItemStack stack) {
+	public Component getName(ItemStack stack) {
 		SampleData data = SampleData.get(stack);
 		if (data == null) return super.getName(stack);
-		return Text.literal("Raw_Sequence_Data_" + data.lineageHex() + ".fastq");
+		return Component.literal("Raw_Sequence_Data_" + data.lineageHex() + ".fastq");
 	}
 
 	@Override
-	public void appendTooltip(ItemStack stack, TooltipContext context, List<Text> tooltip, TooltipType type) {
+	public void appendHoverText(ItemStack stack, TooltipContext context, net.minecraft.world.item.component.TooltipDisplay display, java.util.function.Consumer<Component> tooltipAdder, TooltipFlag flag) {
 		SampleData data = SampleData.get(stack);
 		if (data == null) {
-			tooltip.add(Text.literal("Corrupt read — no recoverable sequence")
-					.formatted(Formatting.DARK_RED, Formatting.ITALIC));
+			tooltipAdder.accept(Component.literal("Corrupt read — no recoverable sequence")
+					.withStyle(ChatFormatting.DARK_RED, ChatFormatting.ITALIC));
 			return;
 		}
 
-		tooltip.add(Text.literal("Unprocessed genome data").formatted(Formatting.DARK_GREEN));
-		for (Text row : garble(data)) {
-			tooltip.add(row);
+		tooltipAdder.accept(Component.literal("Unprocessed genome data").withStyle(ChatFormatting.DARK_GREEN));
+		for (Component row : garble(data)) {
+			tooltipAdder.accept(row);
 		}
-		tooltip.add(Text.literal("Requires a Genome Decoder to interpret.")
-				.formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
+		tooltipAdder.accept(Component.literal("Requires a Genome Decoder to interpret.")
+				.withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
 	}
 
 	/** A stable pseudo-sequence for this specimen, so the same data always reads the same. */
-	private static List<Text> garble(SampleData data) {
+	private static List<Component> garble(SampleData data) {
 		long state = data.genome().seed() ^ data.genome().lineage();
-		List<Text> rows = new java.util.ArrayList<>(PREVIEW_ROWS);
+		List<Component> rows = new java.util.ArrayList<>(PREVIEW_ROWS);
 		StringBuilder row = new StringBuilder(PREVIEW_COLUMNS);
 
 		for (int r = 0; r < PREVIEW_ROWS; r++) {
@@ -80,7 +80,7 @@ public class SequenceDataItem extends Item {
 				state ^= state << 17;
 				row.append(BASES[(int) Math.floorMod(state, 4L)]);
 			}
-			rows.add(Text.literal(row.toString()).formatted(Formatting.DARK_GREEN));
+			rows.add(Component.literal(row.toString()).withStyle(ChatFormatting.DARK_GREEN));
 		}
 		return rows;
 	}

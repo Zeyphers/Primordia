@@ -1,56 +1,43 @@
 package dev.jsz.primordia.item;
 
 import dev.jsz.primordia.lab.GuideData;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.tooltip.TooltipType;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Hand;
-import net.minecraft.util.TypedActionResult;
-import net.minecraft.world.World;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.TooltipDisplay;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.level.Level;
 
-import java.util.List;
+import java.util.function.Consumer;
 
-/**
- * The player's own record of what they have learned, and the mod's manual.
- * <p>
- * Exists mostly to solve a storage problem. Raising a species to full confidence takes twelve
- * decoded specimens, and twelve report items saying nearly the same thing is not knowledge, it is
- * clutter. Reports file themselves into a guide carried in the inventory and are consumed doing it,
- * so studying a lineage thoroughly costs one line in a book rather than most of a backpack.
- */
 public class FieldGuideItem extends Item {
 
-	public FieldGuideItem(Settings settings) {
+	public FieldGuideItem(Properties settings) {
 		super(settings);
 	}
 
-	/**
-	 * {@inheritDoc}
-	 * <p>
-	 * The screen is opened by a client-side handler registered in {@code PrimordiaClient}, not from
-	 * here. Naming a screen class in an item — which the dedicated server also loads — is how a mod
-	 * crashes on servers.
-	 */
 	@Override
-	public TypedActionResult<ItemStack> use(World world, PlayerEntity player, Hand hand) {
-		return TypedActionResult.success(player.getStackInHand(hand), true);
+	public InteractionResult use(Level world, Player player, InteractionHand hand) {
+		return InteractionResult.SUCCESS;
 	}
 
 	@Override
-	public void appendTooltip(ItemStack stack, TooltipContext context, List<Text> tooltip, TooltipType type) {
-		GuideData data = GuideData.get(stack);
+	public void appendHoverText(ItemStack stack, TooltipContext context, TooltipDisplay display, Consumer<Component> tooltipAdder, TooltipFlag flag) {
+		// Read from the synced client-side data rather than the item stack components
+		GuideData data = dev.jsz.primordia.PrimordiaClient.getClientGuideData();
 		if (data.speciesCount() == 0) {
-			tooltip.add(Text.literal("No species on file yet").formatted(Formatting.DARK_GRAY));
+			tooltipAdder.accept(Component.literal("No species on file yet").withStyle(ChatFormatting.DARK_GRAY));
 		} else {
-			tooltip.add(Text.literal(data.speciesCount() + " species · "
-					+ data.specimensFiled() + " specimens filed").formatted(Formatting.AQUA));
+			tooltipAdder.accept(Component.literal(data.speciesCount() + " species · "
+					+ data.specimensFiled() + " specimens filed").withStyle(ChatFormatting.AQUA));
 		}
-		tooltip.add(Text.literal("Reports file themselves while this is carried.")
-				.formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
-		tooltip.add(Text.literal("Right-click to read.")
-				.formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
+		tooltipAdder.accept(Component.literal("Reports file themselves while this is carried.")
+				.withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
+		tooltipAdder.accept(Component.literal("Right-click to read.")
+				.withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
 	}
 }

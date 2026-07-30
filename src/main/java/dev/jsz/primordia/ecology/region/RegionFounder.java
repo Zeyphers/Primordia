@@ -279,8 +279,8 @@ public final class RegionFounder {
 	 * selection slowly drive it out of the only place it can live.
 	 */
 	private static void caveFounder(RegionRecord record, Random mcSource, RandomGenerator random) {
-		net.minecraft.util.math.random.Random mcRandom =
-				net.minecraft.util.math.random.Random.create(mcSource.nextLong());
+		net.minecraft.util.RandomSource mcRandom =
+				net.minecraft.util.RandomSource.create(mcSource.nextLong());
 		Genome genome = Archetype.CAVE_CRAWLER.create(new Random(mcRandom.nextLong()));
 
 		// Scaled by what the caves under this region can actually support. A lush cave gets a
@@ -300,8 +300,8 @@ public final class RegionFounder {
 	private static LineageRecord founder(RegionRecord record, String biomeName,
 	                                     Random mcSource, RandomGenerator random,
 	                                     float diet, float population) {
-		net.minecraft.util.math.random.Random mcRandom =
-				net.minecraft.util.math.random.Random.create(mcSource.nextLong());
+		net.minecraft.util.RandomSource mcRandom =
+				net.minecraft.util.RandomSource.create(mcSource.nextLong());
 		Genome base = Genome.createForBiome(mcRandom, biomeName);
 
 		float[] values = base.copyValues();

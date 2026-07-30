@@ -1,8 +1,0 @@
-{
-  "parent": "minecraft:block/cube_bottom_top",
-  "textures": {
-    "top": "minecraft:block/packed_ice",
-    "side": "minecraft:block/blue_ice",
-    "bottom": "minecraft:block/iron_block"
-  }
-}

@@ -1,29 +1,42 @@
-# Downloads a portable JDK 21 and Gradle into C:\Users\jacob.szczepaniak\dev\tools\.
+# Downloads a portable JDK and Gradle into C:\Users\jacob.szczepaniak\dev\tools\.
 # No admin rights required - everything is extracted from zips into user space.
 # Safe to re-run: existing installs are detected and skipped.
+#
+# This branch targets Minecraft 26.2, which needs a different toolchain from the 1.21.1
+# line on `main`:
+#
+#   |        | main (1.21.1) | this branch (26.2) |
+#   |--------|---------------|--------------------|
+#   | JDK    | 21            | 25 (26.2 requires it) |
+#   | Gradle | 8.10          | 9.6.1 (Loom 1.17.17 needs >= 9.5.0) |
+#
+# Note that Fabric's own 26.1 notes say Gradle 9.4.0; that is too old for the current Loom,
+# which declares a plugin API version of 9.5.0 and fails variant resolution against 9.4.
 
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is far faster without the progress bar
 
 $toolsDir = 'C:\Users\jacob.szczepaniak\dev\tools'
-$jdkDir   = Join-Path $toolsDir 'jdk-21'
-$gradleVersion = '8.10'
+$jdkVersion = '25'
+$jdkDir   = Join-Path $toolsDir "jdk-$jdkVersion"
+$gradleVersion = '9.6.1'
 $gradleDir = Join-Path $toolsDir "gradle-$gradleVersion"
 
 if (-not (Test-Path $toolsDir)) { New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null }
 
-# ---- JDK 21 (Eclipse Temurin) ------------------------------------------------
+# ---- JDK (Eclipse Temurin) ---------------------------------------------------
 if (Test-Path (Join-Path $jdkDir 'bin\java.exe')) {
     Write-Output "JDK already present at $jdkDir"
 } else {
-    $jdkZip = Join-Path $env:TEMP 'temurin-jdk21.zip'
-    Write-Output 'Downloading Temurin JDK 21 (~190 MB)...'
+    $jdkZip = Join-Path $env:TEMP "temurin-jdk$jdkVersion.zip"
+    Write-Output "Downloading Temurin JDK $jdkVersion (~135 MB)..."
     Invoke-WebRequest -UseBasicParsing `
-        -Uri 'https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse' `
+        -Uri "https://api.adoptium.net/v3/binary/latest/$jdkVersion/ga/windows/x64/jdk/hotspot/normal/eclipse" `
         -OutFile $jdkZip
 
     Write-Output 'Extracting JDK...'
-    $staging = Join-Path $env:TEMP 'jdk21-staging'
+    $staging = Join-Path $env:TEMP "jdk$jdkVersion-staging"
     if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
     Expand-Archive -Path $jdkZip -DestinationPath $staging -Force
 

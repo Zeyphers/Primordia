@@ -4,8 +4,8 @@ import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.ecology.EnergyBudget;
 import dev.jsz.primordia.entity.CreatureActivity;
 import dev.jsz.primordia.entity.CreatureEntity;
-import net.minecraft.entity.ai.goal.Goal;
-import net.minecraft.util.math.Box;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.phys.AABB;
 
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -42,11 +42,11 @@ public class FeedOnCarcassGoal extends Goal {
 	public FeedOnCarcassGoal(CreatureEntity creature, double speed) {
 		this.creature = creature;
 		this.speed = speed;
-		setControls(EnumSet.of(Control.MOVE, Control.LOOK));
+		setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
 	}
 
 	@Override
-	public boolean canStart() {
+	public boolean canUse() {
 		if (creature.isCarcass() || creature.isAsleep() || creature.isPosing()) return false;
 		if (!creature.getDietGroup().hunts()) return false;
 		if (creature.getTarget() != null) return false;
@@ -59,7 +59,7 @@ public class FeedOnCarcassGoal extends Goal {
 	}
 
 	@Override
-	public boolean shouldContinue() {
+	public boolean canContinueToUse() {
 		return carcass != null
 				&& carcass.isAlive()
 				&& carcass.getCarcassNutrition() > 0f
@@ -82,7 +82,7 @@ public class FeedOnCarcassGoal extends Goal {
 	}
 
 	@Override
-	public boolean canStop() {
+	public boolean isInterruptable() {
 		return true;
 	}
 
@@ -90,17 +90,14 @@ public class FeedOnCarcassGoal extends Goal {
 	public void tick() {
 		if (carcass == null) return;
 
-		creature.getLookControl().lookAt(carcass.getX(), carcass.getBodyY(0.4), carcass.getZ());
+		creature.getLookControl().setLookAt(carcass.getX(), carcass.getY(0.4), carcass.getZ());
 
-		if (creature.squaredDistanceTo(carcass) > REACH_SQ) {
+		if (creature.distanceToSqr(carcass) > REACH_SQ) {
 			approachTicks++;
-			if (creature.getNavigation().isIdle()) moveToCarcass();
+			if (creature.getNavigation().isDone()) moveToCarcass();
 			return;
 		}
 
-		// Arrived. Feeding is deliberately not instantaneous: a predator standing over a kill for
-		// ten seconds is a predator not hunting for ten seconds, and it is the only part of
-		// predation the player ever gets to watch happen.
 		approachTicks = 0;
 		creature.getNavigation().stop();
 
@@ -111,23 +108,25 @@ public class FeedOnCarcassGoal extends Goal {
 		if (taken <= 0f) return;
 		creature.addEnergy(taken * EnergyBudget.energyPerNutrition(plan));
 
-		if (creature.age % 20 == 1) {
+		if (creature.tickCount % 20 == 1) {
 			creature.triggerActivity(CreatureActivity.FEED);
+			// One tear per animation, so the sound is what the creature is visibly doing rather than a
+			// loop running underneath it.
+			creature.playFeedingSound();
 		}
 	}
 
 	private void moveToCarcass() {
 		if (carcass == null) return;
-		creature.getNavigation().startMovingTo(carcass.getX(), carcass.getY(), carcass.getZ(), speed);
+		creature.getNavigation().moveTo(carcass.getX(), carcass.getY(), carcass.getZ(), speed);
 	}
 
-	/** The nearest body with anything left on it. */
 	private CreatureEntity findCarcass() {
-		Box box = creature.getBoundingBox().expand(SEARCH_RADIUS, SEARCH_HEIGHT, SEARCH_RADIUS);
-		List<CreatureEntity> bodies = creature.getWorld().getEntitiesByClass(CreatureEntity.class, box,
+		AABB box = creature.getBoundingBox().inflate(SEARCH_RADIUS, SEARCH_HEIGHT, SEARCH_RADIUS);
+		List<CreatureEntity> bodies = creature.level().getEntitiesOfClass(CreatureEntity.class, box,
 				other -> other.isCarcass() && other.getCarcassNutrition() > 0f);
 		return bodies.stream()
-				.min(Comparator.comparingDouble(creature::squaredDistanceTo))
+				.min(Comparator.comparingDouble(creature::distanceToSqr))
 				.orElse(null);
 	}
 }

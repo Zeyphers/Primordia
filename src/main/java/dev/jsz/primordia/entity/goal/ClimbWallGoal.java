@@ -1,26 +1,21 @@
 package dev.jsz.primordia.entity.goal;
 
 import dev.jsz.primordia.entity.CreatureEntity;
-import net.minecraft.entity.ai.goal.Goal;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 
 import java.util.EnumSet;
 
 /**
- * Sends a climber up a wall.
+ * Sends a climber up a wall for its own sake.
  * <p>
- * Minecraft's climbing is entirely passive: {@code LivingEntity} lifts anything whose
- * {@code isClimbing()} is true <i>while it is also horizontally colliding</i>, and that is the whole
- * mechanism. A spider climbs because it is chasing something and blunders into a wall — nothing
- * decides to climb.
+ * The physics live on {@link CreatureEntity#setClimbing}; this only decides when and where. Nothing
+ * about climbing is passive any more — see that method for why the engine's own mechanism could not
+ * be made to carry it.
  * <p>
- * That is why these were walking about on the floor. Their pathfinder is perfectly good at its job:
- * it routes <i>around</i> obstacles, so the creature never presses into one, never collides
- * horizontally, and the engine never lifts it. Climbing had to become something they choose.
- * <p>
- * The goal is deliberately simple — find a wall, face it, and keep walking into it. Everything above
- * that is the engine's.
+ * Two ways this goes wrong and both look the same from outside, so both are checked: aiming at a wall
+ * the creature is not actually against, and carrying on after it has stopped rising.
  */
 public class ClimbWallGoal extends Goal {
 	/** How far to look for a wall worth climbing. */
@@ -33,23 +28,59 @@ public class ClimbWallGoal extends Goal {
 	private static final int MAX_CLIMB_TICKS = 200;
 	/** Ticks allowed to reach the wall before the attempt is written off. */
 	private static final int APPROACH_TIMEOUT = 80;
+	/** How many blocks of solid wall a climb needs above the creature's feet to be worth starting. */
+	private static final int WALL_HEIGHT = 3;
+
+	/**
+	 * Ticks held against the wall without gaining height before the attempt is abandoned.
+	 * <p>
+	 * Short enough that a creature at the foot of something it cannot climb gives up while the player
+	 * is still watching, rather than grinding away at it for ten seconds.
+	 */
+	private static final int STALL_LIMIT = 35;
+	/** Height gained that counts as progress, in blocks. */
+	private static final double PROGRESS = 0.4;
+	/**
+	 * Ticks before a creature that stalled will try again.
+	 * <p>
+	 * Far longer than {@link #SEARCH_INTERVAL}, and the point of the stall check. Without it the goal
+	 * restarted every three seconds against the same unclimbable spot, which reads as an animal stuck
+	 * forever rather than one that tried something and gave up.
+	 */
+	private static final int STALL_COOLDOWN = 600;
+	/** Ticks of rest after a climb that worked, so arriving somewhere is not immediately undone. */
+	private static final int CLIMBED_COOLDOWN = 200;
+
+	/** Blocks of drop below a ledge before it counts as a wall to be climbed down. */
+	private static final int MIN_DESCENT = 3;
 
 	private final CreatureEntity creature;
 	private final double speed;
 	private BlockPos wall;
 	private Direction into;
+	/** Set when this attempt is going down a ledge rather than up a wall. */
+	private boolean descending;
+	private Direction edge;
 	private int cooldown;
 	private int climbTicks;
 	private int approachTicks;
 
+	/** Highest point reached since reaching the wall, and how long since it last improved. */
+	private double highestY;
+	private int stalledTicks;
+	/** This attempt is over. Distinct from {@link #stalled}, which says it failed. */
+	private boolean finished;
+	private boolean stalled;
+	private boolean gainedHeight;
+
 	public ClimbWallGoal(CreatureEntity creature, double speed) {
 		this.creature = creature;
 		this.speed = speed;
-		setControls(EnumSet.of(Control.MOVE, Control.LOOK, Control.JUMP));
+		setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK, Flag.JUMP));
 	}
 
 	@Override
-	public boolean canStart() {
+	public boolean canUse() {
 		if (!creature.canClimb()) return false;
 		if (creature.isCarcass() || creature.isAsleep() || creature.isPosing()) return false;
 		if (creature.isTamed() || creature.getTarget() != null) return false;
@@ -57,13 +88,24 @@ public class ClimbWallGoal extends Goal {
 		cooldown = SEARCH_INTERVAL;
 		if (creature.getRandom().nextFloat() > URGE) return false;
 
-		return findWall();
+		if (findWall()) {
+			descending = false;
+			return true;
+		}
+		// Nothing to go up. A ledge to go down is the other half of being a climber, and the half that
+		// stops one stranding itself on top of everything it ever climbed — the pathfinder will not take
+		// an animal down a sheer face, so without this the only way off is to fall.
+		edge = creature.ledgeEdge(null, MIN_DESCENT);
+		descending = edge != null;
+		return descending;
 	}
 
 	@Override
-	public boolean shouldContinue() {
+	public boolean canContinueToUse() {
+		if (finished) return false;
+		if (descending) return climbTicks <= MAX_CLIMB_TICKS;
 		if (wall == null || into == null) return false;
-		if (creature.getTarget() != null || creature.getAttacker() != null) return false;
+		if (creature.getTarget() != null || creature.getLastHurtByMob() != null) return false;
 		if (climbTicks > MAX_CLIMB_TICKS) return false;
 		return approachTicks <= APPROACH_TIMEOUT;
 	}
@@ -72,98 +114,164 @@ public class ClimbWallGoal extends Goal {
 	public void start() {
 		climbTicks = 0;
 		approachTicks = 0;
+		stalledTicks = 0;
+		finished = false;
+		stalled = false;
+		gainedHeight = false;
+		highestY = creature.getY();
+		if (descending) creature.beginDescent(edge);
 	}
 
 	@Override
 	public void stop() {
 		wall = null;
 		into = null;
+		edge = null;
+		descending = false;
 		climbTicks = 0;
-		creature.setClimbFacing(null);
 		creature.getNavigation().stop();
+		// A spot that could not be climbed is not worth retrying on the next search tick, and neither is
+		// one that was just climbed — a creature that goes straight back up the wall it arrived from
+		// reads as stuck rather than as a climber.
+		if (stalled) cooldown = STALL_COOLDOWN;
+		else if (gainedHeight) cooldown = CLIMBED_COOLDOWN;
+		finished = false;
+		stalled = false;
 	}
 
 	@Override
-	public boolean canStop() {
+	public boolean isInterruptable() {
 		return true;
 	}
 
 	@Override
 	public void tick() {
+		if (descending) {
+			tickDescent();
+			return;
+		}
 		if (wall == null || into == null) return;
 
-		creature.getLookControl().lookAt(
-				wall.getX() + 0.5, creature.getY() + 0.5, wall.getZ() + 0.5);
+		// Looking along the climb rather than at the block it picked, so the head still points the way
+		// the body is going once the creature has risen past that block.
+		creature.getLookControl().setLookAt(
+				creature.getX() + into.getStepX() * 2.0,
+				creature.getY() + 2.0,
+				creature.getZ() + into.getStepZ() * 2.0);
 
-		double dx = (wall.getX() + 0.5) - creature.getX();
-		double dz = (wall.getZ() + 0.5) - creature.getZ();
-		if (dx * dx + dz * dz > 2.5 * 2.5) {
+		// A mantle is the creature committing to the top; leave it alone until it lands.
+		if (creature.isMantling()) return;
+
+		// Asked of the creature's own position, not assumed from where the wall was when it was chosen —
+		// a creature that walked past the corner it aimed at is no longer on that wall. Except once it
+		// is actually on one, where the answer is the wall it is on: re-deciding mid-climb lets a
+		// creature sitting on a block boundary flip in and out of climbing every other tick.
+		Direction surface = creature.isClimbing() ? creature.getClimbFacing() : creature.wallAdjacent(into);
+		if (surface == null) {
 			approachTicks++;
-			if (creature.getNavigation().isIdle()) {
-				creature.getNavigation().startMovingTo(
+			// Coming off the wall after a climb has started is the end of the attempt either way: over
+			// the top is a success and must not be punished with a cooldown, sliding off without having
+			// risen is exactly what the cooldown is for.
+			if (climbTicks > 0) {
+				finished = true;
+				stalled = !gainedHeight;
+				return;
+			}
+			if (creature.getNavigation().isDone()) {
+				creature.getNavigation().moveTo(
 						wall.getX() + 0.5, wall.getY(), wall.getZ() + 0.5, speed);
 			}
 			return;
 		}
 
-		// Close enough. From here the creature is driven at the wall through its move control
-		// rather than by the navigator, which would steer around the obstacle instead of into it.
-		//
-		// It has to be the move control and not a velocity nudge. LivingEntity.applyMovementInput
-		// rebuilds velocity from the mob's movement input every tick before it moves, so anything
-		// set by hand is overwritten before it can do anything — and with no input the creature
-		// stops pressing the wall, horizontalCollision goes false, and the engine's climb never
-		// triggers. That is the whole reason they were standing at the foot of a wall shuffling:
-		// the lift is gated on a collision that the goal had itself stopped producing.
+		into = surface;
 		creature.getNavigation().stop();
 		approachTicks = 0;
-		climbTicks++;
+		if (climbTicks++ == 0) {
+			// Measured from the foot of the wall, not from wherever the goal happened to start. The walk
+			// in can be downhill, and a baseline taken up there is one the creature cannot beat by
+			// climbing — it would stall while visibly going up.
+			highestY = creature.getY();
+		}
 
-		// Aimed through the wall and above, so the input keeps pointing into it as the creature
-		// rises rather than being satisfied the moment it arrives.
-		creature.getMoveControl().moveTo(
-				creature.getX() + into.getOffsetX() * 2.0,
-				creature.getY() + 3.0,
-				creature.getZ() + into.getOffsetZ() * 2.0,
-				speed);
-		creature.setClimbFacing(into);
+		creature.setClimbing(into, 1f);
+
+		if (creature.getY() > highestY + PROGRESS) {
+			highestY = creature.getY();
+			gainedHeight = true;
+			stalledTicks = 0;
+		} else if (++stalledTicks > STALL_LIMIT) {
+			stalled = true;
+			finished = true;
+		}
 	}
 
-	/** The nearest solid face at about body height that a creature could get onto. */
+	/**
+	 * Rides a descent down, from backing over the lip to arriving at the bottom.
+	 * <p>
+	 * The measure of progress is inverted — height lost, not gained — but everything else is the same
+	 * stall check as the way up, and for the same reason: a creature grinding against an overhang it
+	 * cannot get past has to give up rather than hang there.
+	 */
+	private void tickDescent() {
+		// Backing over the edge is committed; nothing to do until it has hold of the face.
+		if (creature.isDescending()) return;
+
+		if (!creature.isClimbing()) {
+			// Down and standing, or it never found a face and simply fell. Either way it is over.
+			finished = true;
+			return;
+		}
+
+		if (climbTicks++ == 0) highestY = creature.getY();
+		creature.setClimbing(creature.getClimbFacing(), -1f);
+
+		if (creature.getY() < highestY - PROGRESS) {
+			highestY = creature.getY();
+			gainedHeight = true;
+			stalledTicks = 0;
+		} else if (++stalledTicks > STALL_LIMIT) {
+			stalled = true;
+			finished = true;
+		}
+	}
+
+	/**
+	 * Finds the nearest climbable wall face, searching straight out along the four compass directions.
+	 * <p>
+	 * Scanning the surrounding box and then rounding the offset to a compass direction — which is what
+	 * this used to do — picks the nearest solid block and then guesses which way it lies. For anything
+	 * off the axes the guess points past the wall rather than into it, and the creature walks along the
+	 * face it meant to climb. Going out one axis at a time means the direction it presses in is the
+	 * direction the wall was found in.
+	 */
 	private boolean findWall() {
-		BlockPos origin = creature.getBlockPos();
-		BlockPos.Mutable cursor = new BlockPos.Mutable();
-		BlockPos best = null;
-		Direction bestFacing = null;
-		double bestDistance = Double.MAX_VALUE;
+		BlockPos origin = creature.blockPosition();
+		BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 
-		for (int dx = -SEARCH_RADIUS; dx <= SEARCH_RADIUS; dx++) {
-			for (int dz = -SEARCH_RADIUS; dz <= SEARCH_RADIUS; dz++) {
-				for (int dy = 0; dy <= 1; dy++) {
-					cursor.set(origin.getX() + dx, origin.getY() + dy, origin.getZ() + dz);
-					if (!creature.getWorld().getBlockState(cursor).isSolidBlock(creature.getWorld(), cursor)) {
-						continue;
-					}
-					// It is only a wall if there is something above it to climb onto. A single
-					// block on the floor is a step, and walking into it forever looks broken.
-					cursor.set(origin.getX() + dx, origin.getY() + dy + 2, origin.getZ() + dz);
-					if (!creature.getWorld().getBlockState(cursor).isSolidBlock(creature.getWorld(), cursor)) {
-						continue;
-					}
+		for (int distance = 1; distance <= SEARCH_RADIUS; distance++) {
+			for (Direction facing : Direction.Plane.HORIZONTAL) {
+				int x = origin.getX() + facing.getStepX() * distance;
+				int z = origin.getZ() + facing.getStepZ() * distance;
+				if (!isWall(cursor, x, origin.getY(), z)) continue;
 
-					double distance = dx * dx + dz * dz;
-					if (distance < 1.0 || distance >= bestDistance) continue;
-
-					Direction facing = Direction.getFacing(dx, 0, dz);
-					best = new BlockPos(origin.getX() + dx, origin.getY() + dy, origin.getZ() + dz);
-					bestFacing = facing;
-					bestDistance = distance;
-				}
+				wall = new BlockPos(x, origin.getY(), z);
+				into = facing;
+				return true;
 			}
 		}
 
-		wall = best;
-		into = bestFacing;
-		return wall != null;
+		wall = null;
+		into = null;
+		return false;
+	}
+
+	/** Whether this column is solid from the creature's feet up far enough to be worth climbing. */
+	private boolean isWall(BlockPos.MutableBlockPos cursor, int x, int y, int z) {
+		for (int dy = 0; dy < WALL_HEIGHT; dy++) {
+			cursor.set(x, y + dy, z);
+			if (!creature.level().getBlockState(cursor).isSolidRender()) return false;
+		}
+		return true;
 	}
 }

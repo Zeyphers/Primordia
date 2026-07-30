@@ -553,14 +553,14 @@ public final class BodyPlanBuilder {
 		for (BoneDef b : boneArray) {
 			if (!b.emitsGeometry) continue;
 			float r = b.maxRadius() + pad;
-			expand(min, max, b.head, r);
-			expand(min, max, b.tail, r);
+			inflate(min, max, b.head, r);
+			inflate(min, max, b.tail, r);
 			float avgR = (b.radiusHead + b.radiusTail) * 0.5f;
 			mass += (float) Math.PI * avgR * avgR * b.length();
 		}
 		for (SdfBlob blob : blobArray) {
 			if (blob.subtract()) continue;
-			expand(min, max, blob.center(), blob.maxRadius() + pad);
+			inflate(min, max, blob.center(), blob.maxRadius() + pad);
 			mass += (float) (4.0 / 3.0 * Math.PI * blob.radii().x * blob.radii().y * blob.radii().z);
 		}
 		// The ground plane is always part of the silhouette envelope — feet sit at y = 0.
@@ -1143,7 +1143,7 @@ public final class BodyPlanBuilder {
 		}
 	}
 
-	private static void expand(Vector3f min, Vector3f max, Vector3f p, float r) {
+	private static void inflate(Vector3f min, Vector3f max, Vector3f p, float r) {
 		min.set(Math.min(min.x, p.x - r), Math.min(min.y, p.y - r), Math.min(min.z, p.z - r));
 		max.set(Math.max(max.x, p.x + r), Math.max(max.y, p.y + r), Math.max(max.z, p.z + r));
 	}

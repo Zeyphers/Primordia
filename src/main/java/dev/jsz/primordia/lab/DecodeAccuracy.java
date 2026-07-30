@@ -1,6 +1,6 @@
 package dev.jsz.primordia.lab;
 
-import net.minecraft.util.Formatting;
+import net.minecraft.ChatFormatting;
 
 /**
  * How much of a genome a decode is actually able to resolve.
@@ -16,22 +16,22 @@ import net.minecraft.util.Formatting;
  */
 public enum DecodeAccuracy {
 	/** Nothing on file. Most loci come back unreadable. */
-	UNKNOWN(0, "Unreferenced", Formatting.DARK_RED),
+	UNKNOWN(0, "Unreferenced", ChatFormatting.DARK_RED),
 	/** A read or two: enough to bracket a value, not to state it. */
-	COARSE(1, "Fragmentary", Formatting.RED),
+	COARSE(1, "Fragmentary", ChatFormatting.RED),
 	/** Enough of the lineage on file to give a range. */
-	PARTIAL(3, "Partial", Formatting.YELLOW),
+	PARTIAL(3, "Partial", ChatFormatting.YELLOW),
 	/** Well referenced: figures, with a tolerance. */
-	GOOD(6, "Referenced", Formatting.GREEN),
+	GOOD(6, "Referenced", ChatFormatting.GREEN),
 	/** The species is thoroughly characterised; the report reads like the debug output. */
-	COMPLETE(12, "Complete", Formatting.AQUA);
+	COMPLETE(12, "Complete", ChatFormatting.AQUA);
 
 	/** Individuals of the lineage that must be on file to reach this level. */
 	public final int decodesRequired;
 	public final String label;
-	public final Formatting colour;
+	public final ChatFormatting colour;
 
-	DecodeAccuracy(int decodesRequired, String label, Formatting colour) {
+	DecodeAccuracy(int decodesRequired, String label, ChatFormatting colour) {
 		this.decodesRequired = decodesRequired;
 		this.label = label;
 		this.colour = colour;
@@ -51,14 +51,36 @@ public enum DecodeAccuracy {
 		for (DecodeAccuracy candidate : values()) {
 			if (priorDecodes >= candidate.decodesRequired) level = candidate;
 		}
-		if (freshness < 0.35f) level = level.degraded();
-		return level;
+		return level.degraded(penaltyFor(freshness));
+	}
+
+	/**
+	 * Levels of confidence lost to decay, by how much of the sample is left.
+	 * <p>
+	 * Graded rather than a single cliff. One threshold meant a sample was either perfect or one step
+	 * worse, so decay was a coin flip the player could not see coming and could not read off the
+	 * item; four bands make a wilting sample visibly worth hurrying, and make a forgotten one
+	 * genuinely poor rather than mildly inconvenient.
+	 * <p>
+	 * Even a fully rotten sample keeps whatever three levels of penalty leaves it — usually
+	 * {@link #UNKNOWN}, which is a real report saying it could not read the tissue, not a failure.
+	 */
+	private static int penaltyFor(float freshness) {
+		if (freshness >= 0.60f) return 0;
+		if (freshness >= 0.35f) return 1;
+		if (freshness >= 0.15f) return 2;
+		return 3;
+	}
+
+	/** {@code steps} levels worse, floored at {@link #UNKNOWN}. */
+	public DecodeAccuracy degraded(int steps) {
+		int index = Math.max(0, ordinal() - Math.max(0, steps));
+		return values()[index];
 	}
 
 	/** One level worse, floored at {@link #UNKNOWN}. */
 	public DecodeAccuracy degraded() {
-		int index = ordinal();
-		return index <= 0 ? UNKNOWN : values()[index - 1];
+		return degraded(1);
 	}
 
 	public boolean atLeast(DecodeAccuracy other) {

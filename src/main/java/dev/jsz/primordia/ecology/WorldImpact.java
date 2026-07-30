@@ -3,14 +3,14 @@ package dev.jsz.primordia.ecology;
 import dev.jsz.primordia.ecology.region.RegionLedger;
 import dev.jsz.primordia.ecology.region.RegionPos;
 import dev.jsz.primordia.ecology.region.RegionRecord;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.registry.tag.BlockTags;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.World;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -54,56 +54,48 @@ public final class WorldImpact {
 	 * removed.
 	 */
 	public static boolean isCroppable(BlockState state) {
-		return state.isIn(BlockTags.REPLACEABLE_BY_TREES)
-				|| state.isIn(BlockTags.FLOWERS);
+		return state.is(BlockTags.REPLACEABLE_BY_TREES)
+				|| state.is(BlockTags.FLOWERS);
 	}
 
 	/** Topsoil that repeated traffic is allowed to wear down. */
 	public static boolean isTrampleable(BlockState state) {
-		return state.isOf(Blocks.GRASS_BLOCK)
-				|| state.isOf(Blocks.PODZOL)
-				|| state.isOf(Blocks.MYCELIUM);
+		return state.is(Blocks.GRASS_BLOCK)
+				|| state.is(Blocks.PODZOL)
+				|| state.is(Blocks.MYCELIUM);
 	}
 
 	/**
 	 * Crops a plant and tells the region it lost some standing vegetation.
 	 * Returns false when the block was not edible or the chunk is out of budget.
 	 */
-	public static boolean graze(ServerWorld world, BlockPos pos) {
+	public static boolean graze(ServerLevel world, BlockPos pos) {
 		BlockState state = world.getBlockState(pos);
 		if (!isCroppable(state)) return false;
 		if (!spend(world, pos)) return false;
 
-		world.breakBlock(pos, false);
+		world.destroyBlock(pos, false, null, 512);
 		debitVegetation(world, pos, 0.004f);
 		return true;
 	}
 
-	/**
-	 * Wears a step of a path into the ground.
-	 * <p>
-	 * Grass to dirt, dirt to a path block — two stages, so a route has to be genuinely well used
-	 * before it reads as a trail. A single animal crossing a meadow once should leave nothing.
-	 */
-	public static void trample(ServerWorld world, BlockPos pos) {
+	public static void trample(ServerLevel world, BlockPos pos) {
 		BlockState state = world.getBlockState(pos);
 		Block next;
 		if (isTrampleable(state)) {
 			next = Blocks.DIRT;
-		} else if (state.isOf(Blocks.DIRT)) {
+		} else if (state.is(Blocks.DIRT)) {
 			next = Blocks.DIRT_PATH;
 		} else {
 			return;
 		}
-		// Path blocks need something above them that will not pop off, and dirt path reverts if
-		// covered — checking here saves a block update storm on the tick after.
-		if (!world.getBlockState(pos.up()).isAir()) return;
+		if (!world.getBlockState(pos.above()).isAir()) return;
 		if (!spend(world, pos)) return;
-		world.setBlockState(pos, next.getDefaultState());
+		world.setBlockAndUpdate(pos, next.defaultBlockState());
 	}
 
 	/** Reduces the region's recorded plant stock, which is what makes overgrazing bite. */
-	public static void debitVegetation(ServerWorld world, BlockPos pos, float amount) {
+	public static void debitVegetation(ServerLevel world, BlockPos pos, float amount) {
 		RegionLedger ledger = RegionLedger.get(world);
 		RegionRecord record = ledger.at(RegionPos.of(pos), world.getSeed());
 		record.vegetation = Math.max(0f, record.vegetation - amount);
@@ -117,9 +109,9 @@ public final class WorldImpact {
 	 * it the constraint on how much a region changes is the population, and the population is
 	 * exactly the thing that is allowed to bloom.
 	 */
-	private static boolean spend(World world, BlockPos pos) {
-		long key = ChunkPos.toLong(pos.getX() >> 4, pos.getZ() >> 4);
-		long now = world.getTime();
+	private static boolean spend(Level world, BlockPos pos) {
+		long key = ChunkPos.pack(pos.getX() >> 4, pos.getZ() >> 4);
+		long now = world.getGameTime();
 		ChunkBudget budget = BUDGETS.get(key);
 
 		int spent = 0;

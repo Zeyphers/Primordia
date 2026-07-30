@@ -1,7 +1,7 @@
 package dev.jsz.primordia.genome;
 
 import dev.jsz.primordia.util.MathX;
-import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.CompoundTag;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -113,7 +113,7 @@ public final class Genome {
 	 * "reasonable" animals rather than extreme outliers. Averaging three uniform
 	 * samples gives an approximately normal distribution centred on 0.5.
 	 */
-	public static Genome randomModerate(net.minecraft.util.math.random.Random random) {
+	public static Genome randomModerate(net.minecraft.util.RandomSource random) {
 		float[] v = new float[Gene.COUNT];
 		for (int i = 0; i < v.length; i++) {
 			v[i] = (random.nextFloat() + random.nextFloat() + random.nextFloat()) / 3f;
@@ -139,7 +139,7 @@ public final class Genome {
 	 * rust or ochre rather than a traffic cone. {@link dev.jsz.primordia.body.BodyPalette} caps
 	 * saturation by hue on top of this.
 	 */
-	public static Genome createForBiome(net.minecraft.util.math.random.Random random, String biomeCategory) {
+	public static Genome createForBiome(net.minecraft.util.RandomSource random, String biomeCategory) {
 		java.util.Random jRandom = new java.util.Random(random.nextLong());
 		// Surface archetypes only. A region's cave fauna is seeded separately, by RegionFounder,
 		// because it is not a variation on the fauna above it — it lives somewhere else.
@@ -242,14 +242,14 @@ public final class Genome {
 		return new Genome(v, seed, lineage, generation);
 	}
 
-	public NbtCompound writeNbt() {
-		NbtCompound nbt = new NbtCompound();
+	public CompoundTag writeNbt() {
+		CompoundTag nbt = new CompoundTag();
 		nbt.putString("Code", encode());
 		return nbt;
 	}
 
-	public static Genome readNbt(NbtCompound nbt) {
-		return nbt.contains("Code") ? decode(nbt.getString("Code")) : null;
+	public static Genome readNbt(CompoundTag nbt) {
+		return nbt.contains("Code") ? decode(nbt.getStringOr("Code", "")) : null;
 	}
 
 	// ------------------------------------------------------------------ identity

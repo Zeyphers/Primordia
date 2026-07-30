@@ -1,11 +1,11 @@
 package dev.jsz.primordia.item;
 
 import dev.jsz.primordia.lab.SampleData;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.tooltip.TooltipType;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
 
 import java.util.List;
 
@@ -25,24 +25,24 @@ import java.util.List;
  */
 public class TissueSampleItem extends Item {
 
-	public TissueSampleItem(Settings settings) {
+	public TissueSampleItem(Properties settings) {
 		super(settings);
 	}
 
 	@Override
-	public void appendTooltip(ItemStack stack, TooltipContext context, List<Text> tooltip, TooltipType type) {
+	public void appendHoverText(ItemStack stack, TooltipContext context, net.minecraft.world.item.component.TooltipDisplay display, java.util.function.Consumer<Component> tooltipAdder, TooltipFlag flag) {
 		SampleData data = SampleData.get(stack);
 		if (data == null) {
-			tooltip.add(Text.literal("Empty swab — no specimen recorded")
-					.formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
+			tooltipAdder.accept(Component.literal("Empty swab — no specimen recorded")
+					.withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
 			return;
 		}
 
-		tooltip.add(Text.literal("Specimen " + data.lineageHex()).formatted(Formatting.AQUA));
-		tooltip.add(Text.literal("Generation " + data.genome().generation())
-				.formatted(Formatting.DARK_GRAY));
+		tooltipAdder.accept(Component.literal("Specimen " + data.lineageHex()).withStyle(ChatFormatting.AQUA));
+		tooltipAdder.accept(Component.literal("Generation " + data.genome().generation())
+				.withStyle(ChatFormatting.DARK_GRAY));
 		if (data.isPreserved()) {
-			tooltip.add(Text.literal("Preserved — degradation halted").formatted(Formatting.BLUE));
+			tooltipAdder.accept(Component.literal("Preserved — degradation halted").withStyle(ChatFormatting.BLUE));
 		}
 	}
 
@@ -50,14 +50,14 @@ public class TissueSampleItem extends Item {
 	 * The freshness line, given the world time to measure against. Called from the client tooltip
 	 * callback; kept here so the wording and thresholds sit next to the item they describe.
 	 */
-	public static Text freshnessLine(SampleData data, long worldTime) {
+	public static Component freshnessLine(SampleData data, long worldTime) {
 		float freshness = data.freshness(worldTime);
-		Formatting colour = freshness > 0.6f ? Formatting.GREEN
-				: freshness > 0.3f ? Formatting.YELLOW : Formatting.RED;
+		ChatFormatting colour = freshness > 0.6f ? ChatFormatting.GREEN
+				: freshness > 0.3f ? ChatFormatting.YELLOW : ChatFormatting.RED;
 		String state = freshness <= 0f ? "Degraded"
 				: freshness > 0.6f ? "Fresh"
 				: freshness > 0.3f ? "Ageing" : "Deteriorating";
-		return Text.literal(state + " · " + Math.round(freshness * 100f) + "% viable")
-				.formatted(colour);
+		return Component.literal(state + " · " + Math.round(freshness * 100f) + "% viable")
+				.withStyle(colour);
 	}
 }

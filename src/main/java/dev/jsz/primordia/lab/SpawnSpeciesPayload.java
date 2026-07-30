@@ -1,113 +1,98 @@
 package dev.jsz.primordia.lab;
 
-import dev.jsz.primordia.Primordia;
 import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.registry.PrimordiaEntities;
 import dev.jsz.primordia.registry.PrimordiaItems;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.minecraft.item.ItemStack;
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.codec.PacketCodecs;
-import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.permissions.Permission;
+import net.minecraft.server.permissions.Permissions;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
 
-/**
- * Asks the server to place a specimen of a species the player has already catalogued.
- * <p>
- * A convenience for building and for testing the generator: double-click a species' name in the
- * field guide and it walks out in front of you. Deliberately gated to creative mode <i>and</i>
- * command permissions, because it is {@code /primordia spawn} with a nicer front end — you are
- * conjuring an animal out of a book, which is not something the survival loop should offer.
- * <p>
- * <b>The server trusts none of this.</b> The packet carries a lineage id and nothing else: not a
- * genome, not a position, not a claim about who is allowed. A client that has been modified can
- * send any lineage it likes at any time, so the permission check, the guide lookup and the spawn
- * position are all resolved server-side from state the server already holds. The worst a forged
- * packet can do is spawn a creature the sender had already catalogued, in creative, with op.
- */
-public record SpawnSpeciesPayload(long lineage) implements CustomPayload {
+public record SpawnSpeciesPayload(long lineage) implements CustomPacketPayload {
 
-	public static final CustomPayload.Id<SpawnSpeciesPayload> ID =
-			new CustomPayload.Id<>(Primordia.id("spawn_species"));
+	public static final CustomPacketPayload.Type<SpawnSpeciesPayload> TYPE =
+			new CustomPacketPayload.Type<>(dev.jsz.primordia.Primordia.id("spawn_species"));
 
-	public static final PacketCodec<RegistryByteBuf, SpawnSpeciesPayload> CODEC =
-			PacketCodec.tuple(
-					PacketCodecs.VAR_LONG, SpawnSpeciesPayload::lineage,
+	public static final StreamCodec<RegistryFriendlyByteBuf, SpawnSpeciesPayload> CODEC =
+			StreamCodec.composite(
+					ByteBufCodecs.VAR_LONG, SpawnSpeciesPayload::lineage,
 					SpawnSpeciesPayload::new);
 
-	/** Permission level the vanilla commands treat as "operator". Matches {@code /primordia}. */
-	private static final int REQUIRED_PERMISSION = 2;
+	/**
+	 * 26.2 replaced numeric permission levels with named permissions. Gamemaster is the successor
+	 * to the old level 2 — the tier that gates {@code /summon} — which is the right bar for
+	 * conjuring a specimen out of the guide.
+	 */
+	private static final Permission REQUIRED_PERMISSION = Permissions.COMMANDS_GAMEMASTER;
 
 	@Override
-	public Id<? extends CustomPayload> getId() {
-		return ID;
+	public CustomPacketPayload.Type<? extends CustomPacketPayload> type() {
+		return TYPE;
 	}
 
-	/** Registers the type. Must run on both sides, so it lives in the common initialiser. */
 	public static void register() {
-		PayloadTypeRegistry.playC2S().register(ID, CODEC);
+		PayloadTypeRegistry.serverboundPlay().register(TYPE, CODEC);
 
-		ServerPlayNetworking.registerGlobalReceiver(ID, (payload, context) -> {
-			ServerPlayerEntity player = context.player();
+		ServerPlayNetworking.registerGlobalReceiver(TYPE, (payload, context) -> {
+			ServerPlayer player = context.player();
 			context.server().execute(() -> apply(player, payload));
 		});
 	}
 
-	/** Whether this player may conjure specimens at all. Checked on the server, every time. */
-	public static boolean isAllowed(ServerPlayerEntity player) {
-		return player.isCreative() && player.hasPermissionLevel(REQUIRED_PERMISSION);
+	public static boolean isAllowed(ServerPlayer player) {
+		return player.isCreative() && player.permissions().hasPermission(REQUIRED_PERMISSION);
 	}
 
-	private static void apply(ServerPlayerEntity player, SpawnSpeciesPayload payload) {
+	private static void apply(ServerPlayer player, SpawnSpeciesPayload payload) {
 		if (!isAllowed(player)) {
-			player.sendMessage(Text.literal("Conjuring a specimen needs creative mode and command "
-					+ "permissions.").formatted(Formatting.RED), true);
+			player.sendOverlayMessage(Component.literal("Conjuring a specimen needs creative mode and command permissions.")
+					.withStyle(ChatFormatting.RED));
 			return;
 		}
 
-		// Resolved from the book the server holds, not from anything the client sent. This is also
-		// what limits the feature to species the player has actually catalogued.
 		GuideData.Entry entry = findEntry(player, payload.lineage());
 		if (entry == null) {
-			player.sendMessage(Text.literal("No entry for that species in your guide.")
-					.formatted(Formatting.RED), true);
+			player.sendOverlayMessage(Component.literal("No entry for that species in your guide.")
+					.withStyle(ChatFormatting.RED));
 			return;
 		}
 
 		Genome genome = entry.genome();
 		if (genome == null) {
-			player.sendMessage(Text.literal("That entry's genome could not be read.")
-					.formatted(Formatting.RED), true);
+			player.sendOverlayMessage(Component.literal("That entry's genome could not be read.")
+					.withStyle(ChatFormatting.RED));
 			return;
 		}
 
-		if (!(player.getWorld() instanceof ServerWorld world)) return;
-		CreatureEntity creature = PrimordiaEntities.CREATURE.create(world);
+		if (!(player.level() instanceof ServerLevel world)) return;
+		CreatureEntity creature = PrimordiaEntities.CREATURE.create(world, EntitySpawnReason.COMMAND);
 		if (creature == null) return;
 
 		creature.setGenome(genome);
-		creature.refreshPositionAndAngles(player.getX(), player.getY(), player.getZ(),
-				player.getYaw(), 0f);
-		world.spawnEntity(creature);
+		creature.snapTo(player.getX(), player.getY(), player.getZ(),
+				player.getYRot(), 0f);
+		world.addFreshEntity(creature);
 
-		player.sendMessage(Text.literal("Conjured ").formatted(Formatting.GRAY)
-				.append(Text.literal(entry.displayName()).formatted(Formatting.AQUA)), true);
+		player.sendOverlayMessage(Component.literal("Conjured ").withStyle(ChatFormatting.GRAY)
+				.append(Component.literal(entry.displayName()).withStyle(ChatFormatting.AQUA)));
 	}
 
-	/** The player's guide entry for this lineage, or null if they have not catalogued it. */
-	private static GuideData.Entry findEntry(ServerPlayerEntity player, long lineage) {
-		for (int i = 0; i < player.getInventory().size(); i++) {
-			ItemStack candidate = player.getInventory().getStack(i);
-			if (!candidate.isOf(PrimordiaItems.FIELD_GUIDE)) continue;
-			for (GuideData.Entry entry : GuideData.get(candidate).entries()) {
-				if (entry.lineage() == lineage) return entry;
-			}
+	private static GuideData.Entry findEntry(ServerPlayer player, long lineage) {
+		dev.jsz.primordia.lab.PlayerGuideData global = dev.jsz.primordia.lab.PlayerGuideData.get((net.minecraft.server.level.ServerLevel) player.level());
+		for (GuideData.Entry entry : global.getGuide(player.getUUID()).entries()) {
+			if (entry.lineage() == lineage) return entry;
 		}
 		return null;
 	}

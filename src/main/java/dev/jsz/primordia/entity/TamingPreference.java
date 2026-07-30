@@ -3,8 +3,8 @@ package dev.jsz.primordia.entity;
 import dev.jsz.primordia.body.DietGroup;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
-import net.minecraft.item.Item;
-import net.minecraft.item.Items;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
 
 /**
  * What a given creature will accept as a bribe.

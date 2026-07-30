@@ -2,32 +2,27 @@ package dev.jsz.primordia.registry;
 
 import dev.jsz.primordia.Primordia;
 import dev.jsz.primordia.block.GeneLabBlockEntity;
-import dev.jsz.primordia.block.GenomeBankBlockEntity;
-import dev.jsz.primordia.block.PreservationCaseBlockEntity;
-import net.minecraft.block.entity.BlockEntityType;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.Registry;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+
+import java.util.Set;
 
 public final class PrimordiaBlockEntities {
 
 	public static final BlockEntityType<GeneLabBlockEntity> BASIC_GENE_LAB =
 			register("basic_gene_lab", GeneLabBlockEntity::new, PrimordiaBlocks.BASIC_GENE_LAB);
 
-	public static final BlockEntityType<PreservationCaseBlockEntity> PRESERVATION_CASE =
-			register("preservation_case", PreservationCaseBlockEntity::new,
-					PrimordiaBlocks.PRESERVATION_CASE);
-
-	public static final BlockEntityType<GenomeBankBlockEntity> GENOME_BANK =
-			register("genome_bank", GenomeBankBlockEntity::new, PrimordiaBlocks.GENOME_BANK);
-
 	private PrimordiaBlockEntities() {
 	}
 
-	private static <T extends net.minecraft.block.entity.BlockEntity> BlockEntityType<T> register(
-			String path, net.minecraft.block.entity.BlockEntityType.BlockEntityFactory<? extends T> factory,
-			net.minecraft.block.Block... blocks) {
-		return Registry.register(Registries.BLOCK_ENTITY_TYPE, Primordia.id(path),
-				BlockEntityType.Builder.<T>create(factory, blocks).build());
+	private static <T extends BlockEntity> BlockEntityType<T> register(
+			String path, BlockEntityType.BlockEntitySupplier<? extends T> factory,
+			Block... blocks) {
+		return Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, Primordia.id(path),
+				new BlockEntityType<>(factory, Set.of(blocks)));
 	}
 
 	/**

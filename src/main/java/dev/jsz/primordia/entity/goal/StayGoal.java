@@ -1,7 +1,7 @@
 package dev.jsz.primordia.entity.goal;
 
 import dev.jsz.primordia.entity.CreatureEntity;
-import net.minecraft.entity.ai.goal.Goal;
+import net.minecraft.world.entity.ai.goal.Goal;
 
 import java.util.EnumSet;
 
@@ -19,18 +19,17 @@ public class StayGoal extends Goal {
 
 	public StayGoal(CreatureEntity creature) {
 		this.creature = creature;
-		setControls(EnumSet.of(Control.MOVE, Control.JUMP, Control.LOOK));
+		setFlags(EnumSet.of(Flag.MOVE, Flag.JUMP, Flag.LOOK));
 	}
 
 	@Override
-	public boolean canStart() {
-		// A creature being ridden is not sitting, whatever the flag says.
-		return creature.isSitting() && !creature.hasPassengers() && creature.isOnGround();
+	public boolean canUse() {
+		return creature.isSitting() && !creature.isVehicle() && creature.onGround();
 	}
 
 	@Override
-	public boolean shouldContinue() {
-		return creature.isSitting() && !creature.hasPassengers();
+	public boolean canContinueToUse() {
+		return creature.isSitting() && !creature.isVehicle();
 	}
 
 	@Override

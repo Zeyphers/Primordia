@@ -2,98 +2,122 @@ package dev.jsz.primordia.item;
 
 import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.genome.Genome;
+import dev.jsz.primordia.lab.GenomeLibrary;
 import dev.jsz.primordia.lab.SampleData;
 import dev.jsz.primordia.registry.PrimordiaItems;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.tooltip.TooltipType;
-import net.minecraft.sound.SoundCategory;
-import net.minecraft.sound.SoundEvents;
-import net.minecraft.text.Text;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Hand;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.TooltipDisplay;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.ChatFormatting;
+import net.minecraft.world.InteractionHand;
 
-import java.util.List;
+import java.util.function.Consumer;
 
-/**
- * Takes a tissue sample off a living creature.
- * <p>
- * The entry point to the lab pipeline, and deliberately the only one: everything downstream needs a
- * sample, and a sample can only come off an animal that was standing in front of the player. That
- * is the constraint the whole feature rests on — knowledge about a species has to be paid for by
- * going and finding one, repeatedly, because {@link dev.jsz.primordia.lab.DecodeAccuracy} does not
- * sharpen without more individuals.
- * <p>
- * Jabbing a large animal with a needle is not a free action. The kit takes durability, and anything
- * that retaliates now has a reason to.
- */
 public class BiopsyKitItem extends Item {
 
-	/** Ticks before the kit can be used again. Long enough that it is not a spam-click. */
 	private static final int COOLDOWN = 30;
 
-	public BiopsyKitItem(Settings settings) {
+	public BiopsyKitItem(Properties settings) {
 		super(settings);
 	}
 
 	@Override
-	public ActionResult useOnEntity(ItemStack stack, PlayerEntity player, LivingEntity entity, Hand hand) {
+	public InteractionResult interactLivingEntity(ItemStack stack, Player player, LivingEntity entity, InteractionHand hand) {
 		if (!(entity instanceof CreatureEntity creature)) {
-			if (player.getWorld().isClient()) return ActionResult.SUCCESS;
-			// Vanilla animals are authored rather than grown; there is no genome in one to draw.
-			player.sendMessage(Text.literal("The swab comes back with nothing a sequencer could read.")
-					.formatted(Formatting.DARK_GRAY), true);
-			player.getItemCooldownManager().set(this, 10);
-			return ActionResult.CONSUME;
+			if (player.level().isClientSide()) return InteractionResult.SUCCESS;
+			player.sendOverlayMessage(Component.literal("The swab comes back with nothing a sequencer could read.")
+					.withStyle(ChatFormatting.DARK_GRAY));
+			player.getCooldowns().addCooldown(stack, 10);
+			return InteractionResult.CONSUME;
 		}
-		if (player.getWorld().isClient()) return ActionResult.SUCCESS;
+		if (player.level().isClientSide()) return InteractionResult.SUCCESS;
 
 		if (creature.isCarcass()) {
-			// A body is still tissue, but it has been dead long enough to be worth saying so.
-			player.sendMessage(Text.literal("This body has degraded past a usable sample.")
-					.formatted(Formatting.DARK_GRAY), true);
-			player.getItemCooldownManager().set(this, 10);
-			return ActionResult.CONSUME;
+			player.sendOverlayMessage(Component.literal("This body has degraded past a usable sample.")
+					.withStyle(ChatFormatting.DARK_GRAY));
+			player.getCooldowns().addCooldown(stack, 10);
+			return InteractionResult.CONSUME;
 		}
 
 		Genome genome = creature.getGenome();
 		if (genome == null) {
-			player.sendMessage(Text.literal("Sampling failed: no genome").formatted(Formatting.RED), true);
-			return ActionResult.CONSUME;
+			player.sendOverlayMessage(Component.literal("Sampling failed: no genome").withStyle(ChatFormatting.RED));
+			return InteractionResult.CONSUME;
 		}
 
-		ItemStack sample = SampleData.of(genome, creature.getWorld().getTime())
+		// A second sample of an individual already accounted for is worth nothing: the library keys
+		// specimens by genome, so it would land on a fingerprint already present and move no dial.
+		// Refusing rather than warning-and-taking is the point — the kit is good for five specimens,
+		// and a message that arrives after the charge is spent is not information the player can use.
+		String duplicate = alreadyAccountedFor(player, genome);
+		if (duplicate != null) {
+			player.sendOverlayMessage(Component.literal(duplicate).withStyle(ChatFormatting.GOLD)
+					.append(Component.literal(" · " + SampleData.shortLineage(genome))
+							.withStyle(ChatFormatting.DARK_GRAY)));
+			player.getCooldowns().addCooldown(stack, 10);
+			return InteractionResult.CONSUME;
+		}
+
+		ItemStack sample = SampleData.of(genome, creature.level().getGameTime())
 				.onto(PrimordiaItems.TISSUE_SAMPLE);
-		if (!player.getInventory().insertStack(sample)) {
-			player.dropItem(sample, false);
+		if (!player.getInventory().add(sample)) {
+			player.drop(sample, false);
 		}
 
-		stack.damage(1, player, LivingEntity.getSlotForHand(hand));
-		player.getItemCooldownManager().set(this, COOLDOWN);
-		player.getWorld().playSound(null, creature.getBlockPos(),
-				SoundEvents.ITEM_BOTTLE_FILL, SoundCategory.PLAYERS, 0.6f, 1.4f);
+		stack.hurtAndBreak(1, player, hand);
+		player.getCooldowns().addCooldown(stack, COOLDOWN);
+		player.level().playSound(null, creature.blockPosition(),
+				SoundEvents.BOTTLE_FILL, SoundSource.PLAYERS, 0.6f, 1.4f);
 
-		// Being stuck with a needle is provocation. Anything that fights back now does, which is
-		// what makes sampling an apex predator a different proposition from sampling a grazer —
-		// without this the kit is a free action against anything in the world.
 		creature.provokeSampling(player);
 
-		player.sendMessage(Text.literal("Sample taken from specimen ")
-				.formatted(Formatting.GRAY)
-				.append(Text.literal(SampleData.shortLineage(genome)).formatted(Formatting.AQUA)), true);
-		return ActionResult.CONSUME;
+		player.sendOverlayMessage(Component.literal("Sample taken from specimen ")
+				.withStyle(ChatFormatting.GRAY)
+				.append(Component.literal(SampleData.shortLineage(genome)).withStyle(ChatFormatting.AQUA)));
+		return InteractionResult.CONSUME;
+	}
+
+	/**
+	 * Why a second sample of this individual would be wasted, or null if it would not be.
+	 * <p>
+	 * Two ways an individual can already be accounted for, and they are worth telling apart: one is
+	 * finished work, the other is work in progress the player may simply have forgotten they were
+	 * carrying. Both mean the same thing for the kit — nothing to gain — and neither is a reason to
+	 * stop them sampling a <i>different</i> member of the species, which is what actually advances a
+	 * characterisation.
+	 */
+	private static String alreadyAccountedFor(Player player, Genome genome) {
+		if (player.level() instanceof ServerLevel serverLevel
+				&& GenomeLibrary.get(serverLevel).hasSpecimen(genome)) {
+			return "This specimen is already on record";
+		}
+		String code = genome.encode();
+		for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
+			ItemStack held = player.getInventory().getItem(slot);
+			if (!held.is(PrimordiaItems.TISSUE_SAMPLE)) continue;
+			SampleData data = SampleData.get(held);
+			if (data != null && data.genome().encode().equals(code)) {
+				return "You are already carrying a sample of this specimen";
+			}
+		}
+		return null;
 	}
 
 	@Override
-	public void appendTooltip(ItemStack stack, TooltipContext context, List<Text> tooltip, TooltipType type) {
-		tooltip.add(Text.literal("Right-click a creature to take a tissue sample.")
-				.formatted(Formatting.DARK_GRAY));
-		tooltip.add(Text.literal("The needle hurts — expect anything aggressive to turn on you.")
-				.formatted(Formatting.DARK_RED));
-		tooltip.add(Text.literal("Samples degrade — sequence them or store them cold.")
-				.formatted(Formatting.DARK_GRAY));
+	public void appendHoverText(ItemStack stack, TooltipContext context, TooltipDisplay display, Consumer<Component> tooltipAdder, TooltipFlag flag) {
+		tooltipAdder.accept(Component.literal("Right-click a creature to take a tissue sample.")
+				.withStyle(ChatFormatting.DARK_GRAY));
+		tooltipAdder.accept(Component.literal("The needle hurts — expect anything aggressive to turn on you.")
+				.withStyle(ChatFormatting.DARK_RED));
+		tooltipAdder.accept(Component.literal("Samples degrade — sequence them or store them cold.")
+				.withStyle(ChatFormatting.DARK_GRAY));
 	}
 }

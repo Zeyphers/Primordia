@@ -1,9 +1,9 @@
 package dev.jsz.primordia.ecology.region;
 
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.biome.Biome;
+import net.minecraft.core.Holder;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.biome.Biome;
 
 /**
  * Reads a biome into the three numbers the regional model works in.
@@ -37,29 +37,19 @@ public final class RegionClimate {
 	/** Points per axis sampled across the region. */
 	private static final int CAVE_SAMPLE_GRID = 3;
 
-	public static RegionFounder.Climate sample(ServerWorld world, RegionPos pos) {
+	public static RegionFounder.Climate sample(ServerLevel world, RegionPos pos) {
 		BlockPos centre = new BlockPos(pos.centreBlockX(), world.getSeaLevel(), pos.centreBlockZ());
-		RegistryEntry<Biome> entry = world.getBiome(centre);
+		Holder<Biome> entry = world.getBiome(centre);
 		Biome biome = entry.value();
 
-		// Minecraft temperature runs about -0.7 (snowy) to 2.0 (desert); the genome works in [0,1].
-		float temperature = clamp01((biome.getTemperature() + 0.7f) / 2.7f);
-		String name = entry.getKey().map(key -> key.getValue().getPath()).orElse("");
+		float temperature = clamp01((biome.getBaseTemperature() + 0.7f) / 2.7f);
+		String name = entry.unwrapKey().map(key -> key.identifier().getPath()).orElse("");
 
 		return new RegionFounder.Climate(temperature, humidity(name), productivity(name),
 				sampleCaves(world, pos));
 	}
 
-	/**
-	 * The richest cave biome anywhere under this region.
-	 * <p>
-	 * Sampled over a grid and at several depths, and reduced with {@code max} rather than averaged.
-	 * A region is 128 blocks square, and a lush cave occupying a corner of it is still a lush cave
-	 * to anyone who walks into it — averaging would dilute it to nothing, and the single centre
-	 * column this used to read would miss it outright. That was why teleporting to a lush cave
-	 * found no fauna: the biome under the region's midpoint was ordinary stone.
-	 */
-	private static float sampleCaves(ServerWorld world, RegionPos pos) {
+	private static float sampleCaves(ServerLevel world, RegionPos pos) {
 		float best = 0f;
 		int step = RegionPos.BLOCKS / (CAVE_SAMPLE_GRID + 1);
 
@@ -68,9 +58,9 @@ public final class RegionClimate {
 				int x = pos.minBlockX() + ix * step;
 				int z = pos.minBlockZ() + iz * step;
 				for (int y : CAVE_SAMPLE_DEPTHS) {
-					if (y < world.getBottomY()) continue;
-					String name = world.getBiome(new BlockPos(x, y, z)).getKey()
-							.map(key -> key.getValue().getPath()).orElse("");
+					if (y < world.getMinY()) continue;
+					String name = world.getBiome(new BlockPos(x, y, z)).unwrapKey()
+							.map(key -> key.identifier().getPath()).orElse("");
 					best = Math.max(best, caveRichness(name));
 					if (best >= 1f) return best;
 				}

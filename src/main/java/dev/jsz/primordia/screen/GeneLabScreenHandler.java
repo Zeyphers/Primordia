@@ -2,21 +2,21 @@ package dev.jsz.primordia.screen;
 
 import dev.jsz.primordia.block.GeneLabBlockEntity;
 import dev.jsz.primordia.registry.PrimordiaScreenHandlers;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.entity.player.PlayerInventory;
-import net.minecraft.inventory.Inventory;
-import net.minecraft.inventory.SimpleInventory;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.screen.ArrayPropertyDelegate;
-import net.minecraft.screen.PropertyDelegate;
-import net.minecraft.screen.ScreenHandler;
-import net.minecraft.screen.slot.Slot;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.Container;
+import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.inventory.SimpleContainerData;
+import net.minecraft.world.inventory.ContainerData;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.Slot;
 
 /**
  * The Basic Gene Lab's container: the sample on top, its two fuels beneath, the report to the side.
  */
-public class GeneLabScreenHandler extends ScreenHandler {
+public class GeneLabScreenHandler extends AbstractContainerMenu {
 
 	// Read out of the hand-drawn background art rather than invented here, so the slots land on
 	// the recesses painted for them. The four are wired in pipeline order — sample, then the fuel
@@ -29,29 +29,31 @@ public class GeneLabScreenHandler extends ScreenHandler {
 	public static final int BACKGROUND_WIDTH = 176;
 	public static final int BACKGROUND_HEIGHT = 204;
 
-	private final Inventory inventory;
-	private final PropertyDelegate properties;
+	private final Container inventory;
+	private final ContainerData properties;
 
 	/** Client-side constructor: the screen opens before the block entity's contents arrive. */
-	public GeneLabScreenHandler(int syncId, PlayerInventory playerInventory) {
+	public GeneLabScreenHandler(int syncId, Inventory playerInventory) {
 		this(syncId, playerInventory,
-				new SimpleInventory(GeneLabBlockEntity.SLOT_COUNT),
-				new ArrayPropertyDelegate(GeneLabBlockEntity.PROPERTY_COUNT));
+				new SimpleContainer(GeneLabBlockEntity.SLOT_COUNT),
+				new SimpleContainerData(GeneLabBlockEntity.PROPERTY_COUNT));
 	}
 
-	public GeneLabScreenHandler(int syncId, PlayerInventory playerInventory,
-	                            Inventory inventory, PropertyDelegate properties) {
+	// Typed as Inventory rather than Container because 26.2's startOpen wants a ContainerUser, and
+	// the player behind the inventory is the only thing that can supply one.
+	public GeneLabScreenHandler(int syncId, Inventory playerInventory,
+	                            Container inventory, ContainerData properties) {
 		super(PrimordiaScreenHandlers.GENE_LAB, syncId);
-		checkSize(inventory, GeneLabBlockEntity.SLOT_COUNT);
+		checkContainerSize(inventory, GeneLabBlockEntity.SLOT_COUNT);
 		this.inventory = inventory;
 		this.properties = properties;
-		inventory.onOpen(playerInventory.player);
+		inventory.startOpen(playerInventory.player);
 
 		addSlot(new FilteredSlot(inventory, GeneLabBlockEntity.SLOT_SAMPLE, SAMPLE_X, SAMPLE_Y,
 				GeneLabBlockEntity::isSample));
 		addSlot(new Slot(inventory, GeneLabBlockEntity.SLOT_FUEL, FUEL_X, FUEL_Y));
 		addSlot(new FilteredSlot(inventory, GeneLabBlockEntity.SLOT_REDSTONE, REDSTONE_X, REDSTONE_Y,
-				stack -> stack.isOf(Items.REDSTONE)));
+				stack -> stack.is(Items.REDSTONE)));
 		addSlot(new OutputSlot(inventory, GeneLabBlockEntity.SLOT_OUTPUT, OUTPUT_X, OUTPUT_Y));
 
 		for (int row = 0; row < 3; row++) {
@@ -63,31 +65,31 @@ public class GeneLabScreenHandler extends ScreenHandler {
 			addSlot(new Slot(playerInventory, column, 8 + column * 18, 180));
 		}
 
-		addProperties(properties);
+		addDataSlots(properties);
 	}
 
 	private static class FilteredSlot extends Slot {
 		private final java.util.function.Predicate<ItemStack> filter;
 
-		FilteredSlot(Inventory inventory, int index, int x, int y,
+		FilteredSlot(Container inventory, int index, int x, int y,
 		             java.util.function.Predicate<ItemStack> filter) {
 			super(inventory, index, x, y);
 			this.filter = filter;
 		}
 
 		@Override
-		public boolean canInsert(ItemStack stack) {
+		public boolean mayPlace(ItemStack stack) {
 			return filter.test(stack);
 		}
 	}
 
 	private static class OutputSlot extends Slot {
-		OutputSlot(Inventory inventory, int index, int x, int y) {
+		OutputSlot(Container inventory, int index, int x, int y) {
 			super(inventory, index, x, y);
 		}
 
 		@Override
-		public boolean canInsert(ItemStack stack) {
+		public boolean mayPlace(ItemStack stack) {
 			return false;
 		}
 	}
@@ -131,7 +133,7 @@ public class GeneLabScreenHandler extends ScreenHandler {
 			case IDLE -> false;
 			case SEQUENCING -> properties.get(GeneLabBlockEntity.PROPERTY_BURN) <= 0;
 			case DECODING -> redstoneUsed() < GeneLabBlockEntity.REDSTONE_PER_DECODE
-					&& getSlot(GeneLabBlockEntity.SLOT_REDSTONE).getStack().isEmpty();
+					&& getSlot(GeneLabBlockEntity.SLOT_REDSTONE).getItem().isEmpty();
 		};
 	}
 
@@ -154,8 +156,8 @@ public class GeneLabScreenHandler extends ScreenHandler {
 	}
 
 	@Override
-	public boolean canUse(PlayerEntity player) {
-		return inventory.canPlayerUse(player);
+	public boolean stillValid(Player player) {
+		return inventory.stillValid(player);
 	}
 
 	/**
@@ -166,44 +168,44 @@ public class GeneLabScreenHandler extends ScreenHandler {
 	 * immediately annoying, because loading the lab is the one repeated action it has.
 	 */
 	@Override
-	public ItemStack quickMove(PlayerEntity player, int slotIndex) {
+	public ItemStack quickMoveStack(Player player, int slotIndex) {
 		ItemStack moved = ItemStack.EMPTY;
 		Slot slot = slots.get(slotIndex);
-		if (slot == null || !slot.hasStack()) return moved;
+		if (slot == null || !slot.hasItem()) return moved;
 
-		ItemStack stack = slot.getStack();
+		ItemStack stack = slot.getItem();
 		moved = stack.copy();
 		int playerStart = GeneLabBlockEntity.SLOT_COUNT;
 		int playerEnd = playerStart + 36;
 
 		if (slotIndex < playerStart) {
-			if (!insertItem(stack, playerStart, playerEnd, true)) return ItemStack.EMPTY;
-			slot.onQuickTransfer(stack, moved);
+			if (!moveItemStackTo(stack, playerStart, playerEnd, true)) return ItemStack.EMPTY;
+			slot.onQuickCraft(stack, moved);
 		} else {
 			int target;
 			if (GeneLabBlockEntity.isSample(stack)) {
 				target = GeneLabBlockEntity.SLOT_SAMPLE;
-			} else if (stack.isOf(Items.REDSTONE)) {
+			} else if (stack.is(Items.REDSTONE)) {
 				target = GeneLabBlockEntity.SLOT_REDSTONE;
-			} else if (net.minecraft.block.entity.AbstractFurnaceBlockEntity.canUseAsFuel(stack)) {
+			} else if (player.level().fuelValues().burnDuration(stack) > 0) {
 				target = GeneLabBlockEntity.SLOT_FUEL;
 			} else {
 				return ItemStack.EMPTY;
 			}
-			if (!insertItem(stack, target, target + 1, false)) return ItemStack.EMPTY;
+			if (!moveItemStackTo(stack, target, target + 1, false)) return ItemStack.EMPTY;
 		}
 
 		if (stack.isEmpty()) {
-			slot.setStack(ItemStack.EMPTY);
+			slot.set(ItemStack.EMPTY);
 		} else {
-			slot.markDirty();
+			slot.setChanged();
 		}
 		return moved;
 	}
 
 	@Override
-	public void onClosed(PlayerEntity player) {
-		super.onClosed(player);
-		inventory.onClose(player);
+	public void removed(Player player) {
+		super.removed(player);
+		inventory.stopOpen(player);
 	}
 }

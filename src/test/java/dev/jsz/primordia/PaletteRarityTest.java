@@ -33,7 +33,7 @@ class PaletteRarityTest {
 	@Test
 	void bioluminescenceIsRareButNeverExtinct() {
 		for (String biome : BIOMES) {
-			var random = net.minecraft.util.math.random.Random.create(4242L);
+			var random = net.minecraft.util.RandomSource.create(4242L);
 			int glowing = 0;
 			for (int i = 0; i < SAMPLES; i++) {
 				if (new BodyPalette(Genome.createForBiome(random, biome)).glowStrength > 0f) glowing++;
@@ -50,7 +50,7 @@ class PaletteRarityTest {
 
 	@Test
 	void bluesAndPurplesAreNeverVivid() {
-		var random = net.minecraft.util.math.random.Random.create(99L);
+		var random = net.minecraft.util.RandomSource.create(99L);
 		var drift = new java.util.Random(99L);
 		for (int i = 0; i < SAMPLES; i++) {
 			// Drifted, not freshly founded: founding runs a long pre-history, and mutation walks
@@ -80,7 +80,7 @@ class PaletteRarityTest {
 
 	@Test
 	void glowStaysInTheColoursBioluminescenceActuallyOccursAt() {
-		var random = net.minecraft.util.math.random.Random.create(7L);
+		var random = net.minecraft.util.RandomSource.create(7L);
 		int checked = 0;
 		for (int i = 0; i < SAMPLES * 4 && checked < 200; i++) {
 			BodyPalette p = new BodyPalette(Genome.createForBiome(random, BIOMES[i % BIOMES.length]));

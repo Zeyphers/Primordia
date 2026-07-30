@@ -85,7 +85,7 @@ class GrazeAimTest {
 					archetype + ": browsing at food overhead left the head pointing " + up
 							+ " (negative is nose-down) — the pose is not following the look");
 			assertTrue(up > down + 0.25f,
-					archetype + ": grazing up (" + up + ") and grazing down (" + down
+					archetype + ": grazing above(" + up + ") and grazing below(" + down
 							+ ") barely differ — the pose is ignoring the look direction");
 		}
 	}

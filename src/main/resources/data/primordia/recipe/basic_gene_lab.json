@@ -7,11 +7,11 @@
     "ICI"
   ],
   "key": {
-    "I": { "item": "minecraft:iron_ingot" },
-    "G": { "item": "minecraft:glass_pane" },
-    "R": { "item": "minecraft:redstone" },
-    "F": { "item": "minecraft:furnace" },
-    "C": { "item": "minecraft:comparator" }
+    "I": "minecraft:iron_ingot",
+    "G": "minecraft:glass_pane",
+    "R": "minecraft:redstone",
+    "F": "minecraft:furnace",
+    "C": "minecraft:comparator"
   },
   "result": { "id": "primordia:basic_gene_lab", "count": 1 }
 }

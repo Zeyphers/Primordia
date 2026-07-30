@@ -1,12 +1,12 @@
 package dev.jsz.primordia.client;
 
 import dev.jsz.primordia.anim.GroundProbe;
-import net.minecraft.block.BlockState;
-import net.minecraft.fluid.FluidState;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.shape.VoxelShape;
-import net.minecraft.world.World;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.phys.shapes.VoxelShape;
+import net.minecraft.world.level.Level;
 
 /**
  * {@link GroundProbe} backed by a live world. Finds the surface a foot could actually stand on
@@ -24,7 +24,7 @@ import net.minecraft.world.World;
  * the creature's own foot level, leaving the leg hanging naturally beside the obstacle instead of
  * reaching for it.
  * <p>
- * A block-state scan is used rather than {@code World#raycast} because this runs once per foot per
+ * A block-state scan is used rather than {@code Level#raycast} because this runs once per foot per
  * frame — up to eight times per creature — and a raycast allocates a context object each call.
  */
 public final class WorldGroundProbe implements GroundProbe {
@@ -43,10 +43,10 @@ public final class WorldGroundProbe implements GroundProbe {
 	 */
 	private static final double WADE_DEPTH = 0.35;
 
-	private World world;
-	private final BlockPos.Mutable cursor = new BlockPos.Mutable();
+	private Level world;
+	private final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 
-	public GroundProbe forWorld(World world) {
+	public GroundProbe forWorld(Level world) {
 		this.world = world;
 		return this;
 	}
@@ -82,7 +82,7 @@ public final class WorldGroundProbe implements GroundProbe {
 			if (shape.isEmpty()) continue;
 
 			// Surface height of this block, including partial blocks like slabs and stairs.
-			double surface = y + shape.getMax(Direction.Axis.Y);
+			double surface = y + shape.max(Direction.Axis.Y);
 
 			// Too high to have been stepped onto — this is a wall face, not a floor.
 			if (surface > referenceY + MAX_STEP_UP) continue;
@@ -126,7 +126,7 @@ public final class WorldGroundProbe implements GroundProbe {
 				if (offset == 0) return true;
 				continue;
 			}
-			double blockBottom = (checkY + offset) + above.getMin(Direction.Axis.Y);
+			double blockBottom = (checkY + offset) + above.min(Direction.Axis.Y);
 			double gap = blockBottom - surface;
 			if (gap < REQUIRED_HEADROOM) return false;
 			return true;

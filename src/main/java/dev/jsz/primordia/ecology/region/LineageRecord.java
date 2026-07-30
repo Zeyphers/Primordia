@@ -5,7 +5,7 @@ import dev.jsz.primordia.body.BodyPlanBuilder;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.util.MathX;
-import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.CompoundTag;
 
 import java.util.random.RandomGenerator;
 
@@ -198,8 +198,8 @@ public final class LineageRecord {
 
 	// ---------------------------------------------------------------------- nbt
 
-	public NbtCompound writeNbt() {
-		NbtCompound nbt = new NbtCompound();
+	public CompoundTag writeNbt() {
+		CompoundTag nbt = new CompoundTag();
 		nbt.putLong("Id", id);
 		nbt.putLong("Seed", seed);
 		nbt.putFloat("Variance", variance);
@@ -215,16 +215,16 @@ public final class LineageRecord {
 		return nbt;
 	}
 
-	public static LineageRecord readNbt(NbtCompound nbt) {
+	public static LineageRecord readNbt(CompoundTag nbt) {
 		LineageRecord record = new LineageRecord();
-		record.id = nbt.getLong("Id");
-		record.seed = nbt.getLong("Seed");
-		record.variance = nbt.getFloat("Variance");
-		record.count = nbt.getFloat("Count");
-		record.held = nbt.getFloat("Held");
-		record.generation = nbt.getInt("Generation");
-		record.previousCount = nbt.getFloat("PreviousCount");
-		byte[] packed = nbt.getByteArray("Mean");
+		record.id = nbt.getLongOr("Id", 0L);
+		record.seed = nbt.getLongOr("Seed", 0L);
+		record.variance = nbt.getFloatOr("Variance", 0f);
+		record.count = nbt.getFloatOr("Count", 0f);
+		record.held = nbt.getFloatOr("Held", 0f);
+		record.generation = nbt.getIntOr("Generation", 0);
+		record.previousCount = nbt.getFloatOr("PreviousCount", 0f);
+		byte[] packed = nbt.getByteArray("Mean").orElse(new byte[0]);
 		for (int i = 0; i < Gene.COUNT && i < packed.length; i++) {
 			record.mean[i] = (packed[i] + 128) / 255f;
 		}

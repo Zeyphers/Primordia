@@ -4,13 +4,14 @@ import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.genome.Archetype;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.registry.PrimordiaEntities;
-import net.minecraft.block.BlockState;
-import net.minecraft.entity.SpawnReason;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.world.Heightmap;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.level.levelgen.Heightmap;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
@@ -76,7 +77,7 @@ public final class RegionMaterialiser {
 	 * it reads how many are already there and only makes up the difference, so calling it twice
 	 * does nothing the second time.
 	 */
-	public static void topUp(ServerWorld world, RegionRecord record) {
+	public static void topUp(ServerLevel world, RegionRecord record) {
 		topUp(world, record, true, true);
 	}
 
@@ -84,9 +85,9 @@ public final class RegionMaterialiser {
 	 * Tops up one or both habitats. The caller gates them separately because they draw on separate
 	 * budgets — see {@code EcologyTicker}.
 	 */
-	public static void topUp(ServerWorld world, RegionRecord record,
+	public static void topUp(ServerLevel world, RegionRecord record,
 	                         boolean surface, boolean caves) {
-		Random random = new Random(record.seed ^ world.getTime());
+		Random random = new Random(record.seed ^ world.getGameTime());
 		// Surface and cave fauna are budgeted apart.
 		//
 		// They occupy different parts of the same region and are never in view together, so a
@@ -97,7 +98,7 @@ public final class RegionMaterialiser {
 		if (caves) topUp(world, record, random, true, CAVE_ENTITY_BUDGET);
 	}
 
-	private static void topUp(ServerWorld world, RegionRecord record, Random random,
+	private static void topUp(ServerLevel world, RegionRecord record, Random random,
 	                          boolean subterranean, int budget) {
 		int live = countLive(world, record.pos, subterranean);
 		int room = budget - live;
@@ -211,38 +212,25 @@ public final class RegionMaterialiser {
 	 * Called when a creature despawns or its chunk unloads — never when it dies, because a death is
 	 * a real loss to the population and the record should show it.
 	 */
-	public static void absorb(ServerWorld world, CreatureEntity creature) {
+	public static void absorb(ServerLevel world, CreatureEntity creature) {
 		Genome genome = creature.getGenome();
 		if (genome == null) return;
 
 		RegionLedger ledger = RegionLedger.get(world);
-		RegionRecord record = ledger.at(RegionPos.of(creature.getBlockPos()), world.getSeed());
+		RegionRecord record = ledger.at(RegionPos.of(creature.blockPosition()), world.getSeed());
 		LineageRecord lineage = record.lineage(genome.lineage());
 		if (lineage == null) {
-			// A lineage the record has never heard of: bred in the world, or walked in from a
-			// neighbouring region. Either way it lives here now.
 			lineage = LineageRecord.of(genome, 0f);
 			lineage = record.add(lineage);
 			if (lineage == null) return;
 		} else {
-			// Pull the recorded mean a little toward this individual. Over many absorptions this
-			// is how a population's genome in the ledger tracks what actually bred in the world,
-			// rather than the record and the entities drifting apart.
 			blendTowards(lineage, genome);
 		}
 		lineage.give();
 		record.dirty = true;
-		ledger.markDirty();
+		ledger.setDirty();
 	}
 
-	/**
-	 * Eases the recorded mean toward an individual that is being absorbed, and widens the variance
-	 * by however far off it was.
-	 * <p>
-	 * Weighted by how many the record already holds, so one unusual animal shifts a population of
-	 * fifty barely at all and a population of two considerably — which is genuine drift, and the
-	 * reason small isolated populations diverge fastest.
-	 */
 	private static void blendTowards(LineageRecord lineage, Genome genome) {
 		float weight = 1f / Math.max(1f, lineage.count + 1f);
 		float[] values = genome.copyValues();
@@ -257,13 +245,11 @@ public final class RegionMaterialiser {
 		lineage.generation = Math.max(lineage.generation, genome.generation());
 	}
 
-	/** Creatures currently alive in this region that the ledger is responsible for. */
-	public static int countLive(ServerWorld world, RegionPos pos) {
+	public static int countLive(ServerLevel world, RegionPos pos) {
 		return liveIn(world, pos).size();
 	}
 
-	/** As above, counting only one habitat's animals. */
-	public static int countLive(ServerWorld world, RegionPos pos, boolean subterranean) {
+	public static int countLive(ServerLevel world, RegionPos pos, boolean subterranean) {
 		int count = 0;
 		for (CreatureEntity creature : liveIn(world, pos)) {
 			Genome genome = creature.getGenome();
@@ -273,21 +259,13 @@ public final class RegionMaterialiser {
 		return count;
 	}
 
-	public static List<CreatureEntity> liveIn(ServerWorld world, RegionPos pos) {
-		Box box = new Box(
-				pos.minBlockX(), world.getBottomY(), pos.minBlockZ(),
-				pos.minBlockX() + RegionPos.BLOCKS, world.getTopY(), pos.minBlockZ() + RegionPos.BLOCKS);
-		return world.getEntitiesByClass(CreatureEntity.class, box, RegionMaterialiser::isLedgerManaged);
+	public static List<CreatureEntity> liveIn(ServerLevel world, RegionPos pos) {
+		AABB box = new AABB(
+				pos.minBlockX(), world.getMinY(), pos.minBlockZ(),
+				pos.minBlockX() + RegionPos.BLOCKS, world.getMaxY(), pos.minBlockZ() + RegionPos.BLOCKS);
+		return world.getEntitiesOfClass(CreatureEntity.class, box, RegionMaterialiser::isLedgerManaged);
 	}
 
-	/**
-	 * Whether the ledger accounts for this creature.
-	 * <p>
-	 * Tamed animals are individuals, not population: they belong to a player, they persist, they do
-	 * not despawn, and counting them would have the ledger repopulate a region from animals that
-	 * are following someone else across the world. Carcasses are not population either — they are
-	 * already dead and were subtracted when they died.
-	 */
 	public static boolean isLedgerManaged(CreatureEntity creature) {
 		return creature.isAlive()
 				&& !creature.isCarcass()
@@ -296,40 +274,24 @@ public final class RegionMaterialiser {
 				&& !creature.hasCustomName();
 	}
 
-	/** Returned by {@link #findCaveFloor} when the column holds nothing habitable. */
 	private static final int NO_FLOOR = Integer.MIN_VALUE;
-	/** Blocks below the surface a cave has to be before it counts as one. */
 	private static final int CAVE_MIN_DEPTH = 8;
-	/** Ceiling height a cave floor needs above it. Two blocks: these are small animals. */
 	private static final int CAVE_HEADROOM = 2;
-	/** Light level at or below which a space is dark enough to be a cave rather than a hillside. */
 	private static final int CAVE_MAX_LIGHT = 7;
 
-	/**
-	 * Finds a dark, enclosed floor somewhere down the column, for a lineage that lives underground.
-	 * <p>
-	 * Scans downward from below the surface rather than upward from bedrock, so the animals collect
-	 * in the shallow cave systems a player actually walks through instead of at the bottom of the
-	 * world where nobody would ever meet them.
-	 * <p>
-	 * The light test is what distinguishes a cave from an overhang. Depth alone would place them
-	 * under any cliff face, and the point of a cave animal is that it is somewhere dark.
-	 */
-	private static int findCaveFloor(ServerWorld world, int x, int z, int surface, Random random) {
+	private static int findCaveFloor(ServerLevel world, int x, int z, int surface, Random random) {
 		int top = surface - CAVE_MIN_DEPTH;
-		int bottom = Math.max(world.getBottomY() + 2, surface - 90);
+		int bottom = Math.max(world.getMinY() + 2, surface - 90);
 		if (top <= bottom) return NO_FLOOR;
 
-		// A random start, walked downward and wrapped, so repeated calls in the same column do not
-		// all pile onto the topmost cave in it.
 		int span = top - bottom;
 		int offset = random.nextInt(span);
-		BlockPos.Mutable cursor = new BlockPos.Mutable();
+		BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 
 		for (int i = 0; i < span; i++) {
 			int y = top - ((offset + i) % span);
 			cursor.set(x, y - 1, z);
-			if (!world.getBlockState(cursor).isSolidBlock(world, cursor)) continue;
+			if (!world.getBlockState(cursor).isSolidRender()) continue;
 
 			boolean clear = true;
 			for (int h = 0; h < CAVE_HEADROOM && clear; h++) {
@@ -339,48 +301,59 @@ public final class RegionMaterialiser {
 			if (!clear) continue;
 
 			cursor.set(x, y, z);
-			if (world.getLightLevel(cursor) > CAVE_MAX_LIGHT) continue;
+			if (world.getMaxLocalRawBrightness(cursor) > CAVE_MAX_LIGHT) continue;
 			return y;
 		}
 		return NO_FLOOR;
 	}
 
-	/** Places one individual of a lineage somewhere sensible in the region. */
-	private static boolean place(ServerWorld world, RegionPos pos, LineageRecord lineage, Random random) {
+	private static boolean place(ServerLevel world, RegionPos pos, LineageRecord lineage, Random random) {
 		boolean underground = Archetype.isSubterranean(lineage.meanGenome());
+
+		List<net.minecraft.world.level.ChunkPos> loadedChunks = new ArrayList<>();
+		int minChunkX = pos.minBlockX() >> 4;
+		int minChunkZ = pos.minBlockZ() >> 4;
+		for (int cx = minChunkX; cx < minChunkX + RegionPos.CHUNKS; cx++) {
+			for (int cz = minChunkZ; cz < minChunkZ + RegionPos.CHUNKS; cz++) {
+				if (world.hasChunkAt(cx, cz)) {
+					loadedChunks.add(new net.minecraft.world.level.ChunkPos(cx, cz));
+				}
+			}
+		}
+		if (loadedChunks.isEmpty()) return false;
 
 		int attempts = underground ? CAVE_PLACEMENT_ATTEMPTS : PLACEMENT_ATTEMPTS;
 		for (int attempt = 0; attempt < attempts; attempt++) {
-			int x = pos.minBlockX() + random.nextInt(RegionPos.BLOCKS);
-			int z = pos.minBlockZ() + random.nextInt(RegionPos.BLOCKS);
-			if (!world.isChunkLoaded(x >> 4, z >> 4)) continue;
+			net.minecraft.world.level.ChunkPos chunk = loadedChunks.get(random.nextInt(loadedChunks.size()));
+			int x = chunk.getMinBlockX() + random.nextInt(16);
+			int z = chunk.getMinBlockZ() + random.nextInt(16);
 
-			int surface = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, z);
+			int surface = world.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
 			int y = underground ? findCaveFloor(world, x, z, surface, random) : surface;
 			if (y == NO_FLOOR) continue;
 
 			BlockPos ground = new BlockPos(x, y - 1, z);
 			BlockState state = world.getBlockState(ground);
-			if (!state.isSolidBlock(world, ground)) continue;
+			if (!state.isSolidRender()) continue;
 			BlockPos spawn = new BlockPos(x, y, z);
-			if (!world.getBlockState(spawn).isAir()) continue;
+			BlockState spawnState = world.getBlockState(spawn);
+			if (!spawnState.getCollisionShape(world, spawn).isEmpty() && !spawnState.canBeReplaced()) continue;
 
-			CreatureEntity creature = PrimordiaEntities.CREATURE.create(world);
+			CreatureEntity creature = PrimordiaEntities.CREATURE.create(world, EntitySpawnReason.NATURAL);
 			if (creature == null) return false;
 			creature.setGenome(lineage.sample(random));
 
-			// Headroom for the animal actually being placed, not for a one-block gap. A large
-			// creature dropped into a clearing just tall enough for a chicken has its eye inside
-			// the block above and takes suffocation damage from the moment it exists.
-			int clearance = Math.max(1, (int) Math.ceil(creature.getHeight()));
+			int clearance = Math.max(1, (int) Math.ceil(creature.getBbHeight()));
 			boolean fits = true;
 			for (int dy = 0; dy < clearance && fits; dy++) {
-				fits = world.getBlockState(spawn.up(dy)).isAir();
+				BlockPos checkPos = spawn.above(dy);
+				BlockState checkState = world.getBlockState(checkPos);
+				fits = checkState.getCollisionShape(world, checkPos).isEmpty() || checkState.canBeReplaced();
 			}
 			if (!fits) continue;
-			creature.refreshPositionAndAngles(x + 0.5, y, z + 0.5, random.nextFloat() * 360f, 0f);
-			creature.initialize(world, world.getLocalDifficulty(spawn), SpawnReason.NATURAL, null);
-			world.spawnEntity(creature);
+			creature.snapTo(x + 0.5, y, z + 0.5, random.nextFloat() * 360f, 0f);
+			creature.finalizeSpawn(world, world.getCurrentDifficultyAt(spawn), EntitySpawnReason.NATURAL, null);
+			world.addFreshEntity(creature);
 			return true;
 		}
 		return false;

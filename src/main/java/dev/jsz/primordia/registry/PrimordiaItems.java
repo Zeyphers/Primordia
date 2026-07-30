@@ -7,10 +7,22 @@ import dev.jsz.primordia.item.GenomeReportItem;
 import dev.jsz.primordia.item.GenomeScannerItem;
 import dev.jsz.primordia.item.SequenceDataItem;
 import dev.jsz.primordia.item.TissueSampleItem;
-import net.minecraft.item.Item;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.Registry;
+import net.minecraft.world.item.Item;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.core.Registry;
+import net.minecraft.resources.ResourceKey;
 
+import java.util.function.Function;
+
+/**
+ * The mod's items.
+ * <p>
+ * Every item is built through {@link #register} rather than constructed inline, because since 26.2
+ * an item has to know its own registry key <i>before</i> it is constructed — {@code Item.Properties}
+ * carries the key and the constructor reads it. So the key is minted first and handed to a factory,
+ * instead of an already-built item being handed to the registry.
+ */
 public final class PrimordiaItems {
 	/**
 	 * Creative and command only — there is deliberately no recipe for it.
@@ -20,32 +32,41 @@ public final class PrimordiaItems {
 	 * the whole reference library were optional flavour sitting beside a strictly better item.
 	 */
 	public static final Item GENOME_SCANNER = register("genome_scanner",
-			new GenomeScannerItem(new Item.Settings().maxCount(1)));
+			GenomeScannerItem::new, new Item.Properties().stacksTo(1));
 
+	/**
+	 * Five samples to a kit.
+	 * <p>
+	 * One point of damage is spent per sample actually taken — a refused poke costs nothing — so the
+	 * durability is literally the number of specimens a kit is good for. Low enough that which
+	 * creature to sample is a decision rather than a reflex.
+	 */
 	public static final Item BIOPSY_KIT = register("biopsy_kit",
-			new BiopsyKitItem(new Item.Settings().maxCount(1).maxDamage(64)));
+			BiopsyKitItem::new, new Item.Properties().stacksTo(1).durability(5));
 
 	public static final Item TISSUE_SAMPLE = register("tissue_sample",
-			new TissueSampleItem(new Item.Settings().maxCount(16)));
+			TissueSampleItem::new, new Item.Properties().stacksTo(16));
 
 	public static final Item SEQUENCE_DATA = register("sequence_data",
-			new SequenceDataItem(new Item.Settings().maxCount(16)));
+			SequenceDataItem::new, new Item.Properties().stacksTo(16));
 
 	public static final Item GENOME_REPORT = register("genome_report",
-			new GenomeReportItem(new Item.Settings().maxCount(16)));
+			GenomeReportItem::new, new Item.Properties().stacksTo(16));
 
 	/**
 	 * One per player, in practice. It stacks to one because two guides would split a record that
 	 * only means anything whole — filing half your specimens into each is worse than either.
 	 */
 	public static final Item FIELD_GUIDE = register("field_guide",
-			new FieldGuideItem(new Item.Settings().maxCount(1)));
+			FieldGuideItem::new, new Item.Properties().stacksTo(1));
 
 	private PrimordiaItems() {
 	}
 
-	private static Item register(String path, Item item) {
-		return Registry.register(Registries.ITEM, Primordia.id(path), item);
+	private static Item register(String path, Function<Item.Properties, Item> factory,
+	                             Item.Properties properties) {
+		ResourceKey<Item> key = ResourceKey.create(Registries.ITEM, Primordia.id(path));
+		return Registry.register(BuiltInRegistries.ITEM, key, factory.apply(properties.setId(key)));
 	}
 
 	/**

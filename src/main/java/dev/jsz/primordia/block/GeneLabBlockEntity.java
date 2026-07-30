@@ -4,30 +4,29 @@ import dev.jsz.primordia.item.GenomeReportItem;
 import dev.jsz.primordia.lab.DecodeAccuracy;
 import dev.jsz.primordia.lab.GenomeLibrary;
 import dev.jsz.primordia.lab.SampleData;
-import dev.jsz.primordia.registry.PrimordiaBlockEntities;
 import dev.jsz.primordia.registry.PrimordiaItems;
 import dev.jsz.primordia.screen.GeneLabScreenHandler;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.BlockEntityType;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.entity.player.PlayerInventory;
-import net.minecraft.inventory.Inventories;
-import net.minecraft.inventory.SidedInventory;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.screen.NamedScreenHandlerFactory;
-import net.minecraft.screen.PropertyDelegate;
-import net.minecraft.screen.ScreenHandler;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
-import net.minecraft.util.collection.DefaultedList;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.StringIdentifiable;
-import net.minecraft.util.math.Direction;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.NonNullList;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.StringRepresentable;
+import net.minecraft.world.Container;
+import net.minecraft.world.ContainerHelper;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.WorldlyContainer;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ContainerData;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
 
 /**
  * The Basic Gene Lab: one machine that carries a tissue sample the whole way to a finished report.
@@ -42,7 +41,7 @@ import net.minecraft.world.World;
  * {@link #REDSTONE_PER_DECODE} redstone. A lab stocked with only one of the two gets halfway and
  * stops, visibly, at the stage it cannot pay for.
  */
-public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, NamedScreenHandlerFactory {
+public class GeneLabBlockEntity extends BlockEntity implements WorldlyContainer, MenuProvider {
 
 	public static final int SLOT_SAMPLE = 0;
 	public static final int SLOT_FUEL = 1;
@@ -50,25 +49,13 @@ public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, N
 	public static final int SLOT_OUTPUT = 3;
 	public static final int SLOT_COUNT = 4;
 
-	/** Ticks to read a sample into sequence data. */
 	public static final int SEQUENCE_TIME = 400;
-	/** Ticks to interpret sequence data into a report. */
 	public static final int DECODE_TIME = 240;
-	/** Redstone dust consumed by one decode, drawn steadily across the stage. */
 	public static final int REDSTONE_PER_DECODE = 16;
-	/** Tail of the decode that represents writing the report out, rather than matching it. */
 	public static final int DELIVER_TIME = 40;
-	/** The part of the decode spent matching the read against the library. */
 	public static final int DECODE_INTERPRET_TIME = DECODE_TIME - DELIVER_TIME;
 
-	/**
-	 * What the machine is currently doing.
-	 * <p>
-	 * Ordinals are persisted and sent to the open screen, and the value doubles as a blockstate
-	 * property so the console in the world shows the same thing the GUI does. One enum for both
-	 * means the block can never disagree with the screen about what it is working on.
-	 */
-	public enum Stage implements StringIdentifiable {
+	public enum Stage implements StringRepresentable {
 		IDLE("idle"), SEQUENCING("sequencing"), DECODING("decoding");
 
 		public static final Stage[] VALUES = values();
@@ -79,7 +66,7 @@ public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, N
 		}
 
 		@Override
-		public String asString() {
+		public String getSerializedName() {
 			return name;
 		}
 	}
@@ -96,29 +83,21 @@ public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, N
 	private static final int[] BOTTOM_SLOTS = {SLOT_OUTPUT};
 	private static final int[] SIDE_SLOTS = {SLOT_FUEL, SLOT_REDSTONE};
 
-	private final DefaultedList<ItemStack> inventory = DefaultedList.ofSize(SLOT_COUNT, ItemStack.EMPTY);
+	private final NonNullList<ItemStack> inventory = NonNullList.withSize(SLOT_COUNT, ItemStack.EMPTY);
 
 	private Stage stage = Stage.IDLE;
 	private int progress;
 	private int burnTime;
 	private int burnTimeTotal;
-	/** Redstone already spent on the decode in progress. */
 	private int redstoneUsed;
-	/**
-	 * The specimen currently in the machine, held between stages.
-	 * <p>
-	 * Deliberately not an intermediate item in a slot. The sequence exists only inside the run, so
-	 * it cannot be half-extracted, cannot be hoppered out mid-process, and cannot be lost to a
-	 * full output slot at the moment stage one finishes.
-	 */
 	private SampleData inFlight;
 
-	private final PropertyDelegate properties = new PropertyDelegate() {
+	private final ContainerData properties = new ContainerData() {
 		@Override
 		public int get(int index) {
 			return switch (index) {
 				case PROPERTY_PROGRESS -> progress;
-				case PROPERTY_PROCESS_TIME -> currentProcessTime();
+				case PROPERTY_PROCESS_TIME -> stage == Stage.SEQUENCING ? SEQUENCE_TIME : DECODE_TIME;
 				case PROPERTY_BURN -> burnTime;
 				case PROPERTY_BURN_TOTAL -> burnTimeTotal;
 				case PROPERTY_STAGE -> stage.ordinal();
@@ -135,60 +114,66 @@ public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, N
 				case PROPERTY_BURN_TOTAL -> burnTimeTotal = value;
 				case PROPERTY_STAGE -> stage = Stage.VALUES[Math.floorMod(value, Stage.VALUES.length)];
 				case PROPERTY_REDSTONE_USED -> redstoneUsed = value;
-				default -> {
-				}
 			}
 		}
 
 		@Override
-		public int size() {
+		public int getCount() {
 			return PROPERTY_COUNT;
 		}
 	};
 
 	public GeneLabBlockEntity(BlockPos pos, BlockState state) {
-		super(PrimordiaBlockEntities.BASIC_GENE_LAB, pos, state);
+		super(dev.jsz.primordia.registry.PrimordiaBlockEntities.BASIC_GENE_LAB, pos, state);
 	}
 
-	private int currentProcessTime() {
-		return stage == Stage.DECODING ? DECODE_TIME : SEQUENCE_TIME;
+	public Stage stage() {
+		return stage;
 	}
 
-	// ------------------------------------------------------------------ ticking
+	public int progress() {
+		return progress;
+	}
 
-	public static void tick(World world, BlockPos pos, BlockState state, GeneLabBlockEntity be) {
-		if (world.isClient()) return;
+	public int burnTime() {
+		return burnTime;
+	}
+
+	public int burnTimeTotal() {
+		return burnTimeTotal;
+	}
+
+	public int redstoneUsed() {
+		return redstoneUsed;
+	}
+
+	public ContainerData properties() {
+		return properties;
+	}
+
+	public SampleData inFlight() {
+		return inFlight;
+	}
+
+	public static void serverTick(Level level, BlockPos pos, BlockState state, GeneLabBlockEntity be) {
+		if (be.burnTime > 0) be.burnTime--;
 
 		boolean dirty = false;
-		// Fuel only burns while it is being used for something. Ticking this down unconditionally
-		// meant a lit machine quietly consumed its coal through the decode stage and while sitting
-		// idle, for no work at all.
-		if (be.stage == Stage.SEQUENCING && be.burnTime > 0) be.burnTime--;
 
 		switch (be.stage) {
 			case IDLE -> dirty = be.tryBeginSequencing();
-			case SEQUENCING -> dirty = be.tickSequencing(world);
-			case DECODING -> dirty = be.tickDecoding(world);
+			case SEQUENCING -> dirty = be.tickSequencing(level);
+			case DECODING -> dirty = be.tickDecoding(level);
 		}
 
-		// Push the stage into the blockstate so the console animates in the world. Only on an
-		// actual change: setBlockState is a chunk update and a neighbour notification, and running
-		// one every tick for a machine that is simply still working would be pure cost.
-		Stage shown = be.displayedStage();
-		if (state.get(LabMachineBlock.STAGE) != shown) {
-			world.setBlockState(pos, state.with(LabMachineBlock.STAGE, shown), 3);
+		Stage newDisplayed = be.displayedStage();
+		if (state.getValue(LabMachineBlock.STAGE) != newDisplayed) {
+			level.setBlock(pos, state.setValue(LabMachineBlock.STAGE, newDisplayed), 3);
 			dirty = true;
 		}
-		if (dirty) be.markDirty();
+		if (dirty) be.setChanged();
 	}
 
-	/**
-	 * The stage the block should be showing.
-	 * <p>
-	 * A sequencing run with no fuel reads as idle rather than as working, because from the outside
-	 * it is: nothing is happening and the player needs to notice that. Decoding has no such stall
-	 * state on the block, since it visibly consumes redstone.
-	 */
 	private Stage displayedStage() {
 		if (stage == Stage.SEQUENCING && burnTime <= 0) return Stage.IDLE;
 		return stage;
@@ -205,7 +190,7 @@ public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, N
 		return true;
 	}
 
-	private boolean tickSequencing(World world) {
+	private boolean tickSequencing(Level level) {
 		ItemStack sample = inventory.get(SLOT_SAMPLE);
 		SampleData data = SampleData.get(sample);
 		if (data == null || !inventory.get(SLOT_OUTPUT).isEmpty()) {
@@ -215,8 +200,6 @@ public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, N
 		if (burnTime <= 0) {
 			int fuel = consumeFuel();
 			if (fuel <= 0) {
-				// Nothing to burn: hold, bleeding progress slowly rather than discarding it, so a
-				// player who tops the fuel up shortly after has not lost the run.
 				if (progress > 0) progress = Math.max(0, progress - 1);
 				return true;
 			}
@@ -227,61 +210,49 @@ public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, N
 		progress++;
 		if (progress < SEQUENCE_TIME) return true;
 
-		// Read complete. Freshness is resolved now, at the moment the tissue is consumed, and
-		// carried forward — data does not rot, tissue does.
-		float freshness = data.freshness(world.getTime());
+		float freshness = data.freshness(level.getGameTime());
 		long elapsed = (long) ((1f - Math.max(0f, Math.min(1f, freshness))) * SampleData.SHELF_LIFE);
-		inFlight = new SampleData(data.genome(), world.getTime() - elapsed, data.lineageHex());
+		inFlight = new SampleData(data.genome(), level.getGameTime() - elapsed, data.lineageHex());
 
-		sample.decrement(1);
+		sample.shrink(1);
 		stage = Stage.DECODING;
 		progress = 0;
 		redstoneUsed = 0;
-		// Leftover burn is discarded rather than banked toward the next sample.
-		//
-		// A furnace keeps its heat, and copying that here read as a bug: one lump of coal covers
-		// four sequencing runs, so a player who loaded fuel once and took it back out watched the
-		// lab keep reading tissue with an empty fuel slot and no way to tell why. Spending the
-		// remainder makes the price legible and matches the other half of the machine — one fuel
-		// item per read, sixteen redstone per decode.
 		burnTime = 0;
 		burnTimeTotal = 0;
 		return true;
 	}
 
-	private boolean tickDecoding(World world) {
+	private boolean tickDecoding(Level level) {
 		if (inFlight == null || !inventory.get(SLOT_OUTPUT).isEmpty()) {
 			return reset();
 		}
 
-		// Redstone is drawn steadily rather than all at once, so a lab that runs short stalls
-		// partway with the cost already visible instead of refusing to start for no stated reason.
 		int owed = (progress * REDSTONE_PER_DECODE) / DECODE_TIME;
 		if (redstoneUsed < owed) {
 			ItemStack redstone = inventory.get(SLOT_REDSTONE);
-			if (!redstone.isOf(Items.REDSTONE) || redstone.isEmpty()) return true;
-			redstone.decrement(1);
+			if (!redstone.is(Items.REDSTONE) || redstone.isEmpty()) return true;
+			redstone.shrink(1);
 			redstoneUsed++;
 		}
 
 		progress++;
 		if (progress < DECODE_TIME) return true;
 
-		// Charge any rounding remainder before finishing, so a decode always costs its full price.
 		while (redstoneUsed < REDSTONE_PER_DECODE) {
 			ItemStack redstone = inventory.get(SLOT_REDSTONE);
-			if (!redstone.isOf(Items.REDSTONE) || redstone.isEmpty()) {
+			if (!redstone.is(Items.REDSTONE) || redstone.isEmpty()) {
 				progress = DECODE_TIME - 1;
 				return true;
 			}
-			redstone.decrement(1);
+			redstone.shrink(1);
 			redstoneUsed++;
 		}
 
-		if (world instanceof ServerWorld serverWorld) {
+		if (level instanceof ServerLevel serverWorld) {
 			GenomeLibrary library = GenomeLibrary.get(serverWorld);
-			int prior = library.decodedCount(inFlight.genome().lineage());
-			DecodeAccuracy accuracy = DecodeAccuracy.resolve(prior, inFlight.freshness(world.getTime()));
+			int prior = library.referenceStrength(inFlight.genome());
+			DecodeAccuracy accuracy = DecodeAccuracy.resolve(prior, inFlight.freshness(level.getGameTime()));
 			library.record(inFlight.genome());
 
 			ItemStack report = inFlight.onto(PrimordiaItems.GENOME_REPORT);
@@ -299,37 +270,20 @@ public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, N
 		return true;
 	}
 
-	private static java.util.Map<net.minecraft.item.Item, Integer> fuelTimes;
-
 	private int consumeFuel() {
 		ItemStack fuel = inventory.get(SLOT_FUEL);
-		if (fuel.isEmpty()) return 0;
-		if (fuelTimes == null) {
-			fuelTimes = net.minecraft.block.entity.AbstractFurnaceBlockEntity.createFuelTimeMap();
-		}
-		int value = fuelTimes.getOrDefault(fuel.getItem(), 0);
+		if (fuel.isEmpty() || level == null) return 0;
+		int value = level.fuelValues().burnDuration(fuel);
 		if (value <= 0) return 0;
 
-		net.minecraft.item.Item remainder = fuel.getItem().getRecipeRemainder();
-		fuel.decrement(1);
+		var remainder = fuel.getItem().getCraftingRemainder();
+		fuel.shrink(1);
 		if (fuel.isEmpty() && remainder != null) {
-			inventory.set(SLOT_FUEL, new ItemStack(remainder));
+			inventory.set(SLOT_FUEL, remainder.create());
 		}
 		return value;
 	}
 
-	/**
-	 * Fill of one of the three progress lines the screen draws between its four slots, 0 to 1.
-	 * <p>
-	 * Index 0 is sample to sequencer, 1 is sequencer to decoder, 2 is decoder to report. Each owns
-	 * one step and fills only while that step runs, so the column says at a glance which of the
-	 * three the machine is on — a single bar spanning the whole job cannot, and "half full" would
-	 * leave the player unable to tell reading from interpreting when those need different things
-	 * from them.
-	 * <p>
-	 * Lives here rather than on the screen handler so the arithmetic is reachable without a
-	 * property delegate, and therefore testable.
-	 */
 	public static float lineFill(int index, Stage stage, int progress) {
 		float fill = switch (index) {
 			case 0 -> switch (stage) {
@@ -348,10 +302,8 @@ public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, N
 		return Math.max(0f, Math.min(1f, fill));
 	}
 
-	// ------------------------------------------------------------------ inventory
-
 	@Override
-	public int size() {
+	public int getContainerSize() {
 		return SLOT_COUNT;
 	}
 
@@ -364,46 +316,45 @@ public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, N
 	}
 
 	@Override
-	public ItemStack getStack(int slot) {
+	public ItemStack getItem(int slot) {
 		return inventory.get(slot);
 	}
 
 	@Override
-	public ItemStack removeStack(int slot, int amount) {
-		ItemStack result = Inventories.splitStack(inventory, slot, amount);
-		if (!result.isEmpty()) markDirty();
+	public ItemStack removeItem(int slot, int amount) {
+		ItemStack result = ContainerHelper.removeItem(inventory, slot, amount);
+		if (!result.isEmpty()) setChanged();
 		return result;
 	}
 
 	@Override
-	public ItemStack removeStack(int slot) {
-		return Inventories.removeStack(inventory, slot);
+	public ItemStack removeItemNoUpdate(int slot) {
+		return ContainerHelper.takeItem(inventory, slot);
 	}
 
 	@Override
-	public void setStack(int slot, ItemStack stack) {
+	public void setItem(int slot, ItemStack stack) {
 		inventory.set(slot, stack);
-		if (stack.getCount() > stack.getMaxCount()) stack.setCount(stack.getMaxCount());
-		markDirty();
+		if (stack.getCount() > stack.getMaxStackSize()) stack.setCount(stack.getMaxStackSize());
+		setChanged();
 	}
 
 	@Override
-	public boolean canPlayerUse(PlayerEntity player) {
-		return world != null && world.getBlockEntity(pos) == this
-				&& player.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) <= 64.0;
+	public boolean stillValid(Player player) {
+		return Container.stillValidBlockEntity(this, player);
 	}
 
 	@Override
-	public void clear() {
+	public void clearContent() {
 		inventory.clear();
 	}
 
 	public static boolean isSample(ItemStack stack) {
-		return stack.isOf(PrimordiaItems.TISSUE_SAMPLE) && SampleData.get(stack) != null;
+		return stack.is(PrimordiaItems.TISSUE_SAMPLE) && SampleData.get(stack) != null;
 	}
 
 	@Override
-	public int[] getAvailableSlots(Direction side) {
+	public int[] getSlotsForFace(Direction side) {
 		return switch (side) {
 			case DOWN -> BOTTOM_SLOTS;
 			case UP -> TOP_SLOTS;
@@ -412,76 +363,67 @@ public class GeneLabBlockEntity extends BlockEntity implements SidedInventory, N
 	}
 
 	@Override
-	public boolean canInsert(int slot, ItemStack stack, Direction dir) {
+	public boolean canPlaceItemThroughFace(int slot, ItemStack stack, Direction dir) {
 		return switch (slot) {
 			case SLOT_SAMPLE -> isSample(stack);
-			case SLOT_REDSTONE -> stack.isOf(Items.REDSTONE);
+			case SLOT_REDSTONE -> stack.is(Items.REDSTONE);
 			case SLOT_FUEL -> true;
 			default -> false;
 		};
 	}
 
 	@Override
-	public boolean canExtract(int slot, ItemStack stack, Direction dir) {
+	public boolean canTakeItemThroughFace(int slot, ItemStack stack, Direction dir) {
 		return slot == SLOT_OUTPUT;
 	}
 
-	// ------------------------------------------------------------------ screen
-
 	@Override
-	public ScreenHandler createMenu(int syncId, PlayerInventory playerInventory, PlayerEntity player) {
+	public AbstractContainerMenu createMenu(int syncId, Inventory playerInventory, Player player) {
 		return new GeneLabScreenHandler(syncId, playerInventory, this, properties);
 	}
 
 	@Override
-	public Text getDisplayName() {
-		return Text.translatable("container.primordia.basic_gene_lab");
+	public Component getDisplayName() {
+		return Component.translatable("container.primordia.basic_gene_lab");
 	}
 
-	// ------------------------------------------------------------------ persistence
-
 	@Override
-	protected void writeNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup registries) {
-		super.writeNbt(nbt, registries);
-		Inventories.writeNbt(nbt, inventory, registries);
-		nbt.putInt("Stage", stage.ordinal());
-		nbt.putInt("Progress", progress);
-		nbt.putInt("BurnTime", burnTime);
-		nbt.putInt("BurnTimeTotal", burnTimeTotal);
-		nbt.putInt("RedstoneUsed", redstoneUsed);
+	protected void saveAdditional(ValueOutput output) {
+		super.saveAdditional(output);
+		ContainerHelper.saveAllItems(output, inventory);
+		output.putInt("Stage", stage.ordinal());
+		output.putInt("Progress", progress);
+		output.putInt("BurnTime", burnTime);
+		output.putInt("BurnTimeTotal", burnTimeTotal);
+		output.putInt("RedstoneUsed", redstoneUsed);
 		if (inFlight != null) {
-			// The in-flight specimen has to survive a save, or unloading the chunk mid-run silently
-			// destroys an animal the player went out and found.
-			NbtCompound carried = new NbtCompound();
+			ValueOutput carried = output.child("InFlight");
 			carried.putString("Genome", inFlight.genome().encode());
 			carried.putLong("Collected", inFlight.collectedAtTick());
 			carried.putString("Lineage", inFlight.lineageHex());
-			nbt.put("InFlight", carried);
 		}
 	}
 
 	@Override
-	protected void readNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup registries) {
-		super.readNbt(nbt, registries);
+	protected void loadAdditional(ValueInput input) {
+		super.loadAdditional(input);
 		inventory.clear();
-		Inventories.readNbt(nbt, inventory, registries);
-		stage = Stage.VALUES[Math.floorMod(nbt.getInt("Stage"), Stage.VALUES.length)];
-		progress = nbt.getInt("Progress");
-		burnTime = nbt.getInt("BurnTime");
-		burnTimeTotal = nbt.getInt("BurnTimeTotal");
-		redstoneUsed = nbt.getInt("RedstoneUsed");
+		ContainerHelper.loadAllItems(input, inventory);
+		stage = Stage.VALUES[Math.floorMod(input.getIntOr("Stage", 0), Stage.VALUES.length)];
+		progress = input.getIntOr("Progress", 0);
+		burnTime = input.getIntOr("BurnTime", 0);
+		burnTimeTotal = input.getIntOr("BurnTimeTotal", 0);
+		redstoneUsed = input.getIntOr("RedstoneUsed", 0);
 
 		inFlight = null;
-		if (nbt.contains("InFlight")) {
-			NbtCompound carried = nbt.getCompound("InFlight");
-			var genome = dev.jsz.primordia.genome.Genome.decode(carried.getString("Genome"));
+		input.child("InFlight").ifPresent(carried -> {
+			var genomeStr = carried.getStringOr("Genome", "");
+			var genome = dev.jsz.primordia.genome.Genome.decode(genomeStr);
 			if (genome != null) {
-				inFlight = new SampleData(genome, carried.getLong("Collected"),
-						carried.getString("Lineage"));
+				inFlight = new SampleData(genome, carried.getLongOr("Collected", 0L),
+						carried.getStringOr("Lineage", ""));
 			}
-		}
-		// A decode whose specimen did not survive the round trip has nothing to produce, so it is
-		// dropped back to idle rather than left spinning against a null.
+		});
 		if (stage == Stage.DECODING && inFlight == null) reset();
 	}
 }

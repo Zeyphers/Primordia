@@ -5,8 +5,8 @@ import dev.jsz.primordia.ecology.EnergyBudget;
 import dev.jsz.primordia.entity.CreatureActivity;
 import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.genome.Genome;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.ai.goal.MeleeAttackGoal;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.goal.MeleeAttackGoal;
 
 /**
  * Melee attack that plays the animation the creature's anatomy actually affords, and lands the hit
@@ -32,11 +32,32 @@ public class CreatureAttackGoal extends MeleeAttackGoal {
 	}
 
 	@Override
-	public boolean canStart() {
+	public boolean canUse() {
 		// A bonded creature fights whatever its owner is fighting regardless of what it eats.
 		// Gating this on diet would mean a domesticated herbivore follows its owner into a fight
 		// and then stands there, which reads as broken rather than as herbivorous.
-		return (creature.isDomesticated() || creature.getDietGroup().hunts()) && super.canStart();
+		return (creature.isDomesticated() || creature.getDietGroup().hunts() || isDefendingItself())
+				&& super.canUse();
+	}
+
+	/**
+	 * Whether the creature's current target is the thing that attacked it.
+	 * <p>
+	 * Without this, a wild herbivore could never use this goal at all, and a {@code DEFENSIVE}
+	 * herbivore — which is what a bold, unfearful plant-eater comes out as — retaliated only on paper:
+	 * the target selector duly picked its attacker, and then no goal existed that would act on it, so
+	 * it stood still and was eaten. Diet decides what an animal <i>hunts</i>; it has no business
+	 * deciding whether it may defend itself.
+	 * <p>
+	 * Scoped to its attacker rather than to any target, so this stays a defence and does not quietly
+	 * turn herbivores into predators through some other goal that happens to set a target.
+	 */
+	private boolean isDefendingItself() {
+		LivingEntity target = creature.getTarget();
+		if (target == null) return false;
+		if (target instanceof net.minecraft.world.entity.monster.Monster) return true;
+		return target == creature.getLastHurtByMob()
+				&& (creature.getTemperament().retaliates() || target instanceof LivingEntity);
 	}
 
 	@Override
@@ -68,8 +89,9 @@ public class CreatureAttackGoal extends MeleeAttackGoal {
 			// Land the blow at the point in the animation where the jaw or claw arrives, not when
 			// the swing began — otherwise damage visibly precedes the strike.
 			if (pendingVictim != null && pendingVictim.isAlive()
-					&& creature.squaredDistanceTo(pendingVictim) <= strikeRangeSq(pendingVictim) * 1.4) {
-				creature.tryAttack(pendingVictim);
+					&& creature.distanceToSqr(pendingVictim) <= strikeRangeSq(pendingVictim) * 1.4
+					&& creature.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+				creature.doHurtTarget(serverLevel, pendingVictim);
 			}
 			pendingVictim = null;
 		}
@@ -96,19 +118,26 @@ public class CreatureAttackGoal extends MeleeAttackGoal {
 
 		if (++chaseTicks <= chaseBudget) return false;
 
+		// A defence that has gone on too long is a fight the animal is losing, not a hunt it has
+		// botched: charging it the failed-hunt energy cost and a hunt cooldown would punish it for
+		// having been attacked. Dropping the target is enough — it stops pursuing, and whatever else
+		// wants to run is then free to.
+		if (isDefendingItself()) {
+			creature.setTarget(null);
+			return true;
+		}
+
 		creature.onHuntFailed();
 		return true;
 	}
 
 	@Override
-	protected void attack(LivingEntity target) {
+	protected void checkAndPerformAttack(LivingEntity target) {
 		if (!inStrikingRange(target)) return;
 		if (impactCountdown >= 0) return;
 
-		// Landing a blow means this is an engagement rather than a chase, so the pursuit clock
-		// starts again from here.
 		chaseTicks = 0;
-		resetCooldown();
+		resetAttackCooldown();
 		AttackStyle style = creature.getAttackStyle();
 		CreatureActivity activity = switch (style) {
 			case CLAW -> CreatureActivity.CLAW;
@@ -119,24 +148,18 @@ public class CreatureAttackGoal extends MeleeAttackGoal {
 		};
 		creature.triggerActivity(activity);
 
-		// Connect around halfway through the animation.
 		impactCountdown = Math.max(1, activity.durationTicks / 2);
 		pendingVictim = target;
 	}
 
 	private boolean inStrikingRange(LivingEntity target) {
-		return creature.squaredDistanceTo(target) <= strikeRangeSq(target)
-				&& creature.getVisibilityCache().canSee(target);
+		return creature.distanceToSqr(target) <= strikeRangeSq(target)
+				&& creature.getSensing().hasLineOfSight(target);
 	}
 
-	/**
-	 * Squared melee reach. Vanilla's width-based formula is reproduced here rather than inherited,
-	 * because the protected accessor for it has moved between Minecraft versions and this is both
-	 * shorter and stable. Widened by the creature's own body length so that large animals are not
-	 * forced to stand nose-to-nose before their jaws count as being in range.
-	 */
 	private double strikeRangeSq(LivingEntity target) {
-		double reach = Math.min(3.5, 1.2 + creature.getWidth() * 0.45);
-		return reach * reach + target.getWidth();
+		double reach = Math.min(3.5, 1.2 + creature.getBbWidth() * 0.45);
+		double combinedRadius = (creature.getBbWidth() + target.getBbWidth()) * 0.5 + reach;
+		return combinedRadius * combinedRadius;
 	}
 }

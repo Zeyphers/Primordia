@@ -2,19 +2,25 @@ package dev.jsz.primordia.registry;
 
 import dev.jsz.primordia.Primordia;
 import dev.jsz.primordia.block.GeneLabBlockEntity;
-import dev.jsz.primordia.block.GenomeBankBlockEntity;
 import dev.jsz.primordia.block.LabMachineBlock;
-import dev.jsz.primordia.block.PreservationCaseBlockEntity;
-import dev.jsz.primordia.block.SimpleContainerBlock;
-import net.minecraft.block.Block;
-import net.minecraft.block.Blocks;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.Item;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.Registry;
-import net.minecraft.sound.BlockSoundGroup;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.core.Registry;
+import net.minecraft.resources.ResourceKey;
 
-/** The lab's four stations. */
+import java.util.function.Function;
+
+/**
+ * The lab's stations.
+ * <p>
+ * Blocks are built through a factory rather than constructed inline: since 26.2 a block reads its
+ * own registry key out of its properties while it is being constructed, so the key has to exist
+ * first. See {@link PrimordiaItems} for the same shape on the item side.
+ */
 public final class PrimordiaBlocks {
 
 	/**
@@ -22,40 +28,28 @@ public final class PrimordiaBlocks {
 	 * is non-opaque and must not have its neighbours' faces culled against it.
 	 */
 	public static final Block BASIC_GENE_LAB = register("basic_gene_lab",
-			new LabMachineBlock(
-					Block.Settings.copy(Blocks.BLAST_FURNACE)
-							.nonOpaque()
-							.luminance(state -> state.get(LabMachineBlock.STAGE)
-									== GeneLabBlockEntity.Stage.IDLE ? 0 : 9),
+			properties -> new LabMachineBlock(
+					properties,
 					GeneLabBlockEntity::new,
-					() -> PrimordiaBlockEntities.BASIC_GENE_LAB));
-
-	public static final Block PRESERVATION_CASE = register("preservation_case",
-			new SimpleContainerBlock(
-					Block.Settings.create().strength(3.0f).requiresTool()
-							.sounds(BlockSoundGroup.METAL),
-					PreservationCaseBlockEntity::new,
-					() -> PrimordiaBlockEntities.PRESERVATION_CASE,
-					false, true));
-
-	public static final Block GENOME_BANK = register("genome_bank",
-			new SimpleContainerBlock(
-					Block.Settings.create().strength(3.0f).requiresTool()
-							.sounds(BlockSoundGroup.METAL),
-					GenomeBankBlockEntity::new,
-					() -> PrimordiaBlockEntities.GENOME_BANK,
-					true, false));
+					() -> PrimordiaBlockEntities.BASIC_GENE_LAB),
+			Block.Properties.ofFullCopy(Blocks.BLAST_FURNACE)
+					.noOcclusion()
+					.lightLevel(state -> state.getValue(LabMachineBlock.STAGE)
+							== GeneLabBlockEntity.Stage.IDLE ? 0 : 9));
 
 	private PrimordiaBlocks() {
 	}
 
-	private static Block register(String path, Block block) {
-		return Registry.register(Registries.BLOCK, Primordia.id(path), block);
+	private static Block register(String path, Function<Block.Properties, Block> factory,
+	                              Block.Properties properties) {
+		ResourceKey<Block> key = ResourceKey.create(Registries.BLOCK, Primordia.id(path));
+		return Registry.register(BuiltInRegistries.BLOCK, key, factory.apply(properties.setId(key)));
 	}
 
 	private static Item registerItem(String path, Block block) {
-		return Registry.register(Registries.ITEM, Primordia.id(path),
-				new BlockItem(block, new Item.Settings()));
+		ResourceKey<Item> key = ResourceKey.create(Registries.ITEM, Primordia.id(path));
+		return Registry.register(BuiltInRegistries.ITEM, key,
+				new BlockItem(block, new Item.Properties().useBlockDescriptionPrefix().setId(key)));
 	}
 
 	/**
@@ -64,7 +58,5 @@ public final class PrimordiaBlocks {
 	 */
 	public static void register() {
 		registerItem("basic_gene_lab", BASIC_GENE_LAB);
-		registerItem("preservation_case", PRESERVATION_CASE);
-		registerItem("genome_bank", GENOME_BANK);
 	}
 }

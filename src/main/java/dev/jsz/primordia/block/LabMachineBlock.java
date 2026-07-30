@@ -1,31 +1,28 @@
 package dev.jsz.primordia.block;
 
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockEntityProvider;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.BlockEntityTicker;
-import net.minecraft.block.entity.BlockEntityType;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.ItemPlacementContext;
-import net.minecraft.item.ItemStack;
-import net.minecraft.particle.ParticleTypes;
-import net.minecraft.screen.NamedScreenHandlerFactory;
-import net.minecraft.state.StateManager;
-import net.minecraft.state.property.EnumProperty;
-import net.minecraft.state.property.DirectionProperty;
-import net.minecraft.state.property.Properties;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.BlockMirror;
-import net.minecraft.util.BlockRotation;
-import net.minecraft.util.ItemScatterer;
-import net.minecraft.util.function.BooleanBiFunction;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.random.Random;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.Containers;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.Mirror;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityTicker;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.EnumProperty;
+import net.minecraft.world.phys.BlockHitResult;
 
 import java.util.function.BiFunction;
 
@@ -33,12 +30,12 @@ import java.util.function.BiFunction;
  * The block half of a lab workstation.
  * <p>
  * One class serves both machines: they differ in what their block entity does, not in how they sit
- * in the world, so the facing, the lit state, the drop-contents-on-break behaviour and the
+ * in the level, so the facing, the lit state, the drop-contents-on-break behaviour and the
  * open-the-screen interaction are all shared. The factory passed in is the only difference.
  */
-public class LabMachineBlock extends Block implements BlockEntityProvider {
+public class LabMachineBlock extends Block implements EntityBlock {
 
-	public static final DirectionProperty FACING = Properties.HORIZONTAL_FACING;
+	public static final EnumProperty<Direction> FACING = BlockStateProperties.HORIZONTAL_FACING;
 	/**
 	 * What the machine is doing, mirrored out of its block entity.
 	 * <p>
@@ -47,7 +44,7 @@ public class LabMachineBlock extends Block implements BlockEntityProvider {
 	 * different jobs with different costs. The console's animation is selected from this.
 	 */
 	public static final EnumProperty<GeneLabBlockEntity.Stage> STAGE =
-			EnumProperty.of("stage", GeneLabBlockEntity.Stage.class);
+			EnumProperty.create("stage", GeneLabBlockEntity.Stage.class);
 
 	private final BiFunction<BlockPos, BlockState, BlockEntity> factory;
 	private final BlockEntityTypeSupplier typeSupplier;
@@ -58,51 +55,51 @@ public class LabMachineBlock extends Block implements BlockEntityProvider {
 		BlockEntityType<?> get();
 	}
 
-	public LabMachineBlock(Settings settings,
+	public LabMachineBlock(Properties settings,
 	                       BiFunction<BlockPos, BlockState, BlockEntity> factory,
 	                       BlockEntityTypeSupplier typeSupplier) {
 		super(settings);
 		this.factory = factory;
 		this.typeSupplier = typeSupplier;
-		setDefaultState(getStateManager().getDefaultState()
-				.with(FACING, Direction.NORTH)
-				.with(STAGE, GeneLabBlockEntity.Stage.IDLE));
+		registerDefaultState(getStateDefinition().any()
+				.setValue(FACING, Direction.NORTH)
+				.setValue(STAGE, GeneLabBlockEntity.Stage.IDLE));
 	}
 
 	@Override
-	public BlockEntity createBlockEntity(BlockPos pos, BlockState state) {
+	public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
 		return factory.apply(pos, state);
 	}
 
 	@Override
-	protected void appendProperties(StateManager.Builder<Block, BlockState> builder) {
+	protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
 		builder.add(FACING, STAGE);
 	}
 
 	@Override
-	public BlockState getPlacementState(ItemPlacementContext ctx) {
-		return getDefaultState().with(FACING, ctx.getHorizontalPlayerFacing().getOpposite());
+	public BlockState getStateForPlacement(BlockPlaceContext ctx) {
+		return defaultBlockState().setValue(FACING, ctx.getHorizontalDirection().getOpposite());
 	}
 
 	@Override
-	protected BlockState rotate(BlockState state, BlockRotation rotation) {
-		return state.with(FACING, rotation.rotate(state.get(FACING)));
+	protected BlockState rotate(BlockState state, Rotation rotation) {
+		return state.setValue(FACING, rotation.rotate(state.getValue(FACING)));
 	}
 
 	@Override
-	protected BlockState mirror(BlockState state, BlockMirror mirror) {
-		return state.rotate(mirror.getRotation(state.get(FACING)));
+	protected BlockState mirror(BlockState state, Mirror mirror) {
+		return state.rotate(mirror.getRotation(state.getValue(FACING)));
 	}
 
 	@Override
-	protected ActionResult onUse(BlockState state, World world, BlockPos pos, PlayerEntity player,
-	                             BlockHitResult hit) {
-		if (world.isClient()) return ActionResult.SUCCESS;
-		BlockEntity be = world.getBlockEntity(pos);
-		if (be instanceof NamedScreenHandlerFactory screenFactory) {
-			player.openHandledScreen(screenFactory);
+	protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player,
+	                                     BlockHitResult hit) {
+		if (level.isClientSide()) return InteractionResult.SUCCESS;
+		BlockEntity be = level.getBlockEntity(pos);
+		if (be instanceof MenuProvider screenFactory) {
+			player.openMenu(screenFactory);
 		}
-		return ActionResult.CONSUME;
+		return InteractionResult.CONSUME;
 	}
 
 	/**
@@ -113,41 +110,39 @@ public class LabMachineBlock extends Block implements BlockEntityProvider {
 	 * found.
 	 */
 	@Override
-	protected void onStateReplaced(BlockState state, World world, BlockPos pos, BlockState newState,
-	                               boolean moved) {
-		if (state.isOf(newState.getBlock())) return;
-		BlockEntity be = world.getBlockEntity(pos);
+	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean moved) {
+		BlockEntity be = level.getBlockEntity(pos);
 		if (be instanceof GeneLabBlockEntity machine) {
-			ItemScatterer.spawn(world, pos, machine);
-			world.updateComparators(pos, this);
+			Containers.dropContents(level, pos, machine);
+			level.updateNeighbourForOutputSignal(pos, this);
 		}
-		super.onStateReplaced(state, world, pos, newState, moved);
+		super.affectNeighborsAfterRemoval(state, level, pos, moved);
 	}
 
 	/**
 	 * {@inheritDoc}
 	 * <p>
-	 * The type check matters: {@code getTicker} is handed whichever block entity type the world is
+	 * The type check matters: {@code getTicker} is handed whichever block entity type the level is
 	 * asking about, and returning a ticker that casts blindly would run this block's logic against
 	 * an unrelated block entity.
 	 */
 	@Override
 	@SuppressWarnings("unchecked")
-	public <T extends BlockEntity> BlockEntityTicker<T> getTicker(World world, BlockState state,
+	public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state,
 	                                                             BlockEntityType<T> type) {
-		if (world.isClient() || type != typeSupplier.get()) return null;
-		return (BlockEntityTicker<T>) (BlockEntityTicker<GeneLabBlockEntity>) GeneLabBlockEntity::tick;
+		if (level.isClientSide() || type != typeSupplier.get()) return null;
+		return (BlockEntityTicker<T>) (BlockEntityTicker<GeneLabBlockEntity>) GeneLabBlockEntity::serverTick;
 	}
 
 	/** A working machine vents warm air, which reads from across a room where a screen does not. */
 	@Override
-	public void randomDisplayTick(BlockState state, World world, BlockPos pos, Random random) {
-		if (state.get(STAGE) == GeneLabBlockEntity.Stage.IDLE) return;
+	public void animateTick(BlockState state, Level level, BlockPos pos, RandomSource random) {
+		if (state.getValue(STAGE) == GeneLabBlockEntity.Stage.IDLE) return;
 		double x = pos.getX() + 0.5;
 		double y = pos.getY() + 0.9;
 		double z = pos.getZ() + 0.5;
 		if (random.nextFloat() < 0.4f) {
-			world.addParticle(ParticleTypes.SMOKE,
+			level.addParticle(ParticleTypes.SMOKE,
 					x + (random.nextDouble() - 0.5) * 0.4, y, z + (random.nextDouble() - 0.5) * 0.4,
 					0.0, 0.02, 0.0);
 		}

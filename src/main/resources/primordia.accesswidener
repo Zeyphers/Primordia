@@ -1,10 +1,16 @@
-accessWidener v2 named
+accessWidener v2 official
 
 # Goal lists on vanilla mobs, so a fox can be taught to hunt a creature.
 #
 # Fabric offers no API for adding a goal to a mob it does not own, and the two ways in are a mixin
 # or this. An access widener is the smaller change: it grants exactly two fields and leaves every
-# vanilla method body untouched, where a mixin injects into initGoals and has to be kept working
+# vanilla method body untouched, where a mixin injects into registerGoals and has to be kept working
 # across versions and against every other mod injecting into the same place.
-accessible field net/minecraft/entity/mob/MobEntity goalSelector Lnet/minecraft/entity/ai/goal/GoalSelector;
-accessible field net/minecraft/entity/mob/MobEntity targetSelector Lnet/minecraft/entity/ai/goal/GoalSelector;
+#
+# The namespace is `official` rather than `named`: Minecraft has shipped unobfuscated since 26.1, so
+# there is no separate named namespace left for Loom to remap this through.
+#
+# 26.2 added a public Mob#getGoalSelector(), so the first line is belt-and-braces — but targetSelector
+# still has no accessor, and widening both keeps the two reads symmetrical at the call site.
+accessible field net/minecraft/world/entity/Mob goalSelector Lnet/minecraft/world/entity/ai/goal/GoalSelector;
+accessible field net/minecraft/world/entity/Mob targetSelector Lnet/minecraft/world/entity/ai/goal/GoalSelector;

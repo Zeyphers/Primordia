@@ -1,12 +1,12 @@
 package dev.jsz.primordia.lab;
 
 import dev.jsz.primordia.genome.Genome;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.NbtComponent;
-import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtList;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.nbt.ListTag;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -30,7 +30,7 @@ public final class GuideData {
 	private static final String KEY_ENTRIES = "Entries";
 
 	/** Longest name a species may be given. Enough for a binomial, short enough to fit a plate. */
-	public static final int MAX_NAME = 28;
+	public static final int MAX_NAME = 20;
 
 	/** One species as the guide records it. */
 	public record Entry(long lineage, String label, int filed, int generation, String genomeCode,
@@ -73,40 +73,61 @@ public final class GuideData {
 		this.entries = entries;
 	}
 
+	public static GuideData empty() {
+		return new GuideData(new ArrayList<>());
+	}
+
+	/**
+	 * Merges another guide's contents into this one. Used for migrating legacy item-based guides.
+	 */
+	public void merge(GuideData other) {
+		for (Entry entry : other.entries) {
+			Genome g = entry.genome();
+			if (g != null) {
+				for (int i = 0; i < entry.filed(); i++) {
+					file(g);
+				}
+				if (entry.named()) {
+					rename(entry.lineage(), entry.name());
+				}
+			}
+		}
+	}
+
 	public static GuideData get(ItemStack stack) {
-		NbtComponent component = stack.get(DataComponentTypes.CUSTOM_DATA);
-		return fromNbt(component == null ? new NbtCompound() : component.copyNbt());
+		CustomData component = stack.get(DataComponents.CUSTOM_DATA);
+		return fromNbt(component == null ? new CompoundTag() : component.copyTag());
 	}
 
 	public void write(ItemStack stack) {
-		NbtComponent existing = stack.get(DataComponentTypes.CUSTOM_DATA);
-		NbtCompound root = existing == null ? new NbtCompound() : existing.copyNbt();
+		CustomData existing = stack.get(DataComponents.CUSTOM_DATA);
+		CompoundTag root = existing == null ? new CompoundTag() : existing.copyTag();
 		writeInto(root);
-		stack.set(DataComponentTypes.CUSTOM_DATA, NbtComponent.of(root));
+		stack.set(DataComponents.CUSTOM_DATA, CustomData.of(root));
 	}
 
 	/**
 	 * The stack-free half of the storage, so the record keeping can be exercised without a live
 	 * item registry — which a headless test has no way to bootstrap.
 	 */
-	public static GuideData fromNbt(NbtCompound root) {
+	public static GuideData fromNbt(CompoundTag root) {
 		List<Entry> out = new ArrayList<>();
 		if (root.contains(ROOT)) {
-			NbtList list = root.getCompound(ROOT).getList(KEY_ENTRIES, NbtElement.COMPOUND_TYPE);
+			ListTag list = root.getCompoundOrEmpty(ROOT).getListOrEmpty(KEY_ENTRIES);
 			for (int i = 0; i < list.size(); i++) {
-				NbtCompound e = list.getCompound(i);
-				out.add(new Entry(e.getLong("Lineage"), e.getString("Label"),
-						e.getInt("Filed"), e.getInt("Generation"), e.getString("Genome"),
-						e.getString("Name")));
+				CompoundTag e = list.getCompoundOrEmpty(i);
+				out.add(new Entry(e.getLongOr("Lineage", 0L), e.getStringOr("Label", ""),
+						e.getIntOr("Filed", 0), e.getIntOr("Generation", 0), e.getStringOr("Genome", ""),
+						e.getStringOr("Name", "")));
 			}
 		}
 		return new GuideData(out);
 	}
 
-	public void writeInto(NbtCompound root) {
-		NbtList list = new NbtList();
+	public void writeInto(CompoundTag root) {
+		ListTag list = new ListTag();
 		for (Entry entry : entries) {
-			NbtCompound e = new NbtCompound();
+			CompoundTag e = new CompoundTag();
 			e.putLong("Lineage", entry.lineage());
 			e.putString("Label", entry.label());
 			e.putInt("Filed", entry.filed());
@@ -115,7 +136,7 @@ public final class GuideData {
 			e.putString("Name", entry.name() == null ? "" : entry.name());
 			list.add(e);
 		}
-		NbtCompound guide = new NbtCompound();
+		CompoundTag guide = new CompoundTag();
 		guide.put(KEY_ENTRIES, list);
 		root.put(ROOT, guide);
 	}

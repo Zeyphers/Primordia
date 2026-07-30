@@ -1,5 +1,5 @@
 plugins {
-	id 'fabric-loom' version "${loom_version}"
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
 	id 'maven-publish'
 }
 
@@ -23,24 +23,77 @@ loom {
 
 repositories {
 	mavenCentral()
-	// Mod Menu, for the settings entry in the Mods list.
+	maven {
+		name = 'Fabric'
+		url = 'https://maven.fabricmc.net/'
+	}
 	maven {
 		name = 'TerraformersMC'
 		url = 'https://maven.terraformersmc.com/releases/'
 	}
+	// LambDynamicLights has no maven of its own any more; Modrinth's is the only published
+	// source for 4.x. Scoped to its own group so an outage here cannot slow down any other
+	// dependency resolution.
+	maven {
+		name = 'Modrinth'
+		url = 'https://api.modrinth.com/maven'
+		content {
+			includeGroup 'maven.modrinth'
+		}
+	}
+}
+
+configurations {
+	// Not on the compile classpath itself: this is the whole LambDynamicLights mod jar, fetched only
+	// so its nested API jar can be lifted out below.
+	lambDynamicLightsMod
+}
+
+/**
+ * Puts the LambDynamicLights API on the compile classpath.
+ *
+ * It is published nowhere on its own — the only shipped copy is nested at
+ * `META-INF/jars/lambdynamiclights-api-*.jar` inside the mod jar — and `zipTree` cannot see into a
+ * jar within a jar, so the outer layer has to be unwrapped to disk before anything can compile
+ * against it. Nothing from this ends up in our jar; see the `compileOnly` below.
+ */
+def LAMBDYNLIGHTS_API_JAR = 'lambdynamiclights-api.jar'
+
+def unwrapLambDynamicLightsApi = tasks.register('unwrapLambDynamicLightsApi', Sync) {
+	description = 'Lifts the LambDynamicLights API jar out of the mod jar it ships nested inside.'
+	from(provider { zipTree(configurations.lambDynamicLightsMod.singleFile) }) {
+		include 'META-INF/jars/lambdynamiclights-api-*.jar'
+	}
+	// Flattened and renamed: a classpath entry has to be the jar itself — javac reads a directory as
+	// a root of loose classes and never looks inside it for jars — so the path must be known here,
+	// which it is not while the version is still in the file name.
+	eachFile { it.path = LAMBDYNLIGHTS_API_JAR }
+	includeEmptyDirs = false
+	into layout.buildDirectory.dir('lambdynamiclights-api')
 }
 
 dependencies {
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
-	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
-	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
-	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
-	// Optional at runtime: compiled against so the settings screen can be registered, and pulled
-	// into the dev client so it is actually testable, but never shipped as a hard dependency —
-	// the keybind reaches the same screen without it.
-	modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
-	modLocalRuntime "com.terraformersmc:modmenu:${project.modmenu_version}"
+	// Optional at runtime: compiled against so the settings screen can be registered, but never
+	// shipped as a hard dependency — the keybind reaches the same screen without it. The target
+	// profile already carries Mod Menu, so it is not pulled into a local runtime here.
+	compileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
+
+	// Bioluminescence lighting the world, when LambDynamicLights happens to be installed. Optional at
+	// runtime in the strongest sense: its `lambdynlights:initializer` entrypoint is only ever queried
+	// by LambDynamicLights itself, so with the mod absent our initialiser class is never loaded and
+	// none of these types are ever asked for.
+	lambDynamicLightsMod "maven.modrinth:lambdynamiclights:${project.lambdynlights_version}"
+	compileOnly files(layout.buildDirectory.file("lambdynamiclights-api/${LAMBDYNLIGHTS_API_JAR}")) {
+		builtBy unwrapLambDynamicLightsApi
+	}
+	// The API's own dependencies. Nested one layer deeper in the mod jar, but published properly to
+	// Maven Central, which is a great deal less build machinery than unwrapping a second time.
+	compileOnly "dev.yumi.commons:yumi-commons-event:${project.yumi_commons_version}"
+	compileOnly "dev.yumi.commons:yumi-commons-core:${project.yumi_commons_version}"
 
 	testImplementation platform('org.junit:junit-bom:5.10.2')
 	testImplementation 'org.junit.jupiter:junit-jupiter'
@@ -62,14 +115,16 @@ processResources {
 }
 
 tasks.withType(JavaCompile).configureEach {
-	it.options.release = 21
+	it.options.release = 25
 	it.options.encoding = 'UTF-8'
+	// The port needs the whole error list in one pass, not javac's first hundred.
+	it.options.compilerArgs << '-Xmaxerrs' << '100000'
 }
 
 java {
 	withSourcesJar()
-	sourceCompatibility = JavaVersion.VERSION_21
-	targetCompatibility = JavaVersion.VERSION_21
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
 }
 
 jar {

@@ -12,7 +12,7 @@ public final class FootState {
 	/** Where the foot is currently planted (or heading, mid-swing). */
 	public double plantX, plantY, plantZ;
 	/** Where it lifted off from, so a swing can interpolate between the two. */
-	public double prevX, prevY, prevZ;
+	public double xo, prevY, zo;
 	/** True while the foot is bearing weight. */
 	public boolean grounded = true;
 	/** Swing progress in [0,1]; meaningless while grounded. */
@@ -23,9 +23,9 @@ public final class FootState {
 	public boolean initialised;
 
 	public void snapTo(double x, double y, double z) {
-		plantX = prevX = currentX = x;
+		plantX = xo = currentX = x;
 		plantY = prevY = currentY = y;
-		plantZ = prevZ = currentZ = z;
+		plantZ = zo = currentZ = z;
 		grounded = true;
 		swing = 0f;
 		initialised = true;
@@ -33,9 +33,9 @@ public final class FootState {
 
 	/** Begins a swing toward a new plant position. */
 	public void beginSwing(double x, double y, double z) {
-		prevX = plantX;
+		xo = plantX;
 		prevY = plantY;
-		prevZ = plantZ;
+		zo = plantZ;
 		plantX = x;
 		plantY = y;
 		plantZ = z;

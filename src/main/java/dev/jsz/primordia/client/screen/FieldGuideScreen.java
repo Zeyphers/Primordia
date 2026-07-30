@@ -11,17 +11,20 @@ import dev.jsz.primordia.lab.NameLineagePayload;
 import dev.jsz.primordia.lab.Phylogeny;
 import dev.jsz.primordia.entity.TamingPreference;
 import dev.jsz.primordia.client.render.CreaturePreview;
-import com.mojang.blaze3d.systems.RenderSystem;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.Registries;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.server.permissions.Permissions;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
 import dev.jsz.primordia.Primordia;
-import net.minecraft.util.Identifier;
+import net.minecraft.resources.Identifier;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -82,10 +85,23 @@ public class FieldGuideScreen extends Screen {
 	private static final int INK_FAINT = 0xFF7B7260;
 	private static final int INK_TITLE = 0xFF2A2218;
 
-	private final ItemStack guide;
+	/**
+	 * The guide being read.
+	 * <p>
+	 * Refreshed from the inventory every tick rather than held as the stack the screen opened with.
+	 * A guide's contents are item components, and the server replies to a change by sending the whole
+	 * stack back — which the client installs as a <i>new</i> {@link ItemStack} in the slot, leaving
+	 * the one captured at open pointing at the state before the edit. That is why renaming a species
+	 * reported success and then showed the old name: the rename had landed, on an object this screen
+	 * was no longer looking at.
+	 */
+	private ItemStack guide;
+
+	/** Hash of the guide's entries as last drawn, for noticing edits that arrive while it is open. */
+	private int contentSignature;
 
 	/** Pages of the currently selected tab. Rebuilt when the tab changes. */
-	private final List<List<Text>> pages = new ArrayList<>();
+	private final List<List<Component>> pages = new ArrayList<>();
 	private final List<ItemStack> tabIcons = new ArrayList<>();
 	private int section;
 	private int page;
@@ -150,7 +166,7 @@ public class FieldGuideScreen extends Screen {
 	private double dragDistance;
 
 	public FieldGuideScreen(ItemStack guide) {
-		super(Text.literal("Primordia Field Guide"));
+		super(Component.literal("Primordia Field Guide"));
 		this.guide = guide;
 	}
 
@@ -163,10 +179,65 @@ public class FieldGuideScreen extends Screen {
 		for (GuideChapters.Section s : GuideChapters.SECTIONS) {
 			// A tab whose icon names an item that does not exist still needs to draw something, or
 			// one bad id would leave an invisible, unclickable tab.
-			var item = Registries.ITEM.get(Identifier.of(s.iconItemId()));
+			// get() returns an Optional<Holder> in 26.2; getValue() is the one that still hands back
+			// the item itself, falling through to AIR for an id nothing is registered under.
+			var item = BuiltInRegistries.ITEM.getValue(Identifier.parse(s.iconItemId()));
 			tabIcons.add(new ItemStack(item == Items.AIR ? Items.PAPER : item));
 		}
 		buildSection();
+		if (minecraft != null && minecraft.player != null) {
+			minecraft.player.playSound(net.minecraft.sounds.SoundEvents.BOOK_PUT, 0.8f, 1.0f);
+		}
+	}
+
+	/**
+	 * Picks the guide back up out of the inventory and redraws if anything in it changed.
+	 * <p>
+	 * Covers a rename coming back from the server and a report filing itself while the book is open;
+	 * both edit the stack rather than telling this screen anything. The page is held across the
+	 * rebuild, because having the book turn back to the front every time a report lands would be a
+	 * worse bug than the one this fixes.
+	 */
+	@Override
+	public void tick() {
+		super.tick();
+
+		ItemStack live = findGuideInInventory();
+		if (live != null) guide = live;
+
+		if (dev.jsz.primordia.PrimordiaClient.getClientGuideData().entries().hashCode() == contentSignature) return;
+
+		// buildSection resets the view as well as the pages, which is right when the reader picks a
+		// different tab and wrong here — this is the same page redrawn with newer contents. A report
+		// filing itself must not fling the tree back to its default zoom, spin the specimen back to
+		// the front, or eat a half-typed name.
+		int keepPage = page;
+		float keepZoom = treeZoom, keepPanX = treePanX, keepPanY = treePanY, keepSpin = plateSpin;
+		boolean keepNaming = naming;
+		String keepBuffer = nameBuffer;
+
+		buildSection();
+
+		page = Math.max(0, Math.min(keepPage, pages.size() - 1));
+		treeZoom = keepZoom;
+		treePanX = keepPanX;
+		treePanY = keepPanY;
+		plateSpin = keepSpin;
+		naming = keepNaming;
+		nameBuffer = keepBuffer;
+	}
+
+	/** The live stack for this guide, or null if the reader is no longer carrying one. */
+	private ItemStack findGuideInInventory() {
+		if (minecraft == null || minecraft.player == null) return null;
+		var inventory = minecraft.player.getInventory();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack candidate = inventory.getItem(slot);
+			// The same first-match rule the server uses to decide which guide a rename applies to,
+			// so a player carrying two of them edits and reads the same one.
+			if (candidate.is(dev.jsz.primordia.registry.PrimordiaItems.FIELD_GUIDE)) return candidate;
+		}
+		return null;
 	}
 
 	private void buildSection() {
@@ -174,28 +245,31 @@ public class FieldGuideScreen extends Screen {
 		page = 0;
 		GuideChapters.Section current = GuideChapters.SECTIONS.get(section);
 
-		GuideData data = GuideData.get(guide);
+		GuideData data = dev.jsz.primordia.PrimordiaClient.getClientGuideData();
+		// Recorded here rather than in tick() so that every path which rebuilds — opening the book,
+		// changing tab — leaves the two in step, and the first tick after any of them has nothing to do.
+		contentSignature = data.entries().hashCode();
 		for (GuideChapters.Chapter chapter : current.chapters()) {
-			List<Text> lines = new ArrayList<>();
+			List<Component> lines = new ArrayList<>();
 			if (!chapter.unlocked(data)) {
 				// The title stays visible. Knowing an entry exists and cannot yet be read is the
 				// nudge; hiding it entirely would just look like a shorter book.
-				lines.add(Text.literal(chapter.title()).formatted(Formatting.BOLD, Formatting.OBFUSCATED));
-				lines.add(Text.empty());
+				lines.add(Component.literal(chapter.title()).withStyle(ChatFormatting.BOLD, ChatFormatting.OBFUSCATED));
+				lines.add(Component.empty());
 				for (String w : wrap(chapter.unlock().hint())) {
-					lines.add(Text.literal(w).formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
+					lines.add(Component.literal(w).withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
 				}
 				flush(lines);
 				continue;
 			}
-			lines.add(Text.literal(chapter.title()).formatted(Formatting.BOLD));
-			lines.add(Text.empty());
+			lines.add(Component.literal(chapter.title()).withStyle(ChatFormatting.BOLD));
+			lines.add(Component.empty());
 			for (String paragraph : chapter.paragraphs()) {
 				if (paragraph.isEmpty()) {
-					lines.add(Text.empty());
+					lines.add(Component.empty());
 					continue;
 				}
-				for (String wrapped : wrap(paragraph)) lines.add(Text.literal(wrapped));
+				for (String wrapped : wrap(paragraph)) lines.add(Component.literal(wrapped));
 			}
 			flush(lines);
 		}
@@ -219,25 +293,25 @@ public class FieldGuideScreen extends Screen {
 	 * is a live render of the animal and the other half is a stat block sized to fill the rest.
 	 */
 	private void buildReference() {
-		GuideData data = GuideData.get(guide);
+		GuideData data = dev.jsz.primordia.PrimordiaClient.getClientGuideData();
 		List<GuideData.Entry> entries = data.entries();
 
-		List<Text> index = new ArrayList<>();
-		index.add(Text.literal("Species on file").formatted(Formatting.BOLD));
-		index.add(Text.empty());
+		List<Component> index = new ArrayList<>();
+		index.add(Component.literal("Species on file").withStyle(ChatFormatting.BOLD));
+		index.add(Component.empty());
 		if (entries.isEmpty()) {
-			index.add(Text.literal("Nothing filed yet.").formatted(Formatting.DARK_GRAY));
-			index.add(Text.empty());
+			index.add(Component.literal("Nothing filed yet.").withStyle(ChatFormatting.DARK_GRAY));
+			index.add(Component.empty());
 			for (String w : wrap("Decode a sequence in a Gene Lab while carrying this guide. "
 					+ "The report will file itself and the paper will be consumed.")) {
-				index.add(Text.literal(w).formatted(Formatting.DARK_GRAY));
+				index.add(Component.literal(w).withStyle(ChatFormatting.DARK_GRAY));
 			}
 			flush(index);
 			return;
 		}
-		index.add(Text.literal(data.speciesCount() + " species · "
-				+ data.specimensFiled() + " specimens filed").formatted(Formatting.DARK_GRAY));
-		index.add(Text.empty());
+		index.add(Component.literal(data.speciesCount() + " species · "
+				+ data.specimensFiled() + " specimens filed").withStyle(ChatFormatting.DARK_GRAY));
+		index.add(Component.empty());
 
 		// Two columns. One per line ran off the bottom of the page as soon as a dozen bloodlines
 		// were on file, and left the right half of a wide page completely empty while doing it.
@@ -245,17 +319,17 @@ public class FieldGuideScreen extends Screen {
 		List<GuideData.Entry> listed = entries;
 		for (int row = 0; row < Math.min(perColumn, (listed.size() + 1) / 2); row++) {
 			int rightRow = row + perColumn;
-			Text line = indexEntry(listed.get(row));
+			Component line = indexEntry(listed.get(row));
 			if (rightRow < listed.size()) {
-				line = Text.literal("").append(line).append(pad(line))
+				line = Component.literal("").append(line).append(pad(line))
 						.append(indexEntry(listed.get(rightRow)));
 			}
 			index.add(line);
 		}
 		if (listed.size() > perColumn * 2) {
-			index.add(Text.empty());
-			index.add(Text.literal("…and " + (listed.size() - perColumn * 2) + " more")
-					.formatted(Formatting.DARK_GRAY));
+			index.add(Component.empty());
+			index.add(Component.literal("…and " + (listed.size() - perColumn * 2) + " more")
+					.withStyle(ChatFormatting.DARK_GRAY));
 		}
 		flush(index);
 
@@ -269,25 +343,25 @@ public class FieldGuideScreen extends Screen {
 	}
 
 	/** One line of the species index: the label, its count, and how well it is known. */
-	private static Text indexEntry(GuideData.Entry entry) {
+	private static Component indexEntry(GuideData.Entry entry) {
 		DecodeAccuracy accuracy = entry.accuracy();
-		return Text.literal(entry.displayName()).formatted(Formatting.DARK_AQUA)
-				.append(Text.literal(" x" + entry.filed()).formatted(Formatting.DARK_GRAY))
-				.append(Text.literal(" " + accuracy.label.toLowerCase()).formatted(accuracy.colour));
+		return Component.literal(entry.displayName()).withStyle(ChatFormatting.DARK_AQUA)
+				.append(Component.literal(" x" + entry.filed()).withStyle(ChatFormatting.DARK_GRAY))
+				.append(Component.literal(" " + accuracy.label.toLowerCase()).withStyle(accuracy.colour));
 	}
 
 	/** Spaces enough to carry the second column to the middle of the page. */
-	private Text pad(Text left) {
+	private Component pad(Component left) {
 		int target = (PANEL_W - MARGIN * 2) / 2;
 		StringBuilder spaces = new StringBuilder();
-		int width = textRenderer.getWidth(left);
-		while (width + textRenderer.getWidth(spaces.toString()) < target) spaces.append(' ');
-		return Text.literal(spaces.toString());
+		int width = font.width(left);
+		while (width + font.width(spaces.toString()) < target) spaces.append(' ');
+		return Component.literal(spaces.toString());
 	}
 
 	/** The Bloodlines tab: a drawn tree, not a list. */
 	private void buildLineages() {
-		treeRoots = Phylogeny.layout(GuideData.get(guide).entries());
+		treeRoots = Phylogeny.layout(dev.jsz.primordia.PrimordiaClient.getClientGuideData().entries());
 		treeNodes.clear();
 		Phylogeny.collect(treeRoots, treeNodes);
 		centreTree();
@@ -357,14 +431,14 @@ public class FieldGuideScreen extends Screen {
 	 * as an arbitrary link while a vertical drop into a horizontal run reads as descent — the same
 	 * convention a pedigree chart uses, for the same reason.
 	 */
-	private void drawTree(DrawContext context, int bodyTop, double mx, double my) {
+	private void drawTree(GuiGraphicsExtractor context, int bodyTop, double mx, double my) {
 		if (treeNodes.isEmpty()) {
-			context.drawText(textRenderer, Text.literal("Nothing filed yet."),
+			context.text(font, Component.literal("Nothing filed yet."),
 					MARGIN, bodyTop + 30, INK_FAINT, false);
 			int y = bodyTop + 44;
 			for (String w : wrap("Two or more bloodlines are needed before anything can be said "
 					+ "about how they are related.")) {
-				context.drawText(textRenderer, Text.literal(w), MARGIN, y, INK_FAINT, false);
+				context.text(font, Component.literal(w), MARGIN, y, INK_FAINT, false);
 				y += LINE_H;
 			}
 			return;
@@ -372,16 +446,16 @@ public class FieldGuideScreen extends Screen {
 
 		// Clip to the page. Without this a panned tree is drawn straight over the tab strip and
 		// off the edge of the book, which is what it did before it became a viewport.
-		// Screen coordinates, not panel-local. enableScissor pushes the rectangle straight onto the
-		// scissor stack without putting it through the current matrix — verified in the bytecode
-		// after guessing wrong in both directions — so the panel offset has to be added by hand.
-		// Rasterise everything queued so far before the clip goes on. DrawContext batches items and
-		// text rather than drawing them immediately, so the tab icons and the heading are still
-		// pending at this point — and anything that flushes the batch while this scissor is active
-		// would clip them to the viewport they have nothing to do with.
-		context.draw();
-		context.enableScissor(left + 2, top + bodyTop + HEADING_H,
-				left + PANEL_W - 2, top + PANEL_H - 4);
+		//
+		// Panel-local coordinates, because 26.2 puts the rectangle through the current matrix before
+		// pushing it — the opposite of the version this was written against, where the panel offset
+		// had to be added by hand. Adding it here as well double-offset the clip by the panel origin
+		// and cut away the whole tree, leaving a tab that drew nothing but still answered the mouse.
+		//
+		// There is no flush to do either side of this any more: 26.2 records the active scissor on
+		// each element as it is extracted, so what was queued earlier keeps the rectangle it was
+		// queued under rather than picking up whichever one happens to be current at draw time.
+		context.enableScissor(2, bodyTop + HEADING_H, PANEL_W - 2, PANEL_H - 4);
 
 		int size = nodeSize();
 		for (Phylogeny.TreeNode parent : treeNodes) {
@@ -412,26 +486,23 @@ public class FieldGuideScreen extends Screen {
 
 			Genome genome = node.entry.genome();
 			boolean drawn = genome != null && CreaturePreview.render(context, genome,
-					x + size / 2, y + size / 2 + size / 10, size - 4, age * 0.0065f);
+					x + size / 2, y + size / 2 + size / 10, size - 4, age * 0.0065f,
+					CreaturePreview.lodForSize(size - 4));
 			if (!drawn) {
-				context.drawText(textRenderer, Text.literal("?"),
+				context.text(font, Component.literal("?"),
 						x + size / 2 - 2, y + size / 2 - 4, INK_FAINT, false);
 			}
 			// Counts are drawn at their true size whatever the zoom, so they stay legible when the
 			// view is pulled back to see the whole tree — and are dropped entirely once the boxes
 			// are too small to sit under without colliding.
 			if (size >= 22) {
-				Text count = Text.literal("x" + node.entry.filed());
-				context.drawText(textRenderer, count,
-						x + (size - textRenderer.getWidth(count)) / 2, y + size + 2,
+				Component count = Component.literal("x" + node.entry.filed());
+				context.text(font, count,
+						x + (size - font.width(count)) / 2, y + size + 2,
 						INK_FAINT, false);
 			}
 		}
-		// Flush the tree's own geometry while the clip still applies, so nothing from inside the
-		// viewport is left queued to be drawn after it comes off.
-		context.draw();
 		context.disableScissor();
-		clearGuiDepth();
 		hoveredNode = hovered;
 	}
 
@@ -445,28 +516,29 @@ public class FieldGuideScreen extends Screen {
 	 * The stats take the wider half because they are the part that changes as the reader works; the
 	 * illustration is the part that says, at a glance, which animal this is.
 	 */
-	private void drawPlate(DrawContext context, GuideData.Entry entry, int bodyTop) {
+	private void drawPlate(GuiGraphicsExtractor context, GuideData.Entry entry, int bodyTop) {
 		int split = MARGIN + (PANEL_W - MARGIN * 2) * 5 / 9;
 		Genome genome = entry.genome();
 		DecodeAccuracy accuracy = entry.accuracy();
 
 		int y = bodyTop + 26;
-		Text title = Text.literal(entry.displayName()).formatted(Formatting.BOLD);
-		context.drawText(textRenderer, title, MARGIN, y, INK_TITLE, false);
+		Component title = Component.literal(entry.displayName()).withStyle(ChatFormatting.BOLD);
+		if (entry.named()) {
+			title = title.copy().append(Component.literal(" " + entry.label()).withStyle(ChatFormatting.GRAY));
+		}
+		context.text(font, title, MARGIN, y, INK_TITLE, false);
 		// Remembered so a double-click on the name can be hit-tested. Recorded every frame the
 		// plate is drawn, and cleared by every other section, so it can never point at a heading
 		// that is no longer on the page.
 		titleY = y;
-		titleW = textRenderer.getWidth(title);
+		titleW = font.width(title);
 		titleLineage = entry.lineage();
 		y += LINE_H + 2;
-		// A named species keeps its marking underneath, because the marking is what the machines
-		// print and what the tree is drawn from — the name is the reader's, not the world's.
-		String subtitle = (entry.named() ? entry.label() + " · " : "")
-				+ entry.filed() + " filed · generation " + entry.generation();
-		context.drawText(textRenderer, Text.literal(subtitle), MARGIN, y, INK_FAINT, false);
+		// The marking is already on the title line, so just show the filing stats here.
+		String subtitle = entry.filed() + " filed · generation " + entry.generation();
+		context.text(font, Component.literal(subtitle), MARGIN, y, INK_FAINT, false);
 		y += LINE_H;
-		context.drawText(textRenderer, Text.literal(accuracy.label).formatted(accuracy.colour),
+		context.text(font, Component.literal(accuracy.label).withStyle(accuracy.colour),
 				MARGIN, y, INK_FAINT, false);
 		y += LINE_H + 4;
 
@@ -475,12 +547,12 @@ public class FieldGuideScreen extends Screen {
 			nameLineY = y;
 			if (naming) {
 				String shown = nameBuffer + ((age * 0.06f) % 2 < 1 ? "_" : "");
-				context.drawText(textRenderer, Text.literal("Name: ").formatted(Formatting.DARK_GRAY)
-						.append(Text.literal(shown).formatted(Formatting.BLACK)),
+				context.text(font, Component.literal("Name: ").withStyle(ChatFormatting.DARK_GRAY)
+						.append(Component.literal(shown).withStyle(ChatFormatting.BLACK)),
 						MARGIN, y, INK, false);
 			} else {
-				context.drawText(textRenderer,
-						Text.literal("⊕ name this species").formatted(Formatting.ITALIC),
+				context.text(font,
+						Component.literal("⊕ name this species").withStyle(ChatFormatting.ITALIC),
 						MARGIN, y, 0xFF2C6E5A, false);
 			}
 			y += LINE_H + 4;
@@ -489,8 +561,8 @@ public class FieldGuideScreen extends Screen {
 		// Shown only to someone who can actually use it. An undiscoverable gesture is the same as
 		// no gesture, and the heading gives no other sign that it can be clicked.
 		if (canConjure()) {
-			context.drawText(textRenderer,
-					Text.literal("⊕ double-click the name to conjure one").formatted(Formatting.ITALIC),
+			context.text(font,
+					Component.literal("⊕ double-click name to summon").withStyle(ChatFormatting.ITALIC),
 					MARGIN, y, 0xFF6A5A8A, false);
 			y += LINE_H + 4;
 		}
@@ -510,13 +582,13 @@ public class FieldGuideScreen extends Screen {
 			// What it will take from your hand. Withheld until the reader has studied the kind
 			// enough to have earned it — a bait list handed over on first sight would make the
 			// rest of the work optional.
-			context.drawText(textRenderer, Text.literal("Takes"), MARGIN, y, INK_FAINT, false);
+			context.text(font, Component.literal("Takes"), MARGIN, y, INK_FAINT, false);
 			if (accuracy.atLeast(DecodeAccuracy.PARTIAL)) {
 				ItemStack bait = new ItemStack(TamingPreference.favouriteFood(genome));
-				context.drawItem(bait, valueX, y - 5);
-				context.drawText(textRenderer, bait.getName(), valueX + 20, y, INK, false);
+				context.item(bait, valueX, y - 5);
+				context.text(font, bait.getHoverName(), valueX + 20, y, INK, false);
 			} else {
-				context.drawText(textRenderer, Text.literal("not yet known"), valueX, y,
+				context.text(font, Component.literal("not yet known"), valueX, y,
 						INK_FAINT, false);
 			}
 			y += LINE_H + 4;
@@ -525,7 +597,7 @@ public class FieldGuideScreen extends Screen {
 			for (String w : wrapTo(needed > 0
 					? "Bring back " + needed + " more of this kind to read it clearly."
 					: "Nothing further to learn from this one.", split - MARGIN - 4)) {
-				context.drawText(textRenderer, Text.literal(w),
+				context.text(font, Component.literal(w),
 						MARGIN, y, needed > 0 ? INK_FAINT : 0xFF2C6E5A, false);
 				y += LINE_H;
 			}
@@ -546,42 +618,39 @@ public class FieldGuideScreen extends Screen {
 		boolean drawn = genome != null && CreaturePreview.render(context, genome,
 				plateX + plateW / 2, plateY + plateH / 2 + 8,
 				Math.min(plateW, plateH), plateSpin);
-		// The plate's specimen writes depth exactly as the tree's do, and this one turns constantly
-		// and sits under the tooltip region. Same wipe, same reason.
-		clearGuiDepth();
 		if (!drawn) {
-			Text waiting = Text.literal("sketching…");
-			context.drawText(textRenderer, waiting,
-					plateX + (plateW - textRenderer.getWidth(waiting)) / 2,
+			Component waiting = Component.literal("sketching…");
+			context.text(font, waiting,
+					plateX + (plateW - font.width(waiting)) / 2,
 					plateY + plateH / 2 - 4, INK_FAINT, false);
 		}
 	}
 
-	private int statLine(DrawContext context, String name, String value, int y, int valueX) {
-		context.drawText(textRenderer, Text.literal(name), MARGIN, y, INK_FAINT, false);
-		context.drawText(textRenderer, Text.literal(value), valueX, y, INK, false);
+	private int statLine(GuiGraphicsExtractor context, String name, String value, int y, int valueX) {
+		context.text(font, Component.literal(name), MARGIN, y, INK_FAINT, false);
+		context.text(font, Component.literal(value), valueX, y, INK, false);
 		return y + LINE_H;
 	}
 
 	/** Wrap to an arbitrary width, for the plate's narrower left column. */
 	private List<String> wrapTo(String paragraph, int width) {
 		List<String> out = new ArrayList<>();
-		for (var part : textRenderer.getTextHandler()
-				.wrapLines(paragraph, width, net.minecraft.text.Style.EMPTY)) {
+		for (var part : font.getSplitter()
+				.splitLines(paragraph, width, net.minecraft.network.chat.Style.EMPTY)) {
 			out.add(part.getString());
 		}
 		return out;
 	}
 
-	private static Text trait(String name, String value) {
-		return Text.literal(name + ": ").formatted(Formatting.DARK_GRAY)
-				.append(Text.literal(value).formatted(Formatting.BLACK));
+	private static Component trait(String name, String value) {
+		return Component.literal(name + ": ").withStyle(ChatFormatting.DARK_GRAY)
+				.append(Component.literal(value).withStyle(ChatFormatting.BLACK));
 	}
 
 	private List<String> wrap(String paragraph) {
 		List<String> out = new ArrayList<>();
-		for (var part : textRenderer.getTextHandler()
-				.wrapLines(paragraph, PANEL_W - MARGIN * 2 - 8, net.minecraft.text.Style.EMPTY)) {
+		for (var part : font.getSplitter()
+				.splitLines(paragraph, PANEL_W - MARGIN * 2 - 8, net.minecraft.network.chat.Style.EMPTY)) {
 			out.add(part.getString());
 		}
 		return out;
@@ -597,7 +666,7 @@ public class FieldGuideScreen extends Screen {
 		return (PANEL_H - TAB_H - MARGIN * 2 - 22) / LINE_H;
 	}
 
-	private void flush(List<Text> lines) {
+	private void flush(List<Component> lines) {
 		int perPage = linesPerPage();
 		for (int i = 0; i < lines.size(); i += perPage) {
 			pages.add(new ArrayList<>(lines.subList(i, Math.min(lines.size(), i + perPage))));
@@ -616,7 +685,9 @@ public class FieldGuideScreen extends Screen {
 	}
 
 	@Override
-	public boolean mouseClicked(double mouseX, double mouseY, int button) {
+	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+		double mouseX = event.x(), mouseY = event.y();
+		int button = event.button();
 		double mx = localX(mouseX), my = localY(mouseY);
 
 		int tab = tabAt(mx, my);
@@ -624,6 +695,10 @@ public class FieldGuideScreen extends Screen {
 			if (section != tab) {
 				section = tab;
 				buildSection();
+				if (minecraft != null && minecraft.player != null) {
+					minecraft.player.playSound(net.minecraft.sounds.SoundEvents.BOOK_PAGE_TURN, 0.4f,
+							1.0f + (float) (Math.random() * 0.2));
+				}
 			}
 			return true;
 		}
@@ -636,7 +711,7 @@ public class FieldGuideScreen extends Screen {
 		if (button == 0 && !naming && titleY >= 0
 				&& my >= titleY - 1 && my < titleY + LINE_H
 				&& mx >= MARGIN && mx < MARGIN + titleW) {
-			long now = net.minecraft.util.Util.getMeasuringTimeMs();
+			long now = net.minecraft.util.Util.getMillis();
 			boolean doubled = titleLineage == lastClickLineage
 					&& now - lastClickTime <= DOUBLE_CLICK_MS;
 			lastClickTime = now;
@@ -669,12 +744,12 @@ public class FieldGuideScreen extends Screen {
 			dragDistance = 0;
 			return true;
 		}
-		return super.mouseClicked(mouseX, mouseY, button);
+		return super.mouseClicked(event, doubleClick);
 	}
 
 	@Override
-	public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
-		if (!dragging) return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);
+	public boolean mouseDragged(MouseButtonEvent event, double deltaX, double deltaY) {
+		if (!dragging) return super.mouseDragged(event, deltaX, deltaY);
 		dragDistance += Math.abs(deltaX) + Math.abs(deltaY);
 
 		if (section == GuideChapters.LINEAGE_TAB) {
@@ -687,7 +762,7 @@ public class FieldGuideScreen extends Screen {
 	}
 
 	@Override
-	public boolean mouseReleased(double mouseX, double mouseY, int button) {
+	public boolean mouseReleased(MouseButtonEvent event) {
 		if (dragging) {
 			dragging = false;
 			// A press that never moved is a click. On the tree that means "open this bloodline".
@@ -697,7 +772,7 @@ public class FieldGuideScreen extends Screen {
 			}
 			return true;
 		}
-		return super.mouseReleased(mouseX, mouseY, button);
+		return super.mouseReleased(event);
 	}
 
 	/** Index of the tab under a panel-local point, or -1. */
@@ -738,16 +813,19 @@ public class FieldGuideScreen extends Screen {
 	 * turntable.
 	 */
 	@Override
-	public boolean charTyped(char chr, int modifiers) {
-		if (naming && nameBuffer.length() < GuideData.MAX_NAME && chr >= ' ') {
-			nameBuffer += chr;
+	public boolean charTyped(CharacterEvent event) {
+		// A codepoint rather than a char in 26.2, so append its string form and let anything outside
+		// the basic plane arrive whole rather than as half a surrogate pair.
+		if (naming && nameBuffer.length() < GuideData.MAX_NAME && event.codepoint() >= ' ') {
+			nameBuffer += event.codepointAsString();
 			return true;
 		}
-		return super.charTyped(chr, modifiers);
+		return super.charTyped(event);
 	}
 
 	@Override
-	public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+	public boolean keyPressed(KeyEvent event) {
+		int keyCode = event.key();
 		// Typing swallows everything, or the arrow keys would turn the page out from under the
 		// name being written and escape would shut the book rather than cancel the edit.
 		if (naming) {
@@ -776,7 +854,7 @@ public class FieldGuideScreen extends Screen {
 			turn(1);
 			return true;
 		}
-		return super.keyPressed(keyCode, scanCode, modifiers);
+		return super.keyPressed(event);
 	}
 
 	/**
@@ -798,31 +876,12 @@ public class FieldGuideScreen extends Screen {
 				new NameLineagePayload(plates.get(plateIndex).lineage(), given));
 	}
 
-	/** Switches to the Specimens tab and pages straight to one bloodline's plate. */
-	/**
-	 * Wipes the depth the specimen previews just wrote, leaving the colour they drew.
-	 * <p>
-	 * The previews are real three-dimensional geometry rendered into a two-dimensional interface.
-	 * They depth-test and depth-write, and they sit at z≈200 — in front of the tab icons, which
-	 * {@code DrawContext.drawItem} renders as models at z≈150 and which write depth of their own.
-	 * Anything drawn afterwards that lands on those pixels at a lower z is discarded by the depth
-	 * test rather than painted over.
-	 * <p>
-	 * On its own that would be a static artefact. What makes it blink is that the specimens
-	 * <i>turn</i>: the depth they occupy changes every frame, so whatever they are occluding
-	 * appears and disappears in time with the rotation. Hovering makes it obvious because a tooltip
-	 * is suddenly being drawn across the same pixels.
-	 * <p>
-	 * Clearing depth once the previews are flushed puts the interface back to the flat
-	 * painter's-order surface the rest of it assumes. The colour buffer is untouched, so the
-	 * specimens stay on screen — they simply stop casting a depth shadow over the rest of the book.
-	 */
-	private static void clearGuiDepth() {
-		// 0x100 is GL_DEPTH_BUFFER_BIT. Written out rather than imported from LWJGL because the
-		// second argument already ties this to Minecraft's own wrapper, and pulling in GL11 for a
-		// single constant invites someone to reach for raw GL calls next to it.
-		RenderSystem.clear(0x100, MinecraftClient.IS_SYSTEM_MAC);
-	}
+	// The book used to wipe the GUI depth buffer after each specimen, because the previews were real
+	// three-dimensional geometry drawn straight into the interface: they wrote depth in front of the
+	// tab icons, and since they turn, whatever they occluded blinked in time with the rotation.
+	// 26.2 removed the problem rather than the workaround — a preview is now rendered to its own
+	// offscreen target and blitted back as a flat image, so it cannot write depth over the rest of
+	// the book at all. See CreaturePreviewRenderer.
 
 	/**
 	 * Whether to offer the conjure gesture at all.
@@ -833,9 +892,9 @@ public class FieldGuideScreen extends Screen {
 	 * refused.
 	 */
 	private boolean canConjure() {
-		return client != null && client.player != null
-				&& client.player.isCreative()
-				&& client.player.hasPermissionLevel(2);
+		return minecraft != null && minecraft.player != null
+				&& minecraft.player.isCreative()
+				&& minecraft.player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER);
 	}
 
 	private void openPlateFor(long lineage) {
@@ -844,6 +903,10 @@ public class FieldGuideScreen extends Screen {
 		for (int i = 0; i < plates.size(); i++) {
 			if (plates.get(i).lineage() == lineage) {
 				page = (pages.size() - plates.size()) + i;
+				if (minecraft != null && minecraft.player != null) {
+					minecraft.player.playSound(net.minecraft.sounds.SoundEvents.BOOK_PAGE_TURN, 0.4f,
+							1.0f + (float) (Math.random() * 0.2));
+				}
 				return;
 			}
 		}
@@ -860,6 +923,12 @@ public class FieldGuideScreen extends Screen {
 		int next = page + delta;
 		if (next >= 0 && next < pages.size()) {
 			page = next;
+			if (section < GuideChapters.REFERENCE_TAB) {
+				if (minecraft != null && minecraft.player != null) {
+					minecraft.player.playSound(net.minecraft.sounds.SoundEvents.BOOK_PAGE_TURN, 0.4f,
+							1.0f + (float) (Math.random() * 0.2));
+				}
+			}
 			return;
 		}
 		int target = section + delta;
@@ -872,12 +941,17 @@ public class FieldGuideScreen extends Screen {
 		buildSection();
 		// Entering backwards lands on the last page, which is what turning back should do.
 		if (delta < 0) page = Math.max(0, pages.size() - 1);
+		
+		if (minecraft != null && minecraft.player != null) {
+			minecraft.player.playSound(net.minecraft.sounds.SoundEvents.BOOK_PAGE_TURN, 0.4f,
+					1.0f + (float) (Math.random() * 0.2));
+		}
 	}
 
 	// ------------------------------------------------------------------ drawing
 
 	@Override
-	public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+	public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
 		// Deliberately not Screen.renderBackground: in this version that runs a blur pass over the
 		// framebuffer behind the screen, and the result reads as though the whole interface — the
 		// guide included — has been softened. A flat dim gives the same separation from the world
@@ -898,17 +972,17 @@ public class FieldGuideScreen extends Screen {
 		// Panel-local coordinates from here down, so the layout reads in the same numbers the
 		// background art uses. No scaling: Minecraft's glyphs are baked into an atlas, and putting
 		// a scale on the matrix resamples them rather than enlarging them — which is blurring.
-		context.getMatrices().push();
-		context.getMatrices().translate(left, top, 0);
+		context.pose().pushMatrix();
+		context.pose().translate(left, top);
 
 		drawTabs(context, mx, my);
 
 		int bodyTop = TAB_H;
 		int bodyH = PANEL_H - TAB_H;
-		context.drawTexture(PAGE_TEXTURE, 0, bodyTop, 0, 0, PANEL_W, bodyH, 512, 256);
+		context.blit(RenderPipelines.GUI_TEXTURED, PAGE_TEXTURE, 0, bodyTop, 0, 0, PANEL_W, bodyH, 512, 256);
 
 		GuideChapters.Section current = GuideChapters.SECTIONS.get(section);
-		context.drawText(textRenderer, Text.literal(current.title()),
+		context.text(font, Component.literal(current.title()),
 				MARGIN, bodyTop + 8, INK_TITLE, false);
 
 		if (section == GuideChapters.LINEAGE_TAB) {
@@ -917,55 +991,55 @@ public class FieldGuideScreen extends Screen {
 		}
 		if (!pages.isEmpty()) {
 			int shown = Math.min(page, pages.size() - 1);
-			List<Text> lines = pages.get(shown);
+			List<Component> lines = pages.get(shown);
 			int plateIndex = shown - (pages.size() - plates.size());
 			if (!plates.isEmpty() && plateIndex >= 0 && plateIndex < plates.size()) {
 				drawPlate(context, plates.get(plateIndex), bodyTop);
 			}
 			int y = bodyTop + 26;
-			for (Text line : lines) {
-				context.drawText(textRenderer, line, MARGIN, y, INK, false);
+			for (Component line : lines) {
+				context.text(font, line, MARGIN, y, INK, false);
 				y += LINE_H;
 			}
 			// The tree is one continuous view, so a page count there would be a permanent "1 / 1".
 			if (section != GuideChapters.LINEAGE_TAB && pages.size() > 1) {
-				Text footer = Text.literal((page + 1) + " / " + pages.size()
+				Component footer = Component.literal((page + 1) + " / " + pages.size()
 						+ "   ·   ← → or scroll");
-				context.drawText(textRenderer, footer,
-						PANEL_W - MARGIN - textRenderer.getWidth(footer),
+				context.text(font, footer,
+						PANEL_W - MARGIN - font.width(footer),
 						PANEL_H - 14, INK_FAINT, false);
 			}
 		}
-		context.getMatrices().pop();
+		context.pose().popMatrix();
 
 		// Tooltips are drawn outside the translated matrix, in real screen coordinates.
 		int tab = tabAt(mx, my);
 		if (tab >= 0) {
-			context.drawTooltip(textRenderer,
-					Text.literal(GuideChapters.SECTIONS.get(tab).title()), mouseX, mouseY);
+			context.setTooltipForNextFrame(font,
+					Component.literal(GuideChapters.SECTIONS.get(tab).title()), mouseX, mouseY);
 		} else if (hoveredNode != null && section == GuideChapters.LINEAGE_TAB) {
 			GuideData.Entry entry = hoveredNode.entry;
 			DecodeAccuracy accuracy = entry.accuracy();
-			List<Text> lines = new ArrayList<>();
-			lines.add(Text.literal(entry.displayName()).formatted(Formatting.AQUA));
-			lines.add(Text.literal(entry.filed() + " filed · generation " + entry.generation())
-					.formatted(Formatting.GRAY));
-			lines.add(Text.literal(accuracy.label).formatted(accuracy.colour));
+			List<Component> lines = new ArrayList<>();
+			lines.add(Component.literal(entry.displayName()).withStyle(ChatFormatting.AQUA));
+			lines.add(Component.literal(entry.filed() + " filed · generation " + entry.generation())
+					.withStyle(ChatFormatting.GRAY));
+			lines.add(Component.literal(accuracy.label).withStyle(accuracy.colour));
 			Genome genome = entry.genome();
 			if (genome != null) {
-				lines.add(Text.literal("Aggression " + accuracy.describeFraction(genome.raw(Gene.AGGRESSION))
+				lines.add(Component.literal("Aggression " + accuracy.describeFraction(genome.raw(Gene.AGGRESSION))
 						+ " · Size " + accuracy.describeFraction(genome.raw(Gene.SIZE)))
-						.formatted(Formatting.DARK_GRAY));
+						.withStyle(ChatFormatting.DARK_GRAY));
 			}
 			if (hoveredNode.depth > 0) {
-				lines.add(Text.literal(Phylogeny.describeDistance(hoveredNode.distanceToParent)
-						+ " of the stock above").formatted(Formatting.DARK_GRAY));
+				lines.add(Component.literal(Phylogeny.describeDistance(hoveredNode.distanceToParent)
+						+ " of the stock above").withStyle(ChatFormatting.DARK_GRAY));
 			}
-			lines.add(Text.literal("Click to open its entry")
-					.formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
-			context.drawTooltip(textRenderer, lines, mouseX, mouseY);
+			lines.add(Component.literal("Click to open its entry")
+					.withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
+			context.setComponentTooltipForNextFrame(font, lines, mouseX, mouseY);
 		}
-		super.render(context, mouseX, mouseY, delta);
+		super.extractRenderState(context, mouseX, mouseY, delta);
 	}
 
 	/**
@@ -976,7 +1050,7 @@ public class FieldGuideScreen extends Screen {
 	 * restained; sampling means the tabs are made of the same paper by construction, and carry the
 	 * same grain. Idle tabs are the same cut under a shadow, so they read as folded behind.
 	 */
-	private void drawTabs(DrawContext context, double mx, double my) {
+	private void drawTabs(GuiGraphicsExtractor context, double mx, double my) {
 		for (int i = 0; i < GuideChapters.SECTIONS.size(); i++) {
 			int tx = i * (TAB_W + 2);
 			boolean active = i == section;
@@ -988,33 +1062,30 @@ public class FieldGuideScreen extends Screen {
 			int ty = active ? 0 : 2;
 
 			context.fill(tx - 1, ty - 1, tx + TAB_W + 1, ty + height, FRAME);
-			context.drawTexture(PAGE_TEXTURE, tx, ty, TAB_SAMPLE_U, TAB_SAMPLE_V,
+			context.blit(RenderPipelines.GUI_TEXTURED, PAGE_TEXTURE, tx, ty, TAB_SAMPLE_U, TAB_SAMPLE_V,
 					TAB_W, height, 512, 256);
 			if (!active) context.fill(tx, ty, tx + TAB_W, ty + height, 0x44231B0E);
 			if (over && !active) context.fill(tx, ty, tx + TAB_W, ty + height, 0x22FFFFFF);
 
-			context.drawItem(tabIcons.get(i), tx + (TAB_W - 16) / 2, ty + (height - 16) / 2 - 1);
+			context.item(tabIcons.get(i), tx + (TAB_W - 16) / 2, ty + (height - 16) / 2 - 1);
 		}
 	}
 
 	/**
 	 * {@inheritDoc}
 	 * <p>
-	 * No-ops on purpose. The engine runs a blur pass over the framebuffer for any open screen, and
+	 * A no-op on purpose. The engine runs a blur pass over the framebuffer for any open screen, and
 	 * because the guide is drawn into that same frame the softening lands on the page as well as on
-	 * the world behind it. These two methods are where that pass goes through, so this is where it
-	 * is refused.
+	 * the world behind it. 26.2 funnels that pass through this one method, where the two it replaced
+	 * — {@code blur} and {@code applyBlur} — used to share the job, so this is now the only place it
+	 * has to be refused.
 	 */
 	@Override
-	public void blur() {
+	protected void extractBlurredBackground(GuiGraphicsExtractor context) {
 	}
 
 	@Override
-	protected void applyBlur(float delta) {
-	}
-
-	@Override
-	public boolean shouldPause() {
+	public boolean isPauseScreen() {
 		// Reading should not stop the world; the lab may be mid-run.
 		return false;
 	}

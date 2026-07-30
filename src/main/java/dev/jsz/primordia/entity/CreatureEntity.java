@@ -11,7 +11,7 @@ import dev.jsz.primordia.ecology.FoodSurvey;
 import dev.jsz.primordia.ecology.SurvivalDrops;
 import dev.jsz.primordia.ecology.WorldImpact;
 import dev.jsz.primordia.ecology.region.RegionMaterialiser;
-import dev.jsz.primordia.entity.goal.ClimbWallGoal;
+// import dev.jsz.primordia.entity.goal.ClimbWallGoal; // DISABLED: wall climbing commented out
 import dev.jsz.primordia.entity.goal.CreatureAttackGoal;
 import dev.jsz.primordia.entity.goal.CreatureTemptGoal;
 import dev.jsz.primordia.entity.goal.DefendOwnerGoal;
@@ -26,53 +26,55 @@ import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.genome.Mutation;
 import dev.jsz.primordia.registry.PrimordiaEntities;
-import net.minecraft.util.math.Box;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
+import net.minecraft.world.phys.AABB;
 import java.util.ArrayList;
 import java.util.List;
 import org.joml.Vector3f;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityDimensions;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.EntityPose;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.ai.goal.ActiveTargetGoal;
-import net.minecraft.entity.ai.goal.EscapeDangerGoal;
-import net.minecraft.entity.ai.goal.LookAroundGoal;
-import net.minecraft.entity.ai.goal.LookAtEntityGoal;
-import net.minecraft.entity.ai.goal.RevengeGoal;
-import net.minecraft.entity.ai.goal.SwimGoal;
-import net.minecraft.entity.ai.goal.TemptGoal;
-import net.minecraft.entity.ai.goal.WanderAroundFarGoal;
-import net.minecraft.recipe.Ingredient;
-import net.minecraft.entity.attribute.DefaultAttributeContainer;
-import net.minecraft.entity.attribute.EntityAttributeInstance;
-import net.minecraft.entity.attribute.EntityAttributes;
-import net.minecraft.entity.damage.DamageSource;
-import net.minecraft.entity.damage.DamageTypes;
-import net.minecraft.registry.tag.DamageTypeTags;
-import net.minecraft.entity.data.DataTracker;
-import net.minecraft.entity.data.TrackedData;
-import net.minecraft.entity.data.TrackedDataHandlerRegistry;
-import net.minecraft.entity.mob.MobEntity;
-import net.minecraft.entity.mob.PathAwareEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.particle.ParticleTypes;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.sound.SoundCategory;
-import net.minecraft.sound.SoundEvent;
-import net.minecraft.sound.SoundEvents;
-import net.minecraft.text.Text;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Hand;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityDimensions;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Pose;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
+import net.minecraft.world.entity.ai.goal.PanicGoal;
+import net.minecraft.world.entity.ai.goal.RandomLookAroundGoal;
+import net.minecraft.world.entity.ai.goal.LookAtPlayerGoal;
+import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
+import net.minecraft.world.entity.ai.goal.FloatGoal;
+import net.minecraft.world.entity.ai.goal.TemptGoal;
+import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
+import net.minecraft.world.item.crafting.Ingredient;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.damagesource.DamageTypes;
+import net.minecraft.tags.DamageTypeTags;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.PathfinderMob;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.ChatFormatting;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.core.Direction;
+import net.minecraft.util.Mth;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.Level;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -86,17 +88,27 @@ import java.util.UUID;
  * the client needs: from it, it independently builds the identical body plan and mesh, so no
  * geometry ever crosses the network.
  */
-public class CreatureEntity extends PathAwareEntity {
-	private static final TrackedData<String> GENOME_CODE =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.STRING);
-	private static final TrackedData<Byte> ACTIVITY =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BYTE);
-	private static final TrackedData<Boolean> TAMED =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
-	private static final TrackedData<Boolean> SADDLED =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
-	private static final TrackedData<Optional<UUID>> OWNER =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.OPTIONAL_UUID);
+public class CreatureEntity extends PathfinderMob {
+	private static final EntityDataAccessor<String> GENOME_CODE =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.STRING);
+	private static final EntityDataAccessor<Byte> ACTIVITY =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BYTE);
+	private static final EntityDataAccessor<Boolean> TAMED =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
+	private static final EntityDataAccessor<Boolean> SADDLED =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
+	/**
+	 * The owning player's UUID as text, or empty for none.
+	 * <p>
+	 * 26.2 removed {@code OPTIONAL_UUID} and tracks owners as an {@code EntityReference} instead.
+	 * That is not equivalent here: a reference resolves against entities the world currently has,
+	 * so it goes empty the moment the owner logs out, and a bonded companion would stop recognising
+	 * them across a relog. The identity a creature remembers is therefore still a UUID — synced and
+	 * saved — and the reference-shaped part, resolving that id to an actual entity, stays in
+	 * {@link #getOwner()} where it was always a live lookup anyway.
+	 */
+	private static final EntityDataAccessor<String> OWNER =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.STRING);
 	/**
 	 * Horizontal direction of the wall this creature is on, as a {@link Direction} id, or -1.
 	 * <p>
@@ -104,26 +116,34 @@ public class CreatureEntity extends PathAwareEntity {
 	 * clinging to, and which surface that is cannot be worked out client-side without re-scanning
 	 * the blocks around every creature every frame.
 	 */
-	private static final TrackedData<Byte> CLIMB_FACING =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BYTE);
-	private static final TrackedData<Boolean> CLIMBING =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
-	private static final TrackedData<Boolean> DOMESTICATED =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
-	private static final TrackedData<Boolean> SITTING =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+	private static final EntityDataAccessor<Byte> CLIMB_FACING =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BYTE);
+	private static final EntityDataAccessor<Boolean> CLIMBING =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
+	/**
+	 * How far grown this creature is, {@link #BABY_SCALE} at birth to 1 once adult.
+	 * <p>
+	 * Replicated because it scales the drawn body and the collision box alike, and the client cannot
+	 * derive it — age is server state.
+	 */
+	private static final EntityDataAccessor<Float> GROWTH =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.FLOAT);
+	private static final EntityDataAccessor<Boolean> DOMESTICATED =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
+	private static final EntityDataAccessor<Boolean> SITTING =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
 	/** Test-rig flag: hold position as a display specimen. See {@code /primordia test}. */
-	private static final TrackedData<Boolean> POSING =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+	private static final EntityDataAccessor<Boolean> POSING =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
 	/** Whether a posed specimen plays its walk cycle or stands. Toggled by {@code /primordia test walk}. */
-	private static final TrackedData<Boolean> POSE_WALKING =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+	private static final EntityDataAccessor<Boolean> POSE_WALKING =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
 	/** Dead and lying where it fell, waiting to be eaten. Tracked because the renderer poses it. */
-	private static final TrackedData<Boolean> CARCASS =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+	private static final EntityDataAccessor<Boolean> CARCASS =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
 	/** Resting through the inactive half of its cycle. Tracked for the same reason. */
-	private static final TrackedData<Boolean> ASLEEP =
-			DataTracker.registerData(CreatureEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+	private static final EntityDataAccessor<Boolean> ASLEEP =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
 
 	/** Walking speed reported to the animator by a posed creature, in blocks per second. */
 	public static final float POSE_WALK_SPEED = 2.2f;
@@ -210,6 +230,14 @@ public class CreatureEntity extends PathAwareEntity {
 	private float carcassNutrition;
 	/** Ticks this carcass has lain here. */
 	private int carcassTicks;
+	/**
+	 * Set at death when this animal is to leave a body, cleared when the body is spawned.
+	 * <p>
+	 * Not saved. It is only ever true for the twenty ticks between dying and being removed, and the
+	 * one way to lose it is for the chunk to unload inside that window — where suppressing the body is
+	 * the right answer anyway.
+	 */
+	private boolean carcassOwed;
 
 	public VocalProfile getVocalProfile() {
 		if (vocalProfile == null && getGenome() != null) {
@@ -234,7 +262,7 @@ public class CreatureEntity extends PathAwareEntity {
 	}
 
 	@Override
-	public float getSoundPitch() {
+	public float getVoicePitch() {
 		return dev.jsz.primordia.sound.CreatureSoundEngine.getPitch(this);
 	}
 
@@ -245,20 +273,35 @@ public class CreatureEntity extends PathAwareEntity {
 
 	public void playAttackGrowl() {
 		VocalProfile vp = getVocalProfile();
-		if (vp != null && vp.attackGrowl() != null && !getWorld().isClient()) {
-			playSound(vp.attackGrowl(), getSoundVolume() * 1.1f, getSoundPitch());
+		if (vp != null && vp.attackGrowl() != null && !level().isClientSide()) {
+			playSound(vp.attackGrowl(), getSoundVolume() * 1.1f, getVoicePitch());
 		}
+	}
+
+	/**
+	 * Tearing at a body.
+	 * <p>
+	 * A vocalisation would be wrong here — this is the sound of the meal, not of the animal — so it
+	 * comes from the fox rather than from the creature's {@link VocalProfile}: a wet, crunching noise
+	 * that reads as flesh instead of the polite chewing of {@code GENERIC_EAT}. Pitch still tracks the
+	 * body, so something enormous tears at a lower register than something small, and the volume sits
+	 * under a call so a pack at a kill is audible without drowning the area out.
+	 */
+	public void playFeedingSound() {
+		if (level().isClientSide()) return;
+		playSound(SoundEvents.FOX_EAT, getSoundVolume() * 0.8f,
+				getVoicePitch() * (0.85f + random.nextFloat() * 0.2f));
 	}
 
 	public void playMatingCall() {
 		VocalProfile vp = getVocalProfile();
-		if (vp != null && vp.matingCall() != null && !getWorld().isClient()) {
-			playSound(vp.matingCall(), getSoundVolume() * 0.9f, getSoundPitch() * 1.05f);
+		if (vp != null && vp.matingCall() != null && !level().isClientSide()) {
+			playSound(vp.matingCall(), getSoundVolume() * 0.9f, getVoicePitch() * 1.05f);
 		}
 	}
 
 	@Override
-	public boolean tryAttack(Entity target) {
+	public boolean doHurtTarget(ServerLevel world, Entity target) {
 		playAttackGrowl();
 		CreatureActivity act = switch (getAttackStyle()) {
 			case BITE -> CreatureActivity.BITE;
@@ -267,127 +310,571 @@ public class CreatureEntity extends PathAwareEntity {
 			case RAM, STOMP -> CreatureActivity.RAM;
 		};
 		triggerActivity(act);
-		return super.tryAttack(target);
+		return super.doHurtTarget(world, target);
 	}
 
-	public CreatureEntity(EntityType<? extends CreatureEntity> type, World world) {
+	public CreatureEntity(EntityType<? extends CreatureEntity> type, Level world) {
 		super(type, world);
 	}
 
-	/**
-	 * Gate on the world populating itself with creatures. Commands are unaffected — {@code
-	 * /primordia spawn} and {@code /primordia test} call {@code world.spawnEntity} directly and
-	 * never consult this — so a flat world is still perfectly usable as a test bed, it just stops
-	 * generating its own population.
-	 */
-	public static boolean canSpawn(EntityType<CreatureEntity> type, net.minecraft.world.ServerWorldAccess world,
-	                               net.minecraft.entity.SpawnReason spawnReason, net.minecraft.util.math.BlockPos pos,
-	                               net.minecraft.util.math.random.Random random) {
+	public static boolean canSpawn(EntityType<CreatureEntity> type, net.minecraft.world.level.ServerLevelAccessor world,
+	                               net.minecraft.world.entity.EntitySpawnReason spawnReason, net.minecraft.core.BlockPos pos,
+	                               net.minecraft.util.RandomSource random) {
 		if (isWorldGenerated(spawnReason) && isFlatWorld(world)) return false;
-		net.minecraft.block.BlockState state = world.getBlockState(pos.down());
-		return state.isSolidBlock(world, pos.down()) && pos.getY() >= world.getBottomY() + 4;
+		net.minecraft.world.level.block.state.BlockState state = world.getBlockState(pos.below());
+		return state.isSolidRender() && pos.getY() >= world.getMinY() + 4;
 	}
 
-	/** True for the spawn reasons the world produces on its own, as opposed to a player asking. */
-	private static boolean isWorldGenerated(net.minecraft.entity.SpawnReason reason) {
-		return reason == net.minecraft.entity.SpawnReason.NATURAL
-				|| reason == net.minecraft.entity.SpawnReason.CHUNK_GENERATION
-				|| reason == net.minecraft.entity.SpawnReason.SPAWNER;
+	private static boolean isWorldGenerated(net.minecraft.world.entity.EntitySpawnReason reason) {
+		return reason == net.minecraft.world.entity.EntitySpawnReason.NATURAL
+				|| reason == net.minecraft.world.entity.EntitySpawnReason.CHUNK_GENERATION
+				|| reason == net.minecraft.world.entity.EntitySpawnReason.SPAWNER;
 	}
 
-	/**
-	 * Superflat and debug worlds are build spaces, not ecosystems.
-	 * <p>
-	 * A superflat is the worst possible case for a ground-spawning mob: solid, flat, fully lit
-	 * ground to the horizon, with no water, cliffs or cave mouths to break up the candidate
-	 * positions. Essentially every block passes the spawn test, so the spawner saturates its cap
-	 * the instant the world loads and the player arrives standing inside a herd. Suppressing it
-	 * outright is the difference between a flat world you can test in and one you have to clear
-	 * before you can see anything.
-	 */
-	private static boolean isFlatWorld(net.minecraft.world.ServerWorldAccess world) {
-		net.minecraft.world.gen.chunk.ChunkGenerator generator =
-				world.toServerWorld().getChunkManager().getChunkGenerator();
-		return generator instanceof net.minecraft.world.gen.chunk.FlatChunkGenerator
-				|| generator instanceof net.minecraft.world.gen.chunk.DebugChunkGenerator;
+	private static boolean isFlatWorld(net.minecraft.world.level.ServerLevelAccessor world) {
+		net.minecraft.world.level.chunk.ChunkGenerator generator =
+				world.getLevel().getChunkSource().getGenerator();
+		return generator instanceof net.minecraft.world.level.levelgen.FlatLevelSource
+				|| generator instanceof net.minecraft.world.level.levelgen.DebugLevelSource;
 	}
 
 	@Override
-	public net.minecraft.entity.EntityData initialize(net.minecraft.world.ServerWorldAccess world,
-	                                                   net.minecraft.world.LocalDifficulty difficulty,
-	                                                   net.minecraft.entity.SpawnReason spawnReason,
-	                                                   net.minecraft.entity.EntityData entityData) {
-		net.minecraft.entity.EntityData data = super.initialize(world, difficulty, spawnReason, entityData);
+	public net.minecraft.world.entity.SpawnGroupData finalizeSpawn(net.minecraft.world.level.ServerLevelAccessor world,
+	                                                   net.minecraft.world.DifficultyInstance difficulty,
+	                                                   net.minecraft.world.entity.EntitySpawnReason spawnReason,
+	                                                   net.minecraft.world.entity.SpawnGroupData entityData) {
+		net.minecraft.world.entity.SpawnGroupData data = super.finalizeSpawn(world, difficulty, spawnReason, entityData);
 		if (getGenome() == null) {
-			long worldSeed = world.toServerWorld().getSeed();
-			long chunkSeed = (worldSeed ^ ((long) getBlockPos().getX() * 341873128712L + (long) getBlockPos().getZ() * 132897987541L));
-			net.minecraft.util.math.random.Random seedRandom = net.minecraft.util.math.random.Random.create(chunkSeed);
-			String biomeName = world.getBiome(getBlockPos()).getKey()
-					.map(key -> key.getValue().getPath()).orElse("");
+			long worldSeed = world.getLevel().getSeed();
+			long chunkSeed = (worldSeed ^ ((long) blockPosition().getX() * 341873128712L + (long) blockPosition().getZ() * 132897987541L));
+			net.minecraft.util.RandomSource seedRandom = net.minecraft.util.RandomSource.create(chunkSeed);
+			String biomeName = world.getBiome(blockPosition()).unwrapKey()
+					.map(key -> key.identifier().getPath()).orElse("");
 			setGenome(Genome.createForBiome(seedRandom, biomeName));
 		}
 		return data;
 	}
 
-	/**
-	 * {@inheritDoc}
-	 * <p>
-	 * The other half of the ledger's contract: a creature that leaves the world without dying goes
-	 * back into the region record it came from, rather than simply ceasing to exist. This is the
-	 * "dissolve" step — animals becoming numbers again — and every path that removes a creature
-	 * without killing it has to come through here or the population leaks.
-	 * <p>
-	 * Vanilla's random despawn between 32 and 128 blocks is deliberately not reproduced. For an
-	 * ordinary mob that flicker is invisible; for an animal the player is watching a herd of, having
-	 * one wink out at forty blocks is not. These despawn only once they are properly out of range,
-	 * which is still well inside the distance at which their chunks stop ticking, so the absorb
-	 * always gets its chance to run.
-	 */
 	@Override
 	public void checkDespawn() {
-		if (!(getWorld() instanceof ServerWorld world)) {
+		if (!(level() instanceof ServerLevel world)) {
 			super.checkDespawn();
 			return;
 		}
-		if (isPersistent() || !RegionMaterialiser.isLedgerManaged(this)) {
+		if (isPersistenceRequired() || !RegionMaterialiser.isLedgerManaged(this)) {
 			super.checkDespawn();
 			return;
 		}
-		PlayerEntity nearest = world.getClosestPlayer(this, -1.0);
+		Player nearest = world.getNearestPlayer(this, -1.0);
 		if (nearest == null) return;
-		if (nearest.squaredDistanceTo(this) < DESPAWN_RANGE * DESPAWN_RANGE) return;
+		if (nearest.distanceToSqr(this) < DESPAWN_RANGE * DESPAWN_RANGE) return;
 
 		RegionMaterialiser.absorb(world, this);
 		discard();
 	}
 
-	/**
-	 * Whether this creature can go up a wall it walks into.
-	 * <p>
-	 * Light, many-legged animals climb, which is the same bargain a real climber makes — plenty of
-	 * contact points and little weight on each. A cave dweller climbs regardless of how it is
-	 * proportioned: a cave offers as much wall as floor, and one that could only use the floor would
-	 * be living in a fraction of its own habitat.
-	 */
 	public boolean canClimb() {
-		BodyPlan plan = getBodyPlan();
-		if (plan == null) return false;
-		Genome g = getGenome();
-		if (g != null && dev.jsz.primordia.genome.Archetype.isSubterranean(g)) return true;
-		return plan.legs.length >= 4 && plan.mass <= 0.38f;
+		// DISABLED: wall climbing commented out — always returns false.
+		// Original logic checked subterranean archetype, leg count and mass.
+		return false;
 	}
 
-	/** Which wall this creature is clinging to, or null when it is on the floor. */
 	public Direction getClimbFacing() {
-		byte id = dataTracker.get(CLIMB_FACING);
-		return id < 0 || id >= Direction.values().length ? null : Direction.byId(id);
+		byte id = entityData.get(CLIMB_FACING);
+		return id < 0 || id >= Direction.values().length ? null : Direction.from3DDataValue(id);
 	}
 
-	/** Server side; the goal reports the wall it is pressing into. */
+	/**
+	 * Which way the creature is leaning, and whether it is on a wall at all. Rendering reads this.
+	 * <p>
+	 * Prefer {@link #setClimbing} — this is the raw setter, and the one place it is called directly is
+	 * to let go.
+	 */
 	public void setClimbFacing(Direction facing) {
-		if (getWorld().isClient()) return;
-		dataTracker.set(CLIMB_FACING, facing == null ? (byte) -1 : (byte) facing.getId());
+		if (level().isClientSide()) return;
+		entityData.set(CLIMB_FACING, facing == null ? (byte) -1 : (byte) facing.get3DDataValue());
+		entityData.set(CLIMBING, facing != null);
+		// A mantle deliberately survives this. Reaching the top is what ends the goal, so the goal is
+		// gone by the time the push over the lip needs to happen, and clearing it here would mean every
+		// successful climb ended by sliding back down the face.
+		if (facing == null) climbEngaged = false;
 	}
+
+	// ------------------------------------------------------------------ climbing
+
+	/**
+	 * {@inheritDoc}
+	 * <p>
+	 * Climbers get a navigation whose graph includes wall surfaces, so a path can run floor → wall →
+	 * floor instead of stopping at the first cliff. Built for every creature because navigation is
+	 * constructed before the genome arrives; for anything that cannot climb the evaluator adds no
+	 * wall edges and this is plain ground navigation.
+	 */
+	@Override
+	protected net.minecraft.world.entity.ai.navigation.PathNavigation createNavigation(Level level) {
+		// DISABLED: wall climbing commented out — using vanilla ground navigation.
+		// Was: return new dev.jsz.primordia.entity.ai.SurfaceClimberNavigation(this, level);
+		return new net.minecraft.world.entity.ai.navigation.GroundPathNavigation(this, level);
+	}
+
+	/**
+	 * Blocks gained per tick going up a wall. Below a walk: climbing is work, and a creature that went
+	 * up a cliff face as fast as it crosses a floor reads as flying.
+	 */
+	private static final double CLIMB_SPEED = 0.13;
+	/**
+	 * How hard a climber holds itself in against the surface, per tick.
+	 * <p>
+	 * Only has to beat the gap the creature's own collision box leaves; anything larger just grinds it
+	 * into the blocks. This is what keeps it on the wall now that nothing else does.
+	 */
+	private static final double CLIMB_PRESS = 0.08;
+	/** Per tick closing speed while walking the last stride into the wall. */
+	private static final double CLIMB_APPROACH_PUSH = 0.15;
+	/** Ticks of forward push after a climb runs out of wall, to carry the body over the lip. */
+	private static final int MANTLE_TICKS = 7;
+	private static final double MANTLE_PUSH = 0.16;
+	private static final double MANTLE_LIFT = 0.06;
+
+	/** -1 down, 0 hold position, +1 up. Server-side; nothing needs to see it but the physics. */
+	private float climbDrive;
+	/** Sideways travel across the face, -1 to +1, positive toward {@code climbFacing.getClockWise()}. */
+	private float climbSideDrive;
+	/** Tick the intent was last renewed. Climbing lapses without one, so nothing can hang on a wall. */
+	private int climbIntentTick = Integer.MIN_VALUE;
+	/** True once the body has actually met the surface, which is what tells a top from a start. */
+	private boolean climbEngaged;
+	/** Ticks left of the push over the top of a wall, and which way it is going. */
+	private int mantleTicks;
+	private Direction mantleInto;
+
+	/** Ticks left to back over a ledge and find the face below it, and which way is over. */
+	private int dismountTicks;
+	private Direction dismountOver;
+	/** How long a creature will feel for the wall below a ledge before giving up and simply falling. */
+	private static final int DISMOUNT_TICKS = 14;
+	/** Per tick walk out over the lip, while still standing on it. */
+	private static final double DISMOUNT_PUSH = 0.13;
+	/** Per tick descent once past the lip, slow enough to feel the face on the way past. */
+	private static final double DISMOUNT_SINK = 0.18;
+	/** Deepest drop worth scanning for a floor. Below this it is a shaft, not a wall. */
+	private static final int MAX_DROP_SCAN = 24;
+
+	// ------------------------------------------------------------------ growing up
+
+	/** Size of a newborn, as a fraction of its adult self. */
+	public static final float BABY_SCALE = 0.42f;
+	/** Ticks between growth updates. Every half second is far finer than the eye can follow. */
+	private static final int GROWTH_INTERVAL = 10;
+
+	/**
+	 * Ticks since birth, or -1 for a creature that was never born — which is most of them.
+	 * <p>
+	 * Deliberately separate from {@link #lifeTicks}, which every creature accumulates from the moment it
+	 * spawns. Keying growth off that would have made every animal the world generated start out as a
+	 * baby and grow, so a fresh cave would be full of infants with no parents. Only offspring are young:
+	 * a population that has always been there is made of adults, and this field is what tells the two
+	 * apart across a save.
+	 */
+	private int juvenileTicks = -1;
+
+	/**
+	 * Marks this creature as newly born, so it starts small and grows into its adult body.
+	 * <p>
+	 * Called for offspring and nothing else. See {@link #juvenileTicks}.
+	 */
+	public void bearAsJuvenile() {
+		juvenileTicks = 0;
+		updateGrowth();
+	}
+
+	/** How far grown, {@link #BABY_SCALE} to 1. Scales the body, the collision box and the shadow. */
+	public float getGrowth() {
+		return entityData.get(GROWTH);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 * <p>
+	 * Overridden so vanilla's own notion of a young animal lines up with this one — it is what keeps
+	 * offspring out of everything that quite reasonably refuses to involve children.
+	 */
+	@Override
+	public boolean isBaby() {
+		return getGrowth() < 0.999f;
+	}
+
+	private void updateGrowth() {
+		if (level().isClientSide() || juvenileTicks < 0) return;
+		Genome g = getGenome();
+		if (g == null) return;
+
+		float maturity = Math.max(1f, EnergyBudget.maturityTicks(g));
+		float grown = Mth.clamp(juvenileTicks / maturity, 0f, 1f);
+		float scale = BABY_SCALE + (1f - BABY_SCALE) * grown;
+		if (grown >= 1f) juvenileTicks = -1;
+
+		if (Math.abs(scale - getGrowth()) < 0.001f) return;
+		entityData.set(GROWTH, scale);
+		// The collision box is derived from this, so it has to be rebuilt as the body changes.
+		refreshDimensions();
+	}
+
+	/**
+	 * Declares this tick's climbing intent: which wall, and whether to go up, down or hold still.
+	 * <p>
+	 * Must be renewed every tick. A goal that stops being ticked — interrupted, or the creature simply
+	 * dying — releases the wall by doing nothing, which is a great deal safer than relying on every
+	 * exit path remembering to clear a flag.
+	 * <p>
+	 * <b>The climb itself is scripted.</b> Vanilla's climbing is a side effect: {@code LivingEntity}
+	 * adds an upward nudge to anything whose {@code onClimbable()} is true <i>on a tick where it also
+	 * collided horizontally</i>, and that is the whole mechanism. Driving these creatures through it
+	 * meant hoping they pressed a wall hard enough, on the right tick, to be noticed — and they did
+	 * not, so they milled about at the bottom of every cliff in the cave. It also cannot express what
+	 * a climber actually needs to do, which is hold a position on a wall rather than always rise.
+	 * {@link #climbTravel} therefore moves them itself.
+	 */
+	public void setClimbing(Direction into, float verticalDrive) {
+		setClimbing(into, verticalDrive, 0f);
+	}
+
+	/** As {@link #setClimbing(Direction, float)}, plus travel across the face. */
+	public void setClimbing(Direction into, float verticalDrive, float sidewaysDrive) {
+		if (level().isClientSide() || into == null || !canClimb()) return;
+		// A mantle or a dismount is committed. Renewing the intent part-way through either would put the
+		// creature back into the climb it has just finished, on a wall that is no longer beside it, and
+		// it would spend the next second and a half shoved across the top of the cliff it came up.
+		if (mantleTicks > 0 || dismountTicks > 0) return;
+		setClimbFacing(into);
+		climbDrive = verticalDrive;
+		climbSideDrive = Mth.clamp(sidewaysDrive, -1f, 1f);
+		climbIntentTick = tickCount;
+	}
+
+	/**
+	 * Heads for a point while on a wall, and reports whether it is still going.
+	 * <p>
+	 * Steering rather than pathfinding, and the difference matters: this resolves the offset to the
+	 * target into "up the face" and "across the face" and drives both, which gets a creature anywhere it
+	 * can see on the surface it is on and around the corners in between. What it does not do is reason
+	 * about a route — a target behind an overhang, or on a face only reachable the long way round, will
+	 * have it pressed against the nearest point and going no further. Ground movement has a real
+	 * pathfinder behind it; this does not.
+	 */
+	public boolean climbToward(Direction into, double targetX, double targetY, double targetZ) {
+		if (into == null) return false;
+		Direction across = into.getClockWise();
+		double sideways = (targetX - getX()) * across.getStepX() + (targetZ - getZ()) * across.getStepZ();
+		double rise = targetY - getY();
+
+		// Deadbands, so a creature that has arrived settles instead of shivering across the last inch.
+		float up = Math.abs(rise) < CLIMB_ARRIVED ? 0f : (float) Mth.clamp(rise * 2.0, -1.0, 1.0);
+		float side = Math.abs(sideways) < CLIMB_ARRIVED ? 0f
+				: (float) Mth.clamp(sideways * 2.0, -1.0, 1.0);
+
+		setClimbing(into, up, side);
+		return up != 0f || side != 0f;
+	}
+
+	/** How close to a target counts as arrived, in blocks. */
+	private static final double CLIMB_ARRIVED = 0.35;
+
+	/**
+	 * Backs a creature over a ledge and onto the face below it.
+	 * <p>
+	 * The reverse of a mantle, and needed for the same reason: a climber that can only go up strands
+	 * itself on every ledge it reaches. Nothing about ordinary movement gets an animal off a cliff except
+	 * falling off it.
+	 *
+	 * @param over the direction the ground drops away in
+	 */
+	public void beginDescent(Direction over) {
+		if (level().isClientSide() || over == null || !canClimb()) return;
+		if (mantleTicks > 0 || dismountTicks > 0 || isClimbing()) return;
+		dismountOver = over;
+		dismountTicks = DISMOUNT_TICKS;
+		climbDrive = -1f;
+		climbSideDrive = 0f;
+		climbIntentTick = tickCount;
+		// Face the wall it is about to be on — which is the one it is backing off — from the outset, so
+		// the lean is already turning as it goes over rather than snapping once it arrives.
+		setClimbFacing(over.getOpposite());
+	}
+
+	public boolean isDescending() {
+		return dismountTicks > 0;
+	}
+
+	/**
+	 * A direction the ground drops away in far enough to be worth climbing down, or null.
+	 * <p>
+	 * Wants a real face to climb: the neighbouring column open, a floor somewhere below it rather than a
+	 * void, and the creature's own block backed by solid rock underneath, since that rock is the surface
+	 * it will be hanging off.
+	 */
+	public Direction ledgeEdge(Direction preferred, int minDrop) {
+		if (!onGround()) return null;
+		net.minecraft.core.BlockPos under = blockPosition().below();
+		if (!solidAt(under) || !solidAt(under.below())) return null;
+		if (dropDepth(preferred) >= minDrop) return preferred;
+		for (Direction facing : Direction.Plane.HORIZONTAL) {
+			if (dropDepth(facing) >= minDrop) return facing;
+		}
+		return null;
+	}
+
+	/** How many blocks of open air lie below the neighbouring column, or 0 if it is not a drop at all. */
+	private int dropDepth(Direction over) {
+		if (over == null) return 0;
+		net.minecraft.core.BlockPos side = blockPosition().relative(over);
+		if (solidAt(side)) return 0;
+
+		int depth = 0;
+		net.minecraft.core.BlockPos cursor = side.below();
+		while (depth < MAX_DROP_SCAN && !solidAt(cursor)) {
+			depth++;
+			cursor = cursor.below();
+		}
+		// No floor inside the scan is a shaft, and going over the edge of one is not climbing down.
+		return depth >= MAX_DROP_SCAN ? 0 : depth;
+	}
+
+	public boolean isClimbing() {
+		return getClimbFacing() != null;
+	}
+
+	/** Mid-push over the top of a wall — a committed action no goal may take back. */
+	public boolean isMantling() {
+		return mantleTicks > 0;
+	}
+
+	/**
+	 * Whether the block column immediately beside the creature in this direction is a wall.
+	 * <p>
+	 * Asked in whole blocks rather than in the creature's own reach, and that matters: these bodies
+	 * are procedural, a cave crawler's is a third of a block wide, and a test measured outward from
+	 * such a body never reaches past the block it is standing in. So the small climbers — the ones this
+	 * whole feature exists for — could stand at the foot of a cliff and correctly conclude there was no
+	 * wall there. Two blocks tall, so a kerb is not something to climb.
+	 */
+	public boolean wallBeside(Direction into) {
+		if (into == null) return false;
+		net.minecraft.core.BlockPos base = blockPosition().relative(into);
+		return solidAt(base) && solidAt(base.above());
+	}
+
+	/**
+	 * Whether the body is actually touching the surface, as opposed to merely next to it.
+	 * <p>
+	 * The narrower of the two questions, and the one the physics needs: {@link #wallBeside} says a
+	 * climb is available, this says the creature has arrived and may start going up. Without the
+	 * distinction it would rise through the air a block short of the wall it meant to be on.
+	 */
+	private boolean touchingWall(Direction into) {
+		if (into == null) return false;
+		double reach = getBbWidth() * 0.5 + 0.25;
+		double x = getX() + into.getStepX() * reach;
+		double z = getZ() + into.getStepZ() * reach;
+		return solidAt(x, getY() + 0.2, z)
+				|| solidAt(x, getY() + Math.min(1.2, getBbHeight()), z);
+	}
+
+	private boolean solidAt(double x, double y, double z) {
+		return solidAt(net.minecraft.core.BlockPos.containing(x, y, z));
+	}
+
+	private boolean solidAt(net.minecraft.core.BlockPos pos) {
+		return !level().getBlockState(pos).getCollisionShape(level(), pos).isEmpty();
+	}
+
+	/**
+	 * A wall the creature could start climbing, favouring one direction, or null if it is in the open.
+	 */
+	public Direction wallAdjacent(Direction preferred) {
+		if (wallBeside(preferred)) return preferred;
+		for (Direction facing : Direction.Plane.HORIZONTAL) {
+			if (wallBeside(facing)) return facing;
+		}
+		return null;
+	}
+
+	/**
+	 * Moves a creature that is on a wall, in place of the usual walking physics.
+	 * <p>
+	 * Deliberately total once it has hold: position, gravity and facing all come from here, so there is
+	 * nothing left for friction, step height or a missed collision to interfere with. That is the
+	 * entire reason this exists — see {@link #setClimbing}.
+	 * <p>
+	 * Three phases. Walking the last stride in, which keeps normal gravity because the creature is
+	 * still an animal on the floor. Climbing, which has none. And the push over the top, without which
+	 * everything that reached the lip slid straight back down the face it had just climbed.
+	 */
+	private void climbTravel() {
+		Direction into = getClimbFacing();
+
+		if (dismountTicks > 0) {
+			dismountTravel();
+			return;
+		}
+
+		// Had the wall and lost it under the body. Going up, that is the top, and the body needs carrying
+		// over the lip. Going down or across it is an outside corner or an overhang: try to find the
+		// surface round the corner, and failing that let go, because pushing forward over a drop would
+		// throw the creature off the cliff it was descending.
+		if (mantleTicks <= 0 && into != null && climbEngaged && !touchingWall(into)) {
+			if (climbDrive > 0f) {
+				mantleTicks = MANTLE_TICKS;
+				mantleInto = into;
+			} else if (!turnOutsideCorner(into)) {
+				setClimbFacing(null);
+				return;
+			} else {
+				into = getClimbFacing();
+			}
+		}
+
+		if (mantleTicks > 0) {
+			mantleTicks--;
+			faceTheWall(mantleInto);
+			setDeltaMovement(mantleInto.getStepX() * MANTLE_PUSH, MANTLE_LIFT,
+					mantleInto.getStepZ() * MANTLE_PUSH);
+			move(net.minecraft.world.entity.MoverType.SELF, getDeltaMovement());
+			resetFallDistance();
+			// Landing ends it early: the creature is over the lip and standing on the top, and carrying
+			// on would shove it across the surface it has just arrived on.
+			if (mantleTicks == 0 || onGround()) {
+				mantleTicks = 0;
+				mantleInto = null;
+				setClimbFacing(null);
+			}
+			return;
+		}
+
+		if (into == null) return;
+		faceTheWall(into);
+
+		if (!touchingWall(into)) {
+			// Not on it yet. Walk in under gravity — this is still a creature standing on the ground.
+			setDeltaMovement(into.getStepX() * CLIMB_APPROACH_PUSH,
+					getDeltaMovement().y,
+					into.getStepZ() * CLIMB_APPROACH_PUSH);
+			applyGravity();
+			move(net.minecraft.world.entity.MoverType.SELF, getDeltaMovement());
+			return;
+		}
+
+		climbEngaged = true;
+
+		// An inside corner: the way across is blocked by another face. Turn onto it rather than grinding
+		// into it, which is what lets a climber follow a surface round a bend instead of stopping at one.
+		Direction across = into.getClockWise();
+		if (climbSideDrive != 0f) {
+			Direction travel = climbSideDrive > 0f ? across : across.getOpposite();
+			if (wallBeside(travel) && touchingWall(travel)) {
+				setClimbFacing(travel);
+				climbSideDrive = 0f;
+				into = travel;
+				across = into.getClockWise();
+			}
+		}
+
+		setDeltaMovement(
+				into.getStepX() * CLIMB_PRESS + across.getStepX() * climbSideDrive * CLIMB_SPEED,
+				climbDrive * CLIMB_SPEED,
+				into.getStepZ() * CLIMB_PRESS + across.getStepZ() * climbSideDrive * CLIMB_SPEED);
+		move(net.minecraft.world.entity.MoverType.SELF, getDeltaMovement());
+		// A climber does not fall while it is holding on, and letting fall distance accumulate over a
+		// long ascent would kill it the moment it stepped off at the top.
+		resetFallDistance();
+
+		// Down onto the floor is the end of a descent — there is nothing left to hang from.
+		if (onGround() && climbDrive < 0f) setClimbFacing(null);
+	}
+
+	/**
+	 * Follows the surface round an outside corner, and reports whether it found one.
+	 * <p>
+	 * A creature travelling across a face that runs out has gone past the end of the wall. The face that
+	 * continues there is the one at right angles pointing back the way it came, so it wraps onto that
+	 * rather than dropping off the end of every wall it crosses.
+	 */
+	private boolean turnOutsideCorner(Direction into) {
+		Direction across = into.getClockWise();
+		Direction travel = climbSideDrive >= 0f ? across : across.getOpposite();
+		Direction wrapped = travel.getOpposite();
+		if (wallBeside(wrapped)) {
+			setClimbFacing(wrapped);
+			return true;
+		}
+		// Nothing round that corner; the other one is worth a look before letting go.
+		if (wallBeside(travel)) {
+			setClimbFacing(travel);
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Backs over a ledge until the face below it is within reach, then hands over to the climb.
+	 * <p>
+	 * Two halves, because the creature has to leave the ground before it can find anything to hold. It
+	 * walks out over the lip while it is still standing on it, and once it is past the edge and falling
+	 * it stops pushing and sinks slowly, feeling behind itself for the wall. Continuing to push outward
+	 * after the edge would carry it out of reach of the very surface it is looking for.
+	 */
+	private void dismountTravel() {
+		dismountTicks--;
+		Direction over = dismountOver;
+		Direction face = over.getOpposite();
+		faceTheWall(face);
+
+		if (!onGround() && touchingWall(face)) {
+			// Found it. Hand straight over to the climb, already engaged and heading down.
+			dismountTicks = 0;
+			dismountOver = null;
+			climbEngaged = true;
+			climbDrive = -1f;
+			climbIntentTick = tickCount;
+			setClimbFacing(face);
+			return;
+		}
+
+		if (onGround()) {
+			setDeltaMovement(over.getStepX() * DISMOUNT_PUSH, getDeltaMovement().y,
+					over.getStepZ() * DISMOUNT_PUSH);
+			applyGravity();
+		} else {
+			setDeltaMovement(0.0, -DISMOUNT_SINK, 0.0);
+		}
+		move(net.minecraft.world.entity.MoverType.SELF, getDeltaMovement());
+		resetFallDistance();
+
+		if (dismountTicks <= 0) {
+			// Never found a face. Let go and fall the ordinary way rather than hang in the air.
+			dismountTicks = 0;
+			dismountOver = null;
+			setClimbFacing(null);
+		}
+	}
+
+	/**
+	 * Turns the body to face the surface it is on.
+	 * <p>
+	 * The renderer pitches a climbing creature ninety degrees onto its wall about its own forward axis,
+	 * so a body pointed anywhere else lies across the wall rather than up it. All three angles are
+	 * driven, which also stops the standing-still body easing in {@link #tick} pulling the body back
+	 * toward wherever the head happens to be looking.
+	 */
+	private void faceTheWall(Direction into) {
+		float wall = into.toYRot();
+		setYRot(Mth.rotateIfNecessary(getYRot(), wall, CLIMB_TURN_RATE));
+		yBodyRot = Mth.rotateIfNecessary(yBodyRot, wall, CLIMB_TURN_RATE);
+		yHeadRot = Mth.rotateIfNecessary(yHeadRot, wall, CLIMB_TURN_RATE);
+	}
+
+	/** Degrees per tick the body swings round onto the wall. About half a second end to end. */
+	private static final float CLIMB_TURN_RATE = 18f;
 
 	/**
 	 * How far onto the wall the body has turned, 0 upright to 1 flat against it.
@@ -400,38 +887,40 @@ public class CreatureEntity extends PathAwareEntity {
 	}
 
 	@Override
-	public boolean isClimbing() {
-		return dataTracker.get(CLIMBING) || super.isClimbing();
+	public boolean onClimbable() {
+		return entityData.get(CLIMBING) || super.onClimbable();
 	}
 
-	public static DefaultAttributeContainer.Builder createCreatureAttributes() {
+	public static AttributeSupplier.Builder createCreatureAttributes() {
 		// ATTACK_DAMAGE is not part of createMobAttributes(). It must be declared here or
 		// tryAttack throws "Can't find attribute" and takes the server tick down with it.
-		return MobEntity.createMobAttributes()
-				.add(EntityAttributes.GENERIC_MAX_HEALTH, 12.0)
-				.add(EntityAttributes.GENERIC_MOVEMENT_SPEED, 0.25)
-				.add(EntityAttributes.GENERIC_FOLLOW_RANGE, 24.0)
-				.add(EntityAttributes.GENERIC_ATTACK_DAMAGE, 2.0)
-				.add(EntityAttributes.GENERIC_ATTACK_KNOCKBACK, 0.0)
-				.add(EntityAttributes.GENERIC_ARMOR, 0.0);
+		return Mob.createMobAttributes()
+				.add(Attributes.MAX_HEALTH, 12.0)
+				.add(Attributes.MOVEMENT_SPEED, 0.25)
+				.add(Attributes.FOLLOW_RANGE, 24.0)
+				.add(Attributes.ATTACK_DAMAGE, 2.0)
+				.add(Attributes.ATTACK_KNOCKBACK, 0.0)
+				.add(Attributes.ARMOR, 0.0);
 	}
 
 	@Override
-	protected void initDataTracker(DataTracker.Builder builder) {
-		super.initDataTracker(builder);
-		builder.add(GENOME_CODE, "");
-		builder.add(ACTIVITY, (byte) CreatureActivity.IDLE.ordinal());
-		builder.add(TAMED, false);
-		builder.add(SADDLED, false);
-		builder.add(OWNER, Optional.empty());
-		builder.add(DOMESTICATED, false);
-		builder.add(SITTING, false);
-		builder.add(POSING, false);
-		builder.add(POSE_WALKING, true);
-		builder.add(CLIMBING, false);
-		builder.add(CLIMB_FACING, (byte) -1);
-		builder.add(CARCASS, false);
-		builder.add(ASLEEP, false);
+	protected void defineSynchedData(SynchedEntityData.Builder builder) {
+		super.defineSynchedData(builder);
+		builder.define(GENOME_CODE, "");
+		builder.define(ACTIVITY, (byte) CreatureActivity.IDLE.ordinal());
+		builder.define(TAMED, false);
+		builder.define(SADDLED, false);
+		builder.define(OWNER, "");
+		builder.define(DOMESTICATED, false);
+		builder.define(SITTING, false);
+		builder.define(POSING, false);
+		builder.define(POSE_WALKING, true);
+		builder.define(CLIMBING, false);
+		builder.define(CLIMB_FACING, (byte) -1);
+		builder.define(CARCASS, false);
+		builder.define(ASLEEP, false);
+		// Full size by default: only something actually born starts smaller. See juvenileTicks.
+		builder.define(GROWTH, 1f);
 	}
 
 	// ------------------------------------------------------------------ ecology
@@ -442,7 +931,7 @@ public class CreatureEntity extends PathAwareEntity {
 	}
 
 	public void setEnergy(float value) {
-		this.energy = MathHelper.clamp(value, 0f, 1f);
+		this.energy = Mth.clamp(value, 0f, 1f);
 	}
 
 	public void addEnergy(float delta) {
@@ -462,6 +951,33 @@ public class CreatureEntity extends PathAwareEntity {
 		if (isTamed()) return false;
 		if (!getDietGroup().hunts()) return false;
 		return energy < EnergyBudget.HUNT_THRESHOLD;
+	}
+
+	/**
+	 * Fraction of its health a creature that stands its ground will spend before it breaks and runs.
+	 * <p>
+	 * Below {@code DEFENSIVE}'s appetite for a fight but well above dead, so the animal genuinely
+	 * fights first and the flight is a decision rather than a reflex.
+	 */
+	private static final float BREAKS_AND_RUNS_BELOW = 0.4f;
+
+	/**
+	 * Whether this creature would rather run than stay where it is.
+	 * <p>
+	 * Skittish animals always would. A defensive one holds its ground — that is what makes it
+	 * defensive — right up until it is plainly losing, and then it runs, because an animal that fights
+	 * to the death against something bigger than it is not defending itself, it is dying slowly. The
+	 * two together are what the player sees as a fight with an outcome instead of a creature standing
+	 * still while something eats it.
+	 * <p>
+	 * Only ever consulted by {@link PanicGoal}, which additionally requires that something have
+	 * actually hurt the animal, so a healthy creature at rest never flees from nothing.
+	 */
+	public boolean wantsToFlee() {
+		if (getTemperament().fleesWhenHurt()) return true;
+		// A companion stays where its owner put it; deciding to bolt is the owner's call.
+		if (isDomesticated()) return false;
+		return getHealth() < getMaxHealth() * BREAKS_AND_RUNS_BELOW;
 	}
 
 	/** Whether this creature will go looking for plants or a carcass. */
@@ -494,8 +1010,8 @@ public class CreatureEntity extends PathAwareEntity {
 	 * the threshold on its own from there.
 	 */
 	@Override
-	public boolean onKilledOther(ServerWorld world, LivingEntity other) {
-		boolean result = super.onKilledOther(world, other);
+	public boolean killedEntity(ServerLevel world, LivingEntity other, DamageSource damageSource) {
+		boolean result = super.killedEntity(world, other, damageSource);
 		if (!isDomesticated()) {
 			huntCooldown = Math.max(huntCooldown, POST_KILL_COOLDOWN);
 			setTarget(null);
@@ -503,13 +1019,6 @@ public class CreatureEntity extends PathAwareEntity {
 		return result;
 	}
 
-	/**
-	 * Charges a hunter for a pursuit that caught nothing and stands it down for a while.
-	 * <p>
-	 * The cooldown matters more than the energy cost. Without it the targeting goal simply
-	 * re-acquires the animal that just outran it on the very next tick, and a bounded chase becomes
-	 * an unbounded one made of short chases.
-	 */
 	public void onHuntFailed() {
 		Genome g = getGenome();
 		addEnergy(-EnergyBudget.FAILED_HUNT_COST);
@@ -518,69 +1027,54 @@ public class CreatureEntity extends PathAwareEntity {
 	}
 
 	public boolean isAsleep() {
-		return dataTracker.get(ASLEEP);
+		return entityData.get(ASLEEP);
 	}
 
 	public void setAsleep(boolean asleep) {
 		if (isAsleep() == asleep) return;
-		dataTracker.set(ASLEEP, asleep);
+		entityData.set(ASLEEP, asleep);
 		if (asleep) {
 			getNavigation().stop();
 			setTarget(null);
-			dataTracker.set(ACTIVITY, (byte) CreatureActivity.SLEEP.ordinal());
+			entityData.set(ACTIVITY, (byte) CreatureActivity.SLEEP.ordinal());
 		}
 	}
 
-	// ----------------------------------------------------------------- carcasses
-
-	/** A body lying where it fell: not alive, not an item pile, and edible until it is not. */
 	public boolean isCarcass() {
-		return dataTracker.get(CARCASS);
+		return entityData.get(CARCASS);
 	}
 
 	public float getCarcassNutrition() {
 		return carcassNutrition;
 	}
 
-	/**
-	 * Turns this entity into the carcass of the creature that just died.
-	 * <p>
-	 * Spawned as a fresh entity rather than by keeping the dead one alive, because a
-	 * {@code LivingEntity} at zero health is in the middle of vanilla's death sequence and fighting
-	 * that is how you get an animal that is dead on the server and standing on the client. This is a
-	 * new entity that was simply never alive.
-	 */
 	public static void spawnCarcassOf(CreatureEntity dead) {
 		if (dead.isCarcass()) return;
 		Genome g = dead.getGenome();
 		BodyPlan plan = dead.getBodyPlan();
 		if (g == null || plan == null) return;
-		if (!(dead.getWorld() instanceof ServerWorld world)) return;
+		if (!(dead.level() instanceof ServerLevel world)) return;
 
-		CreatureEntity carcass = PrimordiaEntities.CREATURE.create(world);
+		CreatureEntity carcass = PrimordiaEntities.CREATURE.create(world, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
 		if (carcass == null) return;
 		carcass.setGenome(g);
-		carcass.refreshPositionAndAngles(dead.getX(), dead.getY(), dead.getZ(), dead.getYaw(), 0f);
+		carcass.snapTo(dead.getX(), dead.getY(), dead.getZ(), dead.getYRot(), 0f);
 		carcass.becomeCarcass(EnergyBudget.carcassNutrition(plan));
-		world.spawnEntity(carcass);
+		world.addFreshEntity(carcass);
 	}
 
 	private void becomeCarcass(float nutrition) {
-		dataTracker.set(CARCASS, true);
-		dataTracker.set(ACTIVITY, (byte) CreatureActivity.CARCASS.ordinal());
+		entityData.set(CARCASS, true);
+		entityData.set(ACTIVITY, (byte) CreatureActivity.CARCASS.ordinal());
 		carcassNutrition = nutrition;
 		carcassTicks = 0;
-		setAiDisabled(true);
+		setNoAi(true);
 		setSilent(true);
-		setPersistent();
+		setPersistenceRequired();
 		getNavigation().stop();
 		setTarget(null);
 	}
 
-	/**
-	 * Draws food out of this carcass, returning how much was actually taken. Returns 0 once it is
-	 * picked clean, which is what tells a feeding goal to stop.
-	 */
 	public float consumeCarcass(float requested) {
 		if (!isCarcass() || carcassNutrition <= 0f) return 0f;
 		float taken = Math.min(requested, carcassNutrition);
@@ -588,10 +1082,6 @@ public class CreatureEntity extends PathAwareEntity {
 		return taken;
 	}
 
-	/**
-	 * Ages a carcass out. A body eaten down to nothing simply disappears; one that rots untouched
-	 * leaves bone, so a kill site nobody scavenged is still readable on the ground later.
-	 */
 	private void tickCarcass() {
 		carcassTicks++;
 		if (carcassNutrition <= 0.001f) {
@@ -604,60 +1094,60 @@ public class CreatureEntity extends PathAwareEntity {
 		}
 	}
 
-	// ------------------------------------------------------- taming and riding
-
 	public boolean isTamed() {
-		return dataTracker.get(TAMED);
+		return entityData.get(TAMED);
 	}
 
 	public boolean isSaddled() {
-		return dataTracker.get(SADDLED);
+		return entityData.get(SADDLED);
 	}
+
+	private String ownerTextCache = "";
+	private UUID ownerUuidCache;
 
 	public UUID getOwnerUuid() {
-		return dataTracker.get(OWNER).orElse(null);
+		String text = entityData.get(OWNER);
+		if (text.isEmpty()) return null;
+		if (!text.equals(ownerTextCache)) {
+			ownerTextCache = text;
+			try {
+				ownerUuidCache = UUID.fromString(text);
+			} catch (IllegalArgumentException malformed) {
+				ownerUuidCache = null;
+			}
+		}
+		return ownerUuidCache;
 	}
 
-	public boolean isOwner(PlayerEntity player) {
-		return player.getUuid().equals(getOwnerUuid());
+	public boolean isOwner(Player player) {
+		return player.getUUID().equals(getOwnerUuid());
 	}
 
-	/**
-	 * A tamed creature that has also bonded: it follows its owner, fights alongside them, and can
-	 * be told to stay. Strictly a superset of tamed — nothing is domesticated without being tamed.
-	 */
 	public boolean isDomesticated() {
-		return dataTracker.get(DOMESTICATED);
+		return entityData.get(DOMESTICATED);
 	}
 
 	public boolean isSitting() {
-		return dataTracker.get(SITTING);
+		return entityData.get(SITTING);
 	}
 
-	/**
-	 * A posed creature is a specimen on a stand: it holds its position and plays the walk cycle
-	 * without going anywhere, so a whole population can be inspected side by side. Nothing spawns
-	 * this way naturally — only {@code /primordia test} sets it.
-	 */
 	public boolean isPosing() {
-		return dataTracker.get(POSING);
+		return entityData.get(POSING);
 	}
 
-	/** Whether a posed specimen is playing its walk cycle rather than standing still. */
 	public boolean isPoseWalking() {
-		return dataTracker.get(POSE_WALKING);
+		return entityData.get(POSE_WALKING);
 	}
 
 	public void setPoseWalking(boolean walking) {
-		dataTracker.set(POSE_WALKING, walking);
+		entityData.set(POSE_WALKING, walking);
 	}
 
-	/** Freezes the creature in place as an animated display specimen. */
 	public void setPosing(boolean posing) {
-		dataTracker.set(POSING, posing);
-		setAiDisabled(posing);
+		entityData.set(POSING, posing);
+		setNoAi(posing);
 		setInvulnerable(posing);
-		setPersistent();
+		setPersistenceRequired();
 		if (posing) {
 			setSilent(true);
 			getNavigation().stop();
@@ -666,275 +1156,258 @@ public class CreatureEntity extends PathAwareEntity {
 	}
 
 	public void setSitting(boolean sitting) {
-		dataTracker.set(SITTING, sitting);
+		entityData.set(SITTING, sitting);
 	}
 
-	/** The owning player if they are loaded in this world, otherwise null. */
 	public LivingEntity getOwner() {
 		UUID uuid = getOwnerUuid();
-		return uuid == null ? null : getWorld().getPlayerByUuid(uuid);
+		return uuid == null ? null : level().getPlayerByUUID(uuid);
 	}
 
-	/**
-	 * Rolls for domestication and reports whether it took. Announces itself loudly when it does —
-	 * this is a rare outcome the player would otherwise have no way of noticing.
-	 */
-	private boolean rollDomestication(PlayerEntity player, float chance) {
+	private boolean rollDomestication(Player player, float chance) {
 		if (isDomesticated() || getRandom().nextFloat() >= chance) return false;
 
-		dataTracker.set(DOMESTICATED, true);
-		((ServerWorld) getWorld()).spawnParticles(ParticleTypes.HAPPY_VILLAGER,
-				getX(), getBodyY(1.0), getZ(), 18, 0.5, 0.5, 0.5, 0.15);
-		playSound(SoundEvents.ENTITY_WOLF_HOWL, 0.7f, 1.0f);
-		player.sendMessage(Text.literal("The creature bonds with you — it will fight at your side. "
-				+ "Sneak and interact to make it stay.").formatted(Formatting.GOLD), false);
+		entityData.set(DOMESTICATED, true);
+		((ServerLevel) level()).sendParticles(ParticleTypes.HAPPY_VILLAGER,
+				getX(), getY(1.0), getZ(), 18, 0.5, 0.5, 0.5, 0.15);
+		playSound(SoundEvents.WOLF_AMBIENT_BABY.value(), 0.7f, 1.0f);
+		player.sendSystemMessage(Component.literal("The creature bonds with you — it will fight at your side. "
+				+ "Sneak and interact to make it stay.").withStyle(ChatFormatting.GOLD));
 		return true;
 	}
 
-	/** The food this creature can be bribed with; stable across a lineage. */
 	public Item getFavouriteFood() {
 		Genome g = getGenome();
 		return g == null ? Items.WHEAT : TamingPreference.favouriteFood(g);
 	}
 
 	@Override
-	public ActionResult interactMob(PlayerEntity player, Hand hand) {
-		ItemStack stack = player.getStackInHand(hand);
+	public InteractionResult mobInteract(Player player, InteractionHand hand) {
+		ItemStack stack = player.getItemInHand(hand);
 
 		if (!isTamed()) {
-			if (!stack.isOf(getFavouriteFood())) {
-				return super.interactMob(player, hand);
+			if (!stack.is(getFavouriteFood())) {
+				return super.mobInteract(player, hand);
 			}
-			if (getWorld().isClient()) return ActionResult.SUCCESS;
+			if (level().isClientSide()) return InteractionResult.SUCCESS;
 
-			stack.decrementUnlessCreative(1, player);
+			stack.consume(1, player);
 			Genome g = getGenome();
 			BodyPlan plan = getBodyPlan();
 			float chance = g == null ? 0.3f
 					: TamingPreference.tameChance(g, plan == null ? 0.2f : plan.mass);
 
 			if (getRandom().nextFloat() < chance) {
-				dataTracker.set(TAMED, true);
-				dataTracker.set(OWNER, Optional.of(player.getUuid()));
-				// Taming clears any grudge; otherwise a creature you fought stays hostile.
+				entityData.set(TAMED, true);
+				entityData.set(OWNER, player.getUUID().toString());
 				setTarget(null);
-				setAttacker(null);
-				((ServerWorld) getWorld()).spawnParticles(ParticleTypes.HEART,
-						getX(), getBodyY(0.9), getZ(), 7, 0.4, 0.4, 0.4, 0.1);
-				player.sendMessage(Text.literal("The creature accepts you.")
-						.formatted(Formatting.GREEN), true);
+				setLastHurtByMob(null);
+				((ServerLevel) level()).sendParticles(ParticleTypes.HEART,
+						getX(), getY(0.9), getZ(), 7, 0.4, 0.4, 0.4, 0.1);
+				player.sendOverlayMessage(Component.literal("The creature accepts you.")
+						.withStyle(ChatFormatting.GREEN));
 				rollDomestication(player, DOMESTICATION_ON_TAME_CHANCE);
 			} else {
-				((ServerWorld) getWorld()).spawnParticles(ParticleTypes.SMOKE,
-						getX(), getBodyY(0.9), getZ(), 5, 0.3, 0.3, 0.3, 0.02);
+				((ServerLevel) level()).sendParticles(ParticleTypes.SMOKE,
+						getX(), getY(0.9), getZ(), 5, 0.3, 0.3, 0.3, 0.02);
 			}
-			return ActionResult.CONSUME;
+			return InteractionResult.CONSUME;
 		}
 
-		// Tamed from here on.
-
-		// Sneak-interact toggles staying. It is on the sneak variant because a plain interact is
-		// already spoken for by feeding, saddling and mounting.
-		if (isDomesticated() && isOwner(player) && player.shouldCancelInteraction()) {
-			if (getWorld().isClient()) return ActionResult.SUCCESS;
+		if (isDomesticated() && isOwner(player) && player.isSecondaryUseActive()) {
+			if (level().isClientSide()) return InteractionResult.SUCCESS;
 			setSitting(!isSitting());
 			getNavigation().stop();
 			setTarget(null);
-			player.sendMessage(Text.literal(isSitting()
+			player.sendOverlayMessage(Component.literal(isSitting()
 					? "The creature settles down to wait."
-					: "The creature falls in behind you.").formatted(Formatting.GREEN), true);
-			return ActionResult.CONSUME;
+					: "The creature falls in behind you.").withStyle(ChatFormatting.GREEN));
+			return InteractionResult.CONSUME;
 		}
 
-		if (stack.isOf(getFavouriteFood()) && loveTimer <= 0) {
-			if (getWorld().isClient()) return ActionResult.SUCCESS;
-			stack.decrementUnlessCreative(1, player);
-			// A tamed creature can still bond later, so animals tamed before this trait existed
-			// are not permanently shut out of it.
+		if (stack.is(getFavouriteFood()) && loveTimer <= 0) {
+			if (level().isClientSide()) return InteractionResult.SUCCESS;
+
+			// Neither of these consumes the food. Refusing to breed and taking the item anyway is how a
+			// player ends up with an empty hand and no idea why nothing happened.
+			if (isBaby()) {
+				player.sendOverlayMessage(Component.literal("This one is still growing.")
+						.withStyle(ChatFormatting.YELLOW));
+				return InteractionResult.CONSUME;
+			}
+			if (breedCooldown > 0) {
+				// A pair used to be able to breed again the instant the last one was born, so a handful
+				// of food produced a herd. The wait is the creature's own: it comes off FECUNDITY, the
+				// same gene that paces wild broods, so a fast breeder recovers sooner than a slow one.
+				player.sendOverlayMessage(Component.literal(
+								"Not ready to breed — about " + (breedCooldown / 1200 + 1) + " min")
+						.withStyle(ChatFormatting.YELLOW));
+				return InteractionResult.CONSUME;
+			}
+
+			stack.consume(1, player);
 			if (isOwner(player)) rollDomestication(player, DOMESTICATION_ON_FEED_CHANCE);
 			loveTimer = 600;
 			playMatingCall();
-			((ServerWorld) getWorld()).spawnParticles(ParticleTypes.HEART,
-					getX(), getBodyY(0.9), getZ(), 8, 0.4, 0.4, 0.4, 0.1);
-			player.sendMessage(Text.literal("The creature enters a breeding mood!")
-					.formatted(Formatting.LIGHT_PURPLE), true);
-			return ActionResult.CONSUME;
+			((ServerLevel) level()).sendParticles(ParticleTypes.HEART,
+					getX(), getY(0.9), getZ(), 8, 0.4, 0.4, 0.4, 0.1);
+			player.sendOverlayMessage(Component.literal("The creature enters a breeding mood!")
+					.withStyle(ChatFormatting.LIGHT_PURPLE));
+			return InteractionResult.CONSUME;
 		}
 
-		if (!isSaddled() && stack.isOf(Items.SADDLE)) {
-			if (getWorld().isClient()) return ActionResult.SUCCESS;
+		if (!isSaddled() && stack.is(Items.SADDLE)) {
+			if (level().isClientSide()) return InteractionResult.SUCCESS;
 			if (!canBeSaddled()) {
-				player.sendMessage(Text.literal("This creature is too small to carry a rider.")
-						.formatted(Formatting.YELLOW), true);
-				return ActionResult.CONSUME;
+				player.sendOverlayMessage(Component.literal("This creature is too small to carry a rider.")
+						.withStyle(ChatFormatting.YELLOW));
+				return InteractionResult.CONSUME;
 			}
-			stack.decrementUnlessCreative(1, player);
-			dataTracker.set(SADDLED, true);
-			playSound(SoundEvents.ENTITY_HORSE_SADDLE, 0.6f, 1.0f);
-			return ActionResult.CONSUME;
+			stack.consume(1, player);
+			entityData.set(SADDLED, true);
+			playSound(SoundEvents.HORSE_SADDLE.value(), 0.6f, 1.0f);
+			return InteractionResult.CONSUME;
 		}
 
-		if (isSaddled() && !player.shouldCancelInteraction()) {
-			if (getWorld().isClient()) return ActionResult.SUCCESS;
+		if (isSaddled() && !player.isSecondaryUseActive()) {
+			if (level().isClientSide()) return InteractionResult.SUCCESS;
 			player.startRiding(this);
-			return ActionResult.CONSUME;
+			return InteractionResult.CONSUME;
 		}
 
-		return super.interactMob(player, hand);
+		return super.mobInteract(player, hand);
 	}
 
-	/** A mount has to be big enough to sit on; tiny insectoids are companions, not transport. */
 	public boolean canBeSaddled() {
 		BodyPlan plan = getBodyPlan();
-		return plan != null && plan.hipHeight >= 0.75f && plan.mass >= 0.08f;
+		// Size is measured on the adult body, so a juvenile of a rideable species has to be turned down
+		// on its age rather than on its build — it will grow into it.
+		return plan != null && !isBaby() && plan.hipHeight >= 0.75f && plan.mass >= 0.08f;
 	}
 
 	@Override
 	public LivingEntity getControllingPassenger() {
-		// Only the owner drives, and only with a saddle on.
 		if (!isSaddled()) return null;
-		if (getFirstPassenger() instanceof PlayerEntity rider && isOwner(rider)) {
+		if (getFirstPassenger() instanceof Player rider && isOwner(rider)) {
 			return rider;
 		}
 		return null;
 	}
 
 	@Override
-	protected Vec3d getPassengerAttachmentPos(Entity passenger, EntityDimensions dimensions, float scaleFactor) {
+	protected Vec3 getPassengerAttachmentPoint(Entity passenger, EntityDimensions dimensions, float scaleFactor) {
 		BodyPlan plan = getBodyPlan();
 		if (plan == null) {
-			return super.getPassengerAttachmentPos(passenger, dimensions, scaleFactor);
+			return super.getPassengerAttachmentPoint(passenger, dimensions, scaleFactor);
 		}
-		// Seat rider over the back hips, positioned slightly forward on the spine.
-		return new Vec3d(0.0, plan.hipHeight * 0.98, -plan.bodyLength * 0.05);
+		float growth = getGrowth();
+		return new Vec3(0.0, plan.hipHeight * 0.98 * growth, -plan.bodyLength * 0.05 * growth);
 	}
 
 	@Override
-	public void travel(Vec3d movementInput) {
+	public void travel(Vec3 movementInput) {
 		if (!isAlive()) {
 			super.travel(movementInput);
 			return;
 		}
-		if (!(getControllingPassenger() instanceof PlayerEntity rider)) {
+		// DISABLED: wall climbing commented out.
+		// if (getControllingPassenger() == null
+		//         && (isClimbing() || mantleTicks > 0 || dismountTicks > 0)) {
+		//     climbTravel();
+		//     return;
+		// }
+		if (!(getControllingPassenger() instanceof Player rider)) {
 			super.travel(movementInput);
 			return;
 		}
 
-		// Smooth turn easing toward rider look direction (eliminates rotation stuttering)
-		float targetYaw = rider.getYaw();
-		float currentYaw = getYaw();
-		float newYaw = MathHelper.stepUnwrappedAngleTowards(currentYaw, targetYaw, 6.0f);
+		float targetYaw = rider.getYRot();
+		float currentYaw = getYRot();
+		float newYaw = Mth.rotateIfNecessary(currentYaw, targetYaw, 6.0f);
 
-		prevYaw = currentYaw;
-		setYaw(newYaw);
-		setPitch(rider.getPitch() * 0.5f);
-		setRotation(newYaw, getPitch());
+		yRotO = currentYaw;
+		setYRot(newYaw);
+		setXRot(rider.getXRot() * 0.5f);
 
-		prevBodyYaw = bodyYaw;
-		bodyYaw = newYaw;
-		// Head tracks body smoothly — snapping headYaw = newYaw caused oscillation because
-		// tick() also eases bodyYaw toward headYaw, creating a feedback loop.
-		prevHeadYaw = headYaw;
-		headYaw = MathHelper.stepUnwrappedAngleTowards(headYaw, newYaw, 8.0f);
+		yBodyRotO = yBodyRot;
+		yBodyRot = newYaw;
+		yHeadRotO = yHeadRot;
+		yHeadRot = Mth.rotateIfNecessary(yHeadRot, newYaw, 8.0f);
 
-		float sideways = rider.sidewaysSpeed * 0.3f;
-		float forward = rider.forwardSpeed;
-		// Backing up is deliberately slow; these are not reverse-gear animals.
+		float sideways = rider.xxa * 0.3f;
+		float forward = rider.zza;
 		if (forward <= 0f) forward *= 0.28f;
 
-		if (isLogicalSideForUpdatingMovement()) {
-			// Use the creature's own movement speed, capped so large fast creatures
-			// don't feel like rockets. A vanilla horse is 0.225.
-			float baseSpeed = (float) getAttributeValue(EntityAttributes.GENERIC_MOVEMENT_SPEED);
+		if (isLocalInstanceAuthoritative()) {
+			float baseSpeed = (float) getAttributeValue(Attributes.MOVEMENT_SPEED);
 			float rideSpeed = Math.min(baseSpeed, 0.32f);
-			setMovementSpeed(rideSpeed);
-			super.travel(new Vec3d(sideways, movementInput.y, forward));
+			setSpeed(rideSpeed);
+			super.travel(new Vec3(sideways, movementInput.y, forward));
 		} else {
-			// Remote side: let vanilla interpolation handle it rather than fighting the server.
-			setVelocity(Vec3d.ZERO);
+			setDeltaMovement(Vec3.ZERO);
 		}
-		// Ridden creatures should not also be running their own gait decisions.
-		setMovementSpeed(0f);
+		setSpeed(0f);
 	}
 
-
-	/**
-	 * {@inheritDoc}
-	 * <p>
-	 * Every goal is registered unconditionally and gated at runtime on {@link Temperament},
-	 * because this runs from the constructor — before the genome has been assigned or replicated,
-	 * so there is nothing yet to branch on. The gates are cheap and re-evaluated each time a goal
-	 * considers starting, which also means a creature whose disposition drifts across a threshold
-	 * changes behaviour without needing its goals rebuilt.
-	 */
 	@Override
-	protected void initGoals() {
-		goalSelector.add(0, new SwimGoal(this));
-		// Above everything: told to stay means stay.
-		goalSelector.add(0, new StayGoal(this));
+	protected void registerGoals() {
+		goalSelector.addGoal(0, new FloatGoal(this));
+		goalSelector.addGoal(0, new StayGoal(this));
 
-		// Prey bolt when hurt. Higher priority than fighting: a skittish animal should be running
-		// before it considers anything else.
-		goalSelector.add(1, new EscapeDangerGoal(this, 1.6) {
+		goalSelector.addGoal(1, new PanicGoal(this, 1.6) {
 			@Override
-			public boolean canStart() {
-				return getTemperament().fleesWhenHurt() && super.canStart();
+			public boolean canUse() {
+				return wantsToFlee() && super.canUse();
 			}
 		});
 
-		// Above everything but fleeing: a resting animal is not available to the rest of the world,
-		// and a predator asleep through half the day is the cheapest population brake there is.
-		goalSelector.add(1, new RestGoal(this));
+		goalSelector.addGoal(1, new RestGoal(this));
 
-		goalSelector.add(2, new CreatureTemptGoal(this, 1.15));
-		goalSelector.add(2, new FleeLargerCreatureGoal(this, 1.35));
-		goalSelector.add(3, new CreatureAttackGoal(this, 1.15));
-		// Above grazing and below fighting: a carcass is worth more than a mouthful of grass, but
-		// not worth standing over while something is trying to eat you.
-		goalSelector.add(4, new FeedOnCarcassGoal(this, 1.1));
-		// Below feeding, above wandering: a climber should still eat first, but should choose a
-		// wall over another circuit of the floor.
-		goalSelector.add(4, new ClimbWallGoal(this, 1.0));
-		// Below fighting, above foraging: a companion should finish the fight before it wanders
-		// back to heel, but should not stop to graze while its owner walks away.
-		goalSelector.add(4, new FollowOwnerGoal(this, 1.25, 10f, 3f, 20f));
-		// Above wandering: a creature in water should commit to getting out rather than keep
-		// picking random destinations across the lake.
-		goalSelector.add(3, new LeaveWaterGoal(this, 1.1));
-		goalSelector.add(4, new GrazeGoal(this));
-		goalSelector.add(5, new WanderAroundFarGoal(this, 1.0));
-		goalSelector.add(6, new LookAtEntityGoal(this, PlayerEntity.class, 8.0f));
-		goalSelector.add(7, new LookAroundGoal(this));
+		goalSelector.addGoal(2, new CreatureTemptGoal(this, 1.15));
+		goalSelector.addGoal(2, new FleeLargerCreatureGoal(this, 1.35));
+		goalSelector.addGoal(3, new CreatureAttackGoal(this, 1.15));
+		goalSelector.addGoal(4, new FeedOnCarcassGoal(this, 1.1));
+		// goalSelector.addGoal(4, new ClimbWallGoal(this, 1.0)); // DISABLED: wall climbing commented out
+		goalSelector.addGoal(4, new FollowOwnerGoal(this, 1.25, 10f, 3f, 20f));
+		goalSelector.addGoal(3, new LeaveWaterGoal(this, 1.1));
+		goalSelector.addGoal(4, new GrazeGoal(this));
+		goalSelector.addGoal(5, new WaterAvoidingRandomStrollGoal(this, 1.0));
+		goalSelector.addGoal(6, new LookAtPlayerGoal(this, Player.class, 8.0f));
+		goalSelector.addGoal(7, new RandomLookAroundGoal(this));
 
-		// Fighting for the owner outranks the creature's own grudges.
-		targetSelector.add(1, new DefendOwnerGoal(this));
+		targetSelector.addGoal(1, new DefendOwnerGoal(this));
 
-		// Anything not skittish hits back at whatever hit it — including the player, but never
-		// its own owner: a companion that mauls you for a misclick is not a companion.
-		targetSelector.add(2, new RevengeGoal(this) {
+		targetSelector.addGoal(2, new HurtByTargetGoal(this) {
 			@Override
-			public boolean canStart() {
+			public boolean canUse() {
+				LivingEntity attacker = getLastHurtByMob();
+				if (attacker instanceof net.minecraft.world.entity.monster.Monster) {
+					return super.canUse();
+				}
 				if (!getTemperament().retaliates()) return false;
-				if (isDomesticated() && getAttacker() instanceof PlayerEntity player
+				if (isDomesticated() && attacker instanceof Player player
 						&& isOwner(player)) {
 					return false;
 				}
-				return super.canStart();
+				return super.canUse();
 			}
 		});
 
-		// Hunters go after creatures smaller than themselves — but only when hungry. This predicate
-		// used to be the size check alone, which is why a carnivore killed every herbivore within
-		// reach and then started on the next one: nothing in it ever became false. See
-		// wantsToHunt(), which is where every reason to stop now lives.
-		targetSelector.add(2, new ActiveTargetGoal<>(this, CreatureEntity.class, 10, true, false,
-				other -> {
+		targetSelector.addGoal(2, new NearestAttackableTargetGoal<>(this, net.minecraft.world.entity.monster.Monster.class, 10, true, false,
+				(monster, level) -> {
+					if (isDomesticated() || isAsleep() || isCarcass()) return false;
+					if (getTemperament() == Temperament.SKITTISH) return false;
+					BodyPlan mine = getBodyPlan();
+					if (mine == null) return false;
+					float theirs = dev.jsz.primordia.ecology.VanillaInteractions.massOf(monster.getType());
+					return theirs > 0f && EnergyBudget.isWorthHunting(mine.mass, theirs);
+				}));
+
+		targetSelector.addGoal(2, new NearestAttackableTargetGoal<>(this, CreatureEntity.class, 10, true, false,
+				(other, level) -> {
 					if (!(other instanceof CreatureEntity prey) || prey == this) return false;
 					if (!wantsToHunt()) return false;
-					// A carcass is food, not prey. Feeding on one is FeedOnCarcassGoal's job, and
-					// targeting it would have the predator try to kill something already dead.
 					if (prey.isCarcass()) return false;
-					// Never the owner's other animals — a pack that eats itself is not a pack.
 					if (isDomesticated() && prey.isDomesticated()
 							&& getOwnerUuid() != null && getOwnerUuid().equals(prey.getOwnerUuid())) {
 						return false;
@@ -942,17 +1415,11 @@ public class CreatureEntity extends PathAwareEntity {
 					BodyPlan mine = getBodyPlan();
 					BodyPlan theirs = prey.getBodyPlan();
 					if (mine == null || theirs == null) return false;
-					// Bounded at both ends. The upper bound is self-preservation; the lower one is
-					// what stops a large predator working through a field of small animals it can
-					// never actually get full on. See EnergyBudget#MIN_PREY_MASS_RATIO.
 					return EnergyBudget.isWorthHunting(mine.mass, theirs.mass);
 				}));
 
-		// Hunters attack vanilla passive animals (Cows, Sheep, Pigs, Chickens, Rabbits, Horses,
-		// etc.). Bonded creatures do not go looking: a companion that clears out the farm it is
-		// walking past is a liability, so they fight what their owner fights and nothing else.
-		targetSelector.add(2, new ActiveTargetGoal<>(this, net.minecraft.entity.passive.AnimalEntity.class, 10, true, false,
-				animal -> {
+		targetSelector.addGoal(2, new NearestAttackableTargetGoal<>(this, net.minecraft.world.entity.animal.Animal.class, 10, true, false,
+				(animal, level) -> {
 					if (isDomesticated() || !wantsToHunt()) return false;
 					if (!getTemperament().huntsUnprovoked()
 							&& (getGenome() == null || getGenome().raw(Gene.DIET) <= 0.45f)) {
@@ -960,25 +1427,18 @@ public class CreatureEntity extends PathAwareEntity {
 					}
 					BodyPlan mine = getBodyPlan();
 					if (mine == null) return false;
-					// The same size window that governs hunting another creature. Without it a
-					// creature the size of a rabbit would set about a horse, and the two faunas
-					// would be playing by different rules on the same ground.
 					float theirs = dev.jsz.primordia.ecology.VanillaInteractions
 							.massOf(animal.getType());
-					// Not in the table means not in the food web — fish, bats, squid.
 					return theirs > 0f && EnergyBudget.isWorthHunting(mine.mass, theirs);
 				}));
 
-		// Committed predators treat the player as prey without being provoked first. A bonded
-		// creature never does, whatever its disposition says. Gated on hunger like everything else,
-		// so a fed predator is something you can walk past.
-		targetSelector.add(4, new ActiveTargetGoal<>(this, PlayerEntity.class, 10, true, false,
-				target -> getTemperament().huntsUnprovoked() && !isDomesticated() && wantsToHunt()));
+		targetSelector.addGoal(4, new NearestAttackableTargetGoal<>(this, Player.class, 10, true, false,
+				(target, level) -> getTemperament().huntsUnprovoked() && !isDomesticated() && wantsToHunt()));
 	}
 
 	@Override
-	public void onTrackedDataSet(TrackedData<?> data) {
-		super.onTrackedDataSet(data);
+	public void onSyncedDataUpdated(EntityDataAccessor<?> data) {
+		super.onSyncedDataUpdated(data);
 		if (GENOME_CODE.equals(data)) {
 			// The genome arrives on the client a tick or two after the spawn packet. Everything
 			// derived from it is stale until this fires — including the collision box, which is
@@ -989,7 +1449,7 @@ public class CreatureEntity extends PathAwareEntity {
 			attackStyle = null;
 			temperament = null;
 			animator = null;
-			calculateDimensions();
+			refreshDimensions();
 		}
 	}
 
@@ -1013,17 +1473,43 @@ public class CreatureEntity extends PathAwareEntity {
 	 * whatever the ecology says, and a floating one is worse.
 	 */
 	@Override
-	public void onDeath(DamageSource damageSource) {
-		super.onDeath(damageSource);
-		if (getWorld().isClient() || isCarcass()) return;
+	public void die(DamageSource damageSource) {
+		super.die(damageSource);
+		if (level().isClientSide() || isCarcass()) return;
+
+		// Goals stop being ticked the moment the creature dies, so nothing else will clear this, and a
+		// climber still flagged as on a wall drifts down through its whole death animation instead of
+		// dropping. Onto the floor is where a body belongs.
+		setClimbFacing(null);
 
 		if (consumesTheBody(damageSource)) return;
 
 		if (SurvivalDrops.killedByPlayer(damageSource)) {
 			SurvivalDrops.dropLoot(this, 1f);
 		} else {
-			spawnCarcassOf(this);
+			// Owed, not spawned. See remove().
+			carcassOwed = true;
 		}
+	}
+
+	/**
+	 * Spawns the body once the dying animal is gone, rather than beside it.
+	 * <p>
+	 * A creature is not removed at the moment it dies — vanilla keeps it around for the twenty ticks
+	 * of {@code deathTime} — so a carcass created in {@link #die} appeared while the animal that
+	 * produced it was still standing there, and for a full second the player watched two copies of the
+	 * same creature occupy the same spot. Waiting for the removal costs that second and nothing else.
+	 * <p>
+	 * Only on {@code KILLED}. A body owed to a creature that left because its chunk unloaded is a body
+	 * that should not exist, and spawning one into a chunk on its way out would either vanish with it
+	 * or resurrect the animal as furniture.
+	 */
+	@Override
+	public void remove(RemovalReason reason) {
+		boolean owed = carcassOwed && reason == RemovalReason.KILLED && !level().isClientSide();
+		carcassOwed = false;
+		super.remove(reason);
+		if (owed) spawnCarcassOf(this);
 	}
 
 	/**
@@ -1035,13 +1521,13 @@ public class CreatureEntity extends PathAwareEntity {
 	 */
 	private static boolean consumesTheBody(DamageSource source) {
 		if (source == null) return false;
-		return source.isIn(DamageTypeTags.IS_FIRE)
-				|| source.isOf(DamageTypes.LAVA)
-				|| source.isOf(DamageTypes.IN_FIRE)
-				|| source.isOf(DamageTypes.ON_FIRE)
-				|| source.isOf(DamageTypes.HOT_FLOOR)
-				|| source.isOf(DamageTypes.OUT_OF_WORLD)
-				|| source.isOf(DamageTypes.GENERIC_KILL);
+		return source.is(DamageTypeTags.IS_FIRE)
+				|| source.is(DamageTypes.LAVA)
+				|| source.is(DamageTypes.IN_FIRE)
+				|| source.is(DamageTypes.ON_FIRE)
+				|| source.is(DamageTypes.HOT_FLOOR)
+				|| source.is(DamageTypes.FELL_OUT_OF_WORLD)
+				|| source.is(DamageTypes.GENERIC_KILL);
 	}
 
 	/**
@@ -1057,14 +1543,13 @@ public class CreatureEntity extends PathAwareEntity {
 	 * yields nothing, matching what happens to a creature that dies in lava in the first place.
 	 */
 	@Override
-	public boolean damage(DamageSource source, float amount) {
-		if (!isCarcass()) return super.damage(source, amount);
-		if (getWorld().isClient()) return false;
+	public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
+		if (!isCarcass()) return super.hurtServer(level, source, amount);
 		if (consumesTheBody(source)) {
 			discard();
 			return true;
 		}
-		if (!(source.getAttacker() instanceof PlayerEntity)) return false;
+		if (!(source.getEntity() instanceof Player)) return false;
 
 		BodyPlan plan = getBodyPlan();
 		float remaining = plan == null ? 0f
@@ -1076,27 +1561,47 @@ public class CreatureEntity extends PathAwareEntity {
 
 
 
+	/**
+	 * Whether the creature moved horizontally this tick, by the same measure vanilla's body control
+	 * uses.
+	 * <p>
+	 * Deliberately the identical test and threshold rather than something of our own: the two
+	 * decisions have to agree on what "moving" means, or there is a sliver of speed where vanilla
+	 * points the body down the path and this class turns it back toward the head.
+	 */
+	private boolean isMovingHorizontally() {
+		double dx = getX() - xo;
+		double dz = getZ() - zo;
+		return dx * dx + dz * dz > 2.500000277905201E-7;
+	}
+
 	@Override
 	public void tick() {
 		super.tick();
 
-		// Smooth body rotation easing — but skip when ridden, since travel() drives yaw directly
-		if (getControllingPassenger() == null) {
-			this.bodyYaw = MathHelper.stepUnwrappedAngleTowards(this.bodyYaw, this.getHeadYaw(), 7.5f);
+		// Smooth body rotation easing — but only while standing still, and never when ridden, since
+		// travel() drives yaw directly there.
+		//
+		// Restricting it to a stationary creature is the whole point. Vanilla's own body control has
+		// already run inside super.tick(), and while the creature is moving it points the body along
+		// the direction of travel. Easing toward the head unconditionally undid that a few degrees
+		// every tick, so a creature walking one way while a look goal aimed its head somewhere else
+		// turned to follow its gaze instead of its path — which read as an animal wandering sideways,
+		// and only whenever something happened to catch its eye.
+		if (getControllingPassenger() == null && !isMovingHorizontally()) {
+			this.yBodyRot = Mth.rotateIfNecessary(this.yBodyRot, this.getYHeadRot(), 7.5f);
 		}
 
-		// Server-authoritative: the client's copy is replicated, and writing it here too would have
-		// each side briefly disagreeing about which way a creature is facing on a wall.
-		if (!getWorld().isClient() && canClimb()) {
-			dataTracker.set(CLIMBING, horizontalCollision);
-			if (!horizontalCollision) dataTracker.set(CLIMB_FACING, (byte) -1);
-		}
-		// Eased on the client so the body turns onto the wall over a few frames rather than
-		// snapping through ninety degrees on the tick the collision flag flips.
-		float target = isClimbing() && getClimbFacing() != null ? 1f : 0f;
-		climbBlend += (target - climbBlend) * CLIMB_BLEND_RATE;
+		// DISABLED: wall climbing commented out — climb-lapse and blend always zero.
+		// if (!level().isClientSide() && isClimbing()
+		//         && mantleTicks <= 0 && dismountTicks <= 0 && tickCount - climbIntentTick > 1) {
+		//     setClimbFacing(null);
+		// }
+		// float target = getClimbFacing() != null ? 1f : 0f;
+		// climbBlend += (target - climbBlend) * CLIMB_BLEND_RATE;
+		climbBlend = 0f;
 
-		if (getWorld().isClient()) return;
+		if (level().isClientSide()) return;
 
 		if (isCarcass()) {
 			tickCarcass();
@@ -1104,6 +1609,10 @@ public class CreatureEntity extends PathAwareEntity {
 		}
 
 		lifeTicks++;
+		if (juvenileTicks >= 0) {
+			juvenileTicks++;
+			if (juvenileTicks % GROWTH_INTERVAL == 0) updateGrowth();
+		}
 		noticeWatchers();
 		if (huntCooldown > 0) huntCooldown--;
 		if (breedCooldown > 0) breedCooldown--;
@@ -1113,45 +1622,38 @@ public class CreatureEntity extends PathAwareEntity {
 		tickBreeding();
 		tickTrail();
 
-		// Timed activities expire on their own, so no goal has to remember to clear one.
 		if (activityCooldown > 0) {
 			activityCooldown--;
 			return;
 		}
-		// SLEEP is ambient but not derived from motion, so the velocity check below would clear it
-		// every tick. A sleeping creature is not idle, it is asleep, and only RestGoal ends that.
 		if (isAsleep()) {
 			if (getActivity() != CreatureActivity.SLEEP) {
-				dataTracker.set(ACTIVITY, (byte) CreatureActivity.SLEEP.ordinal());
+				entityData.set(ACTIVITY, (byte) CreatureActivity.SLEEP.ordinal());
+			}
+			// Snoring: a periodic breathing sound, pitched by body size.
+			if (!level().isClientSide() && (tickCount + getId()) % 80 == 0) {
+				playSound(SoundEvents.FOX_SLEEP, getSoundVolume() * 0.4f,
+						getVoicePitch() * (0.9f + random.nextFloat() * 0.2f));
 			}
 			return;
 		}
-		CreatureActivity ambient = getVelocity().horizontalLengthSquared() > WALK_THRESHOLD_SQ
+		CreatureActivity ambient = getDeltaMovement().horizontalDistanceSqr() > WALK_THRESHOLD_SQ
 				? CreatureActivity.WALK
 				: CreatureActivity.IDLE;
 		if (getActivity() != ambient) {
-			dataTracker.set(ACTIVITY, (byte) ambient.ordinal());
+			entityData.set(ACTIVITY, (byte) ambient.ordinal());
 		}
 	}
 
-	/** Ticks between sweeps for a player close enough to have seen this creature. */
 	private static final int SIGHTING_INTERVAL = 40;
-	/** How close counts as having seen one. Comfortably inside normal render distance. */
 	private static final double SIGHTING_RANGE = 24.0;
 
-	/**
-	 * Awards the opening advancement to anyone near enough to have noticed this animal.
-	 * <p>
-	 * There is no vanilla trigger for "saw an entity", and the first sighting is exactly the moment
-	 * the mod wants to say "that was not designed — go and find out what it is". So it is granted
-	 * from here, on a slow sweep, and the tracker discards the repeats.
-	 */
 	private void noticeWatchers() {
-		if (isCarcass() || age % SIGHTING_INTERVAL != 0) return;
-		if (!(getWorld() instanceof ServerWorld world)) return;
+		if (isCarcass() || tickCount % SIGHTING_INTERVAL != 0) return;
+		if (!(level() instanceof ServerLevel world)) return;
 
-		for (var player : world.getPlayers()) {
-			if (player.squaredDistanceTo(this) <= SIGHTING_RANGE * SIGHTING_RANGE) {
+		for (var player : world.players()) {
+			if (player.distanceToSqr(this) <= SIGHTING_RANGE * SIGHTING_RANGE) {
 				dev.jsz.primordia.lab.Discoveries.grant(player,
 						dev.jsz.primordia.lab.Discoveries.SOMETHING_MOVES);
 			}
@@ -1163,14 +1665,14 @@ public class CreatureEntity extends PathAwareEntity {
 		loveTimer--;
 
 		if (loveTimer % 20 == 0) {
-			((ServerWorld) getWorld()).spawnParticles(ParticleTypes.HEART,
-					getX(), getBodyY(0.9), getZ(), 1, 0.3, 0.3, 0.3, 0.05);
+			((ServerLevel) level()).sendParticles(ParticleTypes.HEART,
+					getX(), getY(0.9), getZ(), 1, 0.3, 0.3, 0.3, 0.05);
 		}
 
-		if (age % 30 != 0 || getGenome() == null) return;
+		if (tickCount % 30 != 0 || getGenome() == null) return;
 
-		Box searchBox = getBoundingBox().expand(8.0, 4.0, 8.0);
-		List<CreatureEntity> partners = getWorld().getEntitiesByClass(CreatureEntity.class, searchBox,
+		AABB searchBox = getBoundingBox().inflate(8.0, 4.0, 8.0);
+		List<CreatureEntity> partners = level().getEntitiesOfClass(CreatureEntity.class, searchBox,
 				other -> other != this && other.isAlive() && !other.isCarcass()
 						&& other.loveTimer > 0 && other.getGenome() != null);
 
@@ -1180,60 +1682,38 @@ public class CreatureEntity extends PathAwareEntity {
 				this.loveTimer = 0;
 				partner.loveTimer = 0;
 
-				ServerWorld world = (ServerWorld) getWorld();
-				world.spawnParticles(ParticleTypes.HEART, getX(), getBodyY(0.9), getZ(), 14, 0.5, 0.5, 0.5, 0.1);
-				world.spawnParticles(ParticleTypes.HEART, partner.getX(), partner.getBodyY(0.9), partner.getZ(), 14, 0.5, 0.5, 0.5, 0.1);
+				ServerLevel world = (ServerLevel) level();
+				world.sendParticles(ParticleTypes.HEART, getX(), getY(0.9), getZ(), 14, 0.5, 0.5, 0.5, 0.1);
+				world.sendParticles(ParticleTypes.HEART, partner.getX(), partner.getY(0.9), partner.getZ(), 14, 0.5, 0.5, 0.5, 0.1);
 
-				// The world random rather than ThreadLocalRandom: the ecology has to be
-				// reproducible from a seed, and a thread-local source is by definition not.
 				Genome childGenome = Mutation.breed(this.getGenome(), partner.getGenome(),
 						new java.util.Random(getRandom().nextLong()));
-				CreatureEntity child = PrimordiaEntities.CREATURE.create(world);
+				CreatureEntity child = PrimordiaEntities.CREATURE.create(world, net.minecraft.world.entity.EntitySpawnReason.BREEDING);
 				if (child != null) {
-					child.dataTracker.set(GENOME_CODE, childGenome.encode());
-					child.refreshPositionAndAngles(
+					child.entityData.set(GENOME_CODE, childGenome.encode());
+					child.snapTo(
 							(getX() + partner.getX()) * 0.5,
 							(getY() + partner.getY()) * 0.5,
 							(getZ() + partner.getZ()) * 0.5,
-							getYaw(), getPitch());
-					// Inherited, not assumed. This used to set TAMED unconditionally, which was
-					// harmless while only a player could trigger breeding and is wrong the moment
-					// wild animals can: every birth in the world would have come out tame, and
-					// tamed creatures are exempt from starving and from being hunted.
+							getYRot(), getXRot());
 					boolean bornTame = this.isTamed() && partner.isTamed();
-					child.dataTracker.set(TAMED, bornTame);
-					child.dataTracker.set(OWNER, bornTame
-							? this.dataTracker.get(OWNER)
-							: Optional.empty());
-					// Offspring start hungry, and both parents pay for them.
+					child.entityData.set(TAMED, bornTame);
+					child.entityData.set(OWNER, bornTame
+							? this.entityData.get(OWNER)
+							: "");
 					child.setEnergy(0.55f);
+					child.bearAsJuvenile();
 					this.addEnergy(-EnergyBudget.BREED_COST);
 					partner.addEnergy(-EnergyBudget.BREED_COST);
 					this.breedCooldown = EnergyBudget.breedingInterval(this.getGenome());
 					partner.breedCooldown = EnergyBudget.breedingInterval(partner.getGenome());
-					world.spawnEntity(child);
+					world.addFreshEntity(child);
 				}
 				break;
 			}
 		}
 	}
 
-
-	/**
-	 * Burns energy, and starves anything that runs out.
-	 * <p>
-	 * This replaces the old carrying-capacity check, which dealt starvation damage to any creature
-	 * whose mass exceeded what the surrounding land could support. That rule had the right intent —
-	 * bulk should have to be paid for — but it enforced the outcome directly instead of letting it
-	 * happen: an animal was punished for being big in a poor place whether or not it had actually
-	 * failed to find food. Now the cost of being large is a faster drain and a bigger appetite
-	 * ({@link EnergyBudget#drainPerTick}, {@link EnergyBudget#mouthfulValue}), and a giant on a
-	 * scree slope starves because it genuinely cannot eat enough, which is the same pressure
-	 * arrived at honestly.
-	 * <p>
-	 * Tamed creatures are exempt from starving — their owner is presumed to be feeding them — but
-	 * they still burn energy, so a companion that has not been fed will go and forage.
-	 */
 	private void tickEnergy() {
 		Genome g = getGenome();
 		BodyPlan plan = getBodyPlan();
@@ -1244,7 +1724,7 @@ public class CreatureEntity extends PathAwareEntity {
 			activity = EnergyBudget.Activity.RESTING;
 		} else if (getTarget() != null || isSprinting()) {
 			activity = EnergyBudget.Activity.SPRINTING;
-		} else if (getVelocity().horizontalLengthSquared() > WALK_THRESHOLD_SQ) {
+		} else if (getDeltaMovement().horizontalDistanceSqr() > WALK_THRESHOLD_SQ) {
 			activity = EnergyBudget.Activity.MOVING;
 		} else {
 			activity = EnergyBudget.Activity.IDLE;
@@ -1252,26 +1732,16 @@ public class CreatureEntity extends PathAwareEntity {
 		addEnergy(-EnergyBudget.drainPerTick(g, plan, activity));
 
 		if (energy > EnergyBudget.STARVING || isTamed()) return;
-		if (age % STARVATION_INTERVAL != 0) return;
-		damage(getWorld().getDamageSources().starve(), EnergyBudget.STARVATION_DAMAGE);
+		if (tickCount % STARVATION_INTERVAL != 0) return;
+		if (level() instanceof ServerLevel serverLevel) {
+			hurtServer(serverLevel, level().damageSources().starve(), EnergyBudget.STARVATION_DAMAGE);
+		}
 	}
 
-	/**
-	 * Wears a trail into the ground under a heavy animal that keeps using the same route.
-	 * <p>
-	 * The chance is deliberately tiny and scaled by mass, so a single small creature crossing a
-	 * meadow leaves nothing and a herd of large ones that walks the same line between water and
-	 * grazing eventually wears a visible path. That is the whole appeal — the route is not drawn by
-	 * anything, it is where they actually went, and it tells the player something true about a herd
-	 * they may never have seen.
-	 * <p>
-	 * Every change goes through {@link WorldImpact}, which holds the allow-list and the per-chunk
-	 * budget. Nothing here decides on its own that a block may be modified.
-	 */
 	private void tickTrail() {
-		if (isTamed() || !isOnGround()) return;
-		if (getVelocity().horizontalLengthSquared() <= WALK_THRESHOLD_SQ) return;
-		if (!(getWorld() instanceof ServerWorld world)) return;
+		if (isTamed() || !onGround()) return;
+		if (getDeltaMovement().horizontalDistanceSqr() <= WALK_THRESHOLD_SQ) return;
+		if (!(level() instanceof ServerLevel world)) return;
 
 		BodyPlan plan = getBodyPlan();
 		Genome g = getGenome();
@@ -1280,26 +1750,13 @@ public class CreatureEntity extends PathAwareEntity {
 		float pressure = plan.mass * (0.4f + g.raw(Gene.GRAZING_IMPACT));
 		if (getRandom().nextFloat() >= pressure * TRAIL_CHANCE_PER_TICK) return;
 
-		WorldImpact.trample(world, getBlockPos().down());
+		WorldImpact.trample(world, blockPosition().below());
 	}
 
-	/**
-	 * Puts a well-fed adult into breeding condition on its own.
-	 * <p>
-	 * Before this, {@code loveTimer} was set in exactly one place — a player feeding a tamed
-	 * creature — so the wild birth rate was zero. Spawning was the only source of animals and
-	 * predation was a pure sink, which meant every population was monotonically decreasing by
-	 * construction. No amount of restraint on the part of the predators would have fixed that; a
-	 * herd that cannot replace its losses is stripped by anything at all.
-	 * <p>
-	 * Gated on local density rather than a global cap, and the density allowance comes from
-	 * {@link FoodSurvey#carryingCapacity}, so a productive valley carries a larger herd than a
-	 * barren ridge without either being written down anywhere.
-	 */
 	private void tickWildBreeding() {
 		if (isTamed() || isPosing() || isAsleep()) return;
 		if (loveTimer > 0 || breedCooldown > 0) return;
-		if (age % BREEDING_CHECK_INTERVAL != 0) return;
+		if (tickCount % BREEDING_CHECK_INTERVAL != 0) return;
 		if (!isMature() || energy < EnergyBudget.BREED_THRESHOLD) return;
 
 		Genome g = getGenome();
@@ -1307,14 +1764,13 @@ public class CreatureEntity extends PathAwareEntity {
 		if (g == null || plan == null) return;
 
 		DietGroup diet = getDietGroup();
-		float prey = diet.hunts() ? FoodSurvey.preyDensity(getWorld(), this) : 0f;
-		float capacity = FoodSurvey.carryingCapacity(getWorld(), getBlockPos(), diet, prey);
-		// Capacity is a supportable mass; how many animals that is depends on how big they are.
+		float prey = diet.hunts() ? FoodSurvey.preyDensity(level(), this) : 0f;
+		float capacity = FoodSurvey.carryingCapacity(level(), blockPosition(), diet, prey);
 		int allowance = Math.max(1, Math.min(BASE_DENSITY_CAP,
 				Math.round(capacity / Math.max(0.03f, plan.mass))));
 
-		Box range = getBoundingBox().expand(BREEDING_RANGE, 8.0, BREEDING_RANGE);
-		int neighbours = getWorld().getEntitiesByClass(CreatureEntity.class, range,
+		AABB range = getBoundingBox().inflate(BREEDING_RANGE, 8.0, BREEDING_RANGE);
+		int neighbours = level().getEntitiesOfClass(CreatureEntity.class, range,
 				other -> other != this && other.isAlive() && !other.isCarcass()
 						&& other.getGenome() != null
 						&& other.getGenome().lineage() == g.lineage()).size();
@@ -1324,16 +1780,13 @@ public class CreatureEntity extends PathAwareEntity {
 		playMatingCall();
 	}
 
-	// ----------------------------------------------------------------- activity
-
 	public CreatureActivity getActivity() {
-		return CreatureActivity.byId(dataTracker.get(ACTIVITY));
+		return CreatureActivity.byId(entityData.get(ACTIVITY));
 	}
 
-	/** Starts a timed activity, replacing any already running. Server side only. */
 	public void triggerActivity(CreatureActivity activity) {
-		if (getWorld().isClient()) return;
-		dataTracker.set(ACTIVITY, (byte) activity.ordinal());
+		if (level().isClientSide()) return;
+		entityData.set(ACTIVITY, (byte) activity.ordinal());
 		activityCooldown = activity.durationTicks;
 	}
 
@@ -1355,10 +1808,8 @@ public class CreatureEntity extends PathAwareEntity {
 		return attackStyle;
 	}
 
-	// ------------------------------------------------------------------- genome
-
 	public Genome getGenome() {
-		String code = dataTracker.get(GENOME_CODE);
+		String code = entityData.get(GENOME_CODE);
 		if (genome == null || !genomeCodeCache.equals(code)) {
 			genomeCodeCache = code;
 			genome = Genome.decode(code);
@@ -1372,13 +1823,11 @@ public class CreatureEntity extends PathAwareEntity {
 		this.dietGroup = null;
 		this.attackStyle = null;
 		this.temperament = null;
-		dataTracker.set(GENOME_CODE, genomeCodeCache);
+		entityData.set(GENOME_CODE, genomeCodeCache);
 		applyGenomeAttributes(genome);
-		// The collision box depends on the body plan, so it has to be recomputed now.
-		calculateDimensions();
+		refreshDimensions();
 	}
 
-	/** Null until the genome has replicated; callers must handle that. */
 	public BodyPlan getBodyPlan() {
 		Genome g = getGenome();
 		return g == null ? null : BodyPlanCache.get(g);
@@ -1387,16 +1836,13 @@ public class CreatureEntity extends PathAwareEntity {
 	private void applyGenomeAttributes(Genome g) {
 		BodyPlan plan = BodyPlanCache.get(g);
 
-		// Bigger animals are tougher; the mass proxy already folds in girth and limb bulk.
-		EntityAttributeInstance health = getAttributeInstance(EntityAttributes.GENERIC_MAX_HEALTH);
+		AttributeInstance health = getAttribute(Attributes.MAX_HEALTH);
 		if (health != null) {
 			health.setBaseValue(4.0 + Math.min(60.0, plan.mass * 90.0));
 			setHealth(getMaxHealth());
 		}
 
-		// Long-legged, low-mass creatures move fast. Speed is capped so even the largest
-		// creatures stay in a reasonable range (vanilla horse = 0.225).
-		EntityAttributeInstance speed = getAttributeInstance(EntityAttributes.GENERIC_MOVEMENT_SPEED);
+		AttributeInstance speed = getAttribute(Attributes.MOVEMENT_SPEED);
 		if (speed != null) {
 			double legFactor = 0.16 + 0.18 * Math.min(plan.hipHeight, 2.5);
 			double massPenalty = 1.0 / (1.0 + plan.mass * 0.4);
@@ -1404,86 +1850,54 @@ public class CreatureEntity extends PathAwareEntity {
 			speed.setBaseValue(Math.max(0.12, Math.min(0.35, legFactor * massPenalty * geneFactor)));
 		}
 
-		// Damage comes from the weapon the creature actually grew: a big jaw on a heavy body hits
-		// hard, a herbivore's flat-toothed nibble barely registers.
-		EntityAttributeInstance damage = getAttributeInstance(EntityAttributes.GENERIC_ATTACK_DAMAGE);
+		AttributeInstance damage = getAttribute(Attributes.ATTACK_DAMAGE);
 		if (damage != null) {
 			double bulk = 1.0 + plan.mass * 12.0;
 			double weapon = 0.5 + 1.2 * g.raw(Gene.JAW_SIZE);
 			double intent = 0.4 + 1.1 * g.raw(Gene.DIET) * (0.5 + g.raw(Gene.AGGRESSION));
-			damage.setBaseValue(Math.max(0.5, Math.min(14.0, bulk * weapon * intent * 0.5)));
+			// Diet decides whether an animal goes looking for a fight. It has no business deciding how
+			// much a hoof or a horn does once one finds it — scaled by DIET alone, every plant-eater
+			// bottomed out at the 0.5 floor, so a defensive herbivore fighting back for its life did a
+			// quarter of a heart per blow and the retaliation was decoration. Bulk and disposition carry
+			// that case: what it weighs and how bold it is, with no credit for wanting to hunt.
+			double defence = bulk * weapon * (0.25 + 0.75 * g.raw(Gene.AGGRESSION)) * 0.35;
+			damage.setBaseValue(Math.max(0.5,
+					Math.min(14.0, Math.max(bulk * weapon * intent * 0.5, defence))));
 		}
 
-		// Armour plating, from the gene and from actually having dorsal spines.
-		EntityAttributeInstance armor = getAttributeInstance(EntityAttributes.GENERIC_ARMOR);
+		AttributeInstance armor = getAttribute(Attributes.ARMOR);
 		if (armor != null) {
 			double plated = g.expresses(Gene.DORSAL_SPINES, 0.62f) ? 2.0 : 0.0;
 			armor.setBaseValue(Math.min(14.0, g.raw(Gene.ARMOR) * 8.0 + plated));
 		}
 
-		// Heavy animals shrug off hits and shove hard; small ones get thrown around.
-		EntityAttributeInstance knockback = getAttributeInstance(EntityAttributes.GENERIC_ATTACK_KNOCKBACK);
+		AttributeInstance knockback = getAttribute(Attributes.ATTACK_KNOCKBACK);
 		if (knockback != null) {
 			knockback.setBaseValue(Math.min(2.0, plan.mass * 4.0));
 		}
 	}
 
-	/** Damage a biopsy inflicts. One heart: a real jab, not a wound. */
 	public static final float SAMPLE_DAMAGE = 2.0f;
-	/** Health a sampled creature is always left with, so a swab can never be a murder weapon. */
 	private static final float SAMPLE_HEALTH_FLOOR = 1.0f;
 
-	/**
-	 * Reacts to having a tissue sample taken.
-	 * <p>
-	 * Sampling is otherwise a free action against anything in the world, which makes the whole lab
-	 * pipeline a matter of walking up to an apex predator and clicking it. The needle now actually
-	 * hurts, which is what puts the risk back: the damage is dealt as a player attack, so every
-	 * piece of aggression the mod already has — {@code RevengeGoal} for anything that retaliates,
-	 * {@code EscapeDangerGoal} for anything skittish — fires on its own without this method
-	 * arranging it.
-	 * <p>
-	 * A bonded companion tolerates it from its owner. Being jabbed by a stranger is a different
-	 * matter, and it reacts like anything else would.
-	 */
-	public void provokeSampling(PlayerEntity player) {
-		if (getWorld().isClient() || isCarcass()) return;
-		if (isDomesticated() && player.getUuid().equals(getOwnerUuid())) return;
+	public void provokeSampling(Player player) {
+		if (level().isClientSide() || isCarcass()) return;
+		if (isDomesticated() && player.getUUID().equals(getOwnerUuid())) return;
 
-		// Never lethal. Killing an animal with a cotton swab is absurd on its own, and it would
-		// also route the death through the player-kill branch in onDeath and drop full loot —
-		// turning the biopsy kit into a strange one-hit weapon against anything already wounded.
 		if (getHealth() - SAMPLE_DAMAGE >= SAMPLE_HEALTH_FLOOR) {
-			damage(getDamageSources().playerAttack(player), SAMPLE_DAMAGE);
+			if (level() instanceof ServerLevel serverLevel) {
+				hurtServer(serverLevel, damageSources().playerAttack(player), SAMPLE_DAMAGE);
+			}
 		}
 
-		// Damage already sets the attacker and wakes the revenge goals, but a creature too hurt to
-		// take the damage above still noticed the needle. Provoke it explicitly so a wounded animal
-		// is not the one thing in the world that lets you sample it for free.
 		if (getTemperament().retaliates()) {
 			setTarget(player);
-			setAttacker(player);
+			setLastHurtByMob(player);
 		} else if (getTemperament().fleesWhenHurt()) {
-			setAttacker(player);
+			setLastHurtByMob(player);
 		}
 	}
 
-	// --------------------------------------------------------------- dimensions
-
-	/**
-	 * World Y of the middle of the skull, in the bind pose.
-	 * <p>
-	 * Not the same thing as {@link #getEyeY()}, and the gap between them is the whole reason this
-	 * exists. Minecraft puts the eye at 85% of the collision box, and this mod's box is capped at
-	 * twice hip height so that long-necked creatures do not suffocate under trees — so on anything
-	 * with a neck the "eye" sits somewhere in the shoulders, well below the head the player can
-	 * actually see. Aiming at a target from there and pitching the rendered head by the resulting
-	 * angle leaves the head short of what it is supposedly looking at, and the taller the animal
-	 * the further short it falls.
-	 * <p>
-	 * Model space is world space here — nothing scales the mesh at render time — so the bone
-	 * position adds straight onto the entity's feet.
-	 */
 	public double getHeadY() {
 		BodyPlan plan = getBodyPlan();
 		if (plan == null || plan.headBone < 0 || plan.headBone >= plan.bones.length) {
@@ -1493,25 +1907,16 @@ public class CreatureEntity extends PathAwareEntity {
 		return getY() + (bone.head.y + bone.tail.y) * 0.5;
 	}
 
-	/**
-	 * Points the head at a world position as though the look ran from the skull rather than from
-	 * the collision box's nominal eye.
-	 * <p>
-	 * {@link net.minecraft.entity.ai.control.LookControl} derives pitch from {@link #getEyeY()} and
-	 * offers no way to say otherwise, so the aim point is pre-compensated by the offset between the
-	 * two: the angle it computes from the eye then equals the angle from the head to the real
-	 * target. Yaw needs no correction — both are measured from the same X/Z.
-	 */
 	public void lookAtFromHead(double x, double y, double z) {
-		getLookControl().lookAt(x, y + (getEyeY() - getHeadY()), z);
+		getLookControl().setLookAt(x, y + (getEyeY() - getHeadY()), z);
 	}
 
-	public List<Box> getLegSubHitboxes() {
+	public List<AABB> getLegSubHitboxes() {
 		BodyPlan plan = getBodyPlan();
 		if (plan == null) return List.of();
-		List<Box> legBoxes = new ArrayList<>();
-		Vec3d pos = getPos();
-		float yawRad = (float) Math.toRadians(-getYaw());
+		List<AABB> legBoxes = new ArrayList<>();
+		Vec3 pos = position();
+		float yawRad = (float) Math.toRadians(-getYRot());
 		float cos = (float) Math.cos(yawRad);
 		float sin = (float) Math.sin(yawRad);
 
@@ -1524,61 +1929,38 @@ public class CreatureEntity extends PathAwareEntity {
 			double lz = rest.x * sin + rest.z * cos;
 			double wx = pos.x + lx;
 			double wz = pos.z + lz;
-			Box legBox = new Box(wx - radius, pos.y, wz - radius, wx + radius, pos.y + legHeight, wz + radius);
+			AABB legBox = new AABB(wx - radius, pos.y, wz - radius, wx + radius, pos.y + legHeight, wz + radius);
 			legBoxes.add(legBox);
 		}
 		return legBoxes;
 	}
 
 	@Override
-	public EntityDimensions getBaseDimensions(EntityPose pose) {
+	public EntityDimensions getDefaultDimensions(Pose pose) {
 		Genome g = getGenome();
 		if (g == null) {
-			return super.getBaseDimensions(pose);
+			return super.getDefaultDimensions(pose);
 		}
 		BodyPlan plan = BodyPlanCache.get(g);
-		// Lateral width comes from how far the legs splay, and torso girth.
 		float legSpanX = 0f;
 		for (LimbChain leg : plan.legs) {
 			legSpanX = Math.max(legSpanX, Math.abs(leg.restEffector.x));
 		}
-		// The box used to cover legs and torso only, on the reasoning that a tail and a neck are
-		// thin and should not stop an animal fitting through a gap. In practice it meant a
-		// long-necked or long-tailed creature ran its head and tail straight through walls — most
-		// obviously on fast ones, where the client's interpolation carries the mesh further past
-		// the hitbox before the next position update lands.
-		//
-		// A Minecraft hitbox is axis-aligned and square in plan, so it cannot follow a body that
-		// turns; using the full body length as the width would make a long creature a moving 3×3
-		// block that could not path anywhere. Just under half of it covers the head and most of the
-		// neck at any facing while still leaving the animal able to walk between trees.
 		float width = Math.max(0.50f, Math.max(
 				Math.max(legSpanX * 2.0f * 1.05f, plan.width() * 0.9f),
 				Math.min(plan.bodyLength * 0.40f, 1.8f)));
-		// Tall enough to cover the head rather than stopping at the shoulder, but capped against hip
-		// height. Minecraft puts the eye at 85% of the box and suffocates anything whose eye is
-		// inside a block, so a creature holding a long neck straight up would otherwise take
-		// suffocation damage every time it walked under a tree.
 		float height = Math.max(0.50f, Math.max(
 				plan.hipHeight * 1.25f,
 				Math.min(plan.height() * 0.92f, plan.hipHeight * 2.0f)));
 
-		if (getAttributeInstance(EntityAttributes.GENERIC_STEP_HEIGHT) != null) {
-			getAttributeInstance(EntityAttributes.GENERIC_STEP_HEIGHT)
-					.setBaseValue(Math.max(1.0, Math.min(2.5, plan.hipHeight * 1.15)));
+		float growth = getGrowth();
+		if (getAttribute(Attributes.STEP_HEIGHT) != null) {
+			getAttribute(Attributes.STEP_HEIGHT)
+					.setBaseValue(Math.max(1.0, Math.min(2.5, plan.hipHeight * 1.15 * growth)));
 		}
-		return EntityDimensions.changing(width, height);
+		return EntityDimensions.scalable(width * growth, height * growth);
 	}
 
-	// ------------------------------------------------------------------- client
-
-	/**
-	 * Progress through the current timed activity, 0 to 1, measured from when this client first
-	 * observed the activity change. Ambient states always report 0.
-	 * <p>
-	 * Timing locally rather than syncing a start tick keeps a field off the wire; attacks run for
-	 * under a second, so a tick of skew between clients is not observable.
-	 */
 	public float clientActivityProgress(CreatureActivity activity, float tickDelta) {
 		if (activity.isAmbient()) {
 			clientActivity = activity;
@@ -1586,13 +1968,12 @@ public class CreatureEntity extends PathAwareEntity {
 		}
 		if (activity != clientActivity) {
 			clientActivity = activity;
-			clientActivityStart = age;
+			clientActivityStart = tickCount;
 		}
-		float elapsed = (age - clientActivityStart) + tickDelta;
-		return MathHelper.clamp(elapsed / activity.durationTicks, 0f, 1f);
+		float elapsed = (tickCount - clientActivityStart) + tickDelta;
+		return Mth.clamp(elapsed / activity.durationTicks, 0f, 1f);
 	}
 
-	/** Client-side render state, lazily created and rebuilt when the genome changes. */
 	public CreatureAnimator getOrCreateAnimator() {
 		BodyPlan plan = getBodyPlan();
 		if (plan == null) return null;
@@ -1602,12 +1983,10 @@ public class CreatureEntity extends PathAwareEntity {
 		return animator;
 	}
 
-	// ---------------------------------------------------------------------- nbt
-
 	@Override
-	public void writeCustomDataToNbt(NbtCompound nbt) {
-		super.writeCustomDataToNbt(nbt);
-		nbt.putString("Genome", dataTracker.get(GENOME_CODE));
+	public void addAdditionalSaveData(ValueOutput nbt) {
+		super.addAdditionalSaveData(nbt);
+		nbt.putString("Genome", entityData.get(GENOME_CODE));
 		nbt.putBoolean("Tamed", isTamed());
 		nbt.putBoolean("Domesticated", isDomesticated());
 		nbt.putBoolean("Sitting", isSitting());
@@ -1616,6 +1995,7 @@ public class CreatureEntity extends PathAwareEntity {
 		nbt.putBoolean("Saddled", isSaddled());
 		nbt.putFloat("Energy", energy);
 		nbt.putInt("LifeTicks", lifeTicks);
+		nbt.putInt("JuvenileTicks", juvenileTicks);
 		nbt.putInt("HuntCooldown", huntCooldown);
 		nbt.putInt("BreedCooldown", breedCooldown);
 		nbt.putBoolean("Asleep", isAsleep());
@@ -1624,52 +2004,50 @@ public class CreatureEntity extends PathAwareEntity {
 			nbt.putFloat("CarcassNutrition", carcassNutrition);
 			nbt.putInt("CarcassTicks", carcassTicks);
 		}
-		UUID owner = getOwnerUuid();
-		if (owner != null) {
-			nbt.putUuid("Owner", owner);
+		String owner = entityData.get(OWNER);
+		if (!owner.isEmpty()) {
+			nbt.putString("Owner", owner);
 		}
 	}
 
 	@Override
-	public void readCustomDataFromNbt(NbtCompound nbt) {
-		super.readCustomDataFromNbt(nbt);
-		if (nbt.contains("Genome")) {
-			Genome decoded = Genome.decode(nbt.getString("Genome"));
+	public void readAdditionalSaveData(ValueInput nbt) {
+		super.readAdditionalSaveData(nbt);
+		if (nbt.getString("Genome").isPresent()) {
+			Genome decoded = Genome.decode(nbt.getStringOr("Genome", ""));
 			if (decoded != null) {
 				setGenome(decoded);
 			}
 		}
-		dataTracker.set(TAMED, nbt.getBoolean("Tamed"));
-		// Domestication is a strict superset of taming; an untamed creature cannot be bonded.
-		dataTracker.set(DOMESTICATED, nbt.getBoolean("Domesticated") && nbt.getBoolean("Tamed"));
-		dataTracker.set(SITTING, nbt.getBoolean("Sitting"));
-		if (nbt.getBoolean("Posing")) setPosing(true);
-		// Absent on grids saved before the walk toggle existed, and false is the wrong default
-		// there — those were spawned walking.
-		dataTracker.set(POSE_WALKING, !nbt.contains("PoseWalking") || nbt.getBoolean("PoseWalking"));
-		dataTracker.set(SADDLED, nbt.getBoolean("Saddled"));
-		// Absent on creatures saved before the energy economy existed. Defaulting to zero would
-		// starve every animal in an existing world on first load, so they wake up well fed.
-		energy = nbt.contains("Energy") ? nbt.getFloat("Energy") : 0.85f;
-		lifeTicks = nbt.getInt("LifeTicks");
-		huntCooldown = nbt.getInt("HuntCooldown");
-		breedCooldown = nbt.getInt("BreedCooldown");
-		dataTracker.set(ASLEEP, nbt.getBoolean("Asleep"));
-		if (nbt.getBoolean("Carcass")) {
-			becomeCarcass(nbt.getFloat("CarcassNutrition"));
-			carcassTicks = nbt.getInt("CarcassTicks");
+		entityData.set(TAMED, nbt.getBooleanOr("Tamed", false));
+		entityData.set(DOMESTICATED, nbt.getBooleanOr("Domesticated", false) && nbt.getBooleanOr("Tamed", false));
+		entityData.set(SITTING, nbt.getBooleanOr("Sitting", false));
+		if (nbt.getBooleanOr("Posing", false)) setPosing(true);
+		// Both of these default to something other than the type's zero when the key is absent, which
+		// is exactly what the *Or readers express.
+		entityData.set(POSE_WALKING, nbt.getBooleanOr("PoseWalking", true));
+		entityData.set(SADDLED, nbt.getBooleanOr("Saddled", false));
+		energy = nbt.getFloatOr("Energy", 0.85f);
+		lifeTicks = nbt.getIntOr("LifeTicks", 0);
+		// Absent on anything saved before juveniles existed, and -1 is the right answer for those:
+		// they were adults when the world was last open and should not be reborn as babies.
+		juvenileTicks = nbt.getIntOr("JuvenileTicks", -1);
+		updateGrowth();
+		huntCooldown = nbt.getIntOr("HuntCooldown", 0);
+		breedCooldown = nbt.getIntOr("BreedCooldown", 0);
+		entityData.set(ASLEEP, nbt.getBooleanOr("Asleep", false));
+		if (nbt.getBooleanOr("Carcass", false)) {
+			becomeCarcass(nbt.getFloatOr("CarcassNutrition", 0f));
+			carcassTicks = nbt.getIntOr("CarcassTicks", 0);
 		}
-		dataTracker.set(OWNER, nbt.containsUuid("Owner")
-				? Optional.of(nbt.getUuid("Owner"))
-				: Optional.empty());
+		entityData.set(OWNER, nbt.getStringOr("Owner", ""));
 	}
 
-	/** A tamed creature drops its saddle when it dies, so the gear is not simply lost. */
 	@Override
-	protected void dropInventory() {
-		super.dropInventory();
+	protected void dropEquipment(ServerLevel serverLevel) {
+		super.dropEquipment(serverLevel);
 		if (isSaddled()) {
-			dropItem(Items.SADDLE);
+			spawnAtLocation(serverLevel, Items.SADDLE);
 		}
 	}
 

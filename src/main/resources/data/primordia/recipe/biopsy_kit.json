@@ -7,9 +7,9 @@
     "I  "
   ],
   "key": {
-    "S": { "item": "minecraft:string" },
-    "B": { "item": "minecraft:glass_bottle" },
-    "I": { "item": "minecraft:iron_ingot" }
+    "S": "minecraft:string",
+    "B": "minecraft:glass_bottle",
+    "I": "minecraft:iron_ingot"
   },
   "result": { "id": "primordia:biopsy_kit", "count": 1 }
 }

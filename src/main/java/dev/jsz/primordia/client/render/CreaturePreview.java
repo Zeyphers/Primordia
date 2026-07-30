@@ -7,15 +7,12 @@ import dev.jsz.primordia.client.config.PrimordiaConfig;
 import dev.jsz.primordia.mesh.GenomeMeshCache;
 import dev.jsz.primordia.mesh.LodTier;
 import dev.jsz.primordia.mesh.MeshData;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.render.DiffuseLighting;
-import net.minecraft.client.render.OverlayTexture;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.RotationAxis;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.renderer.texture.OverlayTexture;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.resources.Identifier;
+import org.joml.Vector2f;
 import org.joml.Vector3f;
 
 /**
@@ -33,11 +30,21 @@ import org.joml.Vector3f;
  */
 public final class CreaturePreview {
 
-	/** The mod renders untextured: colour lives in the mesh's vertices, over a flat white sheet. */
-	private static final Identifier WHITE = Identifier.ofVanilla("textures/misc/white.png");
+	/**
+	 * The mod renders untextured: colour lives in the mesh's vertices, over a flat white sheet.
+	 * Shared with the world renderer, which owns the asset — see {@link CreatureRenderer#TEXTURE}.
+	 */
+	static final Identifier WHITE = CreatureRenderer.TEXTURE;
 	private static final float UV_LO = 0.25f, UV_HI = 0.75f;
 
 	private CreaturePreview() {
+	}
+
+	public static int lodForSize(int boxSize) {
+		if (boxSize <= 24) return LodTier.DISTANT;
+		if (boxSize <= 48) return LodTier.FAR;
+		if (boxSize <= 80) return LodTier.MID;
+		return LodTier.NEAR;
 	}
 
 	/**
@@ -45,9 +52,14 @@ public final class CreaturePreview {
 	 *
 	 * @return false if the mesh is not baked yet, so the caller can draw a placeholder instead
 	 */
-	public static boolean render(DrawContext context, Genome genome,
+	public static boolean render(GuiGraphicsExtractor context, Genome genome,
 	                             int centreX, int centreY, int boxSize, float spin) {
-		MeshData mesh = GenomeMeshCache.getIfReady(genome, LodTier.NEAR);
+		return render(context, genome, centreX, centreY, boxSize, spin, lodForSize(boxSize));
+	}
+
+	public static boolean render(GuiGraphicsExtractor context, Genome genome,
+	                             int centreX, int centreY, int boxSize, float spin, int lodTier) {
+		MeshData mesh = GenomeMeshCache.getIfReady(genome, lodTier);
 		if (mesh == null) return false;
 
 		float spanX = mesh.maxX - mesh.minX;
@@ -63,35 +75,23 @@ public final class CreaturePreview {
 		float midY = (mesh.minY + mesh.maxY) * 0.5f;
 		float midZ = (mesh.minZ + mesh.maxZ) * 0.5f;
 
-		MatrixStack matrices = context.getMatrices();
-		matrices.push();
-		matrices.translate(centreX, centreY, 200.0);
-		// Y is inverted in GUI space; Z is scaled with the rest so a deep body is not clipped by
-		// the depth range while it turns side-on.
-		matrices.scale(scale, -scale, scale);
-		// A slight downward tilt reads as a specimen on a stand rather than an orthographic blueprint.
-		matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(-12f));
-		matrices.multiply(RotationAxis.POSITIVE_Y.rotation(spin));
-		matrices.translate(-midX, -midY, -midZ);
-
-		DiffuseLighting.enableGuiDepthLighting();
-		VertexConsumerProvider.Immediate consumers = context.getVertexConsumers();
-		RenderLayer layer = RenderLayer.getEntityCutoutNoCull(WHITE);
-		emit(mesh, matrices.peek(), consumers.getBuffer(layer));
-
-		// Only this layer. The provider handed out here is the screen's shared buffer, and it is
-		// still holding every item and glyph drawn so far this frame — the tab icons among them,
-		// because DrawContext queues those rather than rasterising them on the spot.
+		// 26.2 draws GUIs in an extract pass followed by a render pass, so nothing can be painted
+		// from here directly. Three-dimensional content is queued as a picture-in-picture state and
+		// drawn later by CreaturePreviewRenderer; see that class for the division of labour.
 		//
-		// A bare draw() flushes all of it, wherever the caller happens to be. Drawn from inside the
-		// bloodlines viewport that meant the tab strip was rasterised under this method's lighting
-		// and inside its scissor rectangle, so the icons came out dimmed and clipped — and since
-		// each visible node did it again, zooming out until more nodes fit made it worse, and
-		// hovering (which changes what is queued when) made it flicker.
-		consumers.draw(layer);
-		DiffuseLighting.enableGuiDepthLighting();
+		// A queued state carries its own screen-space bounds and is not put through the current
+		// matrix, unlike everything drawn inline. Callers work in panel-local coordinates with the
+		// panel offset on the pose, so the centre has to be pushed through that matrix by hand or the
+		// plate is drawn at the window's corner instead of the book's.
+		Vector2f centre = context.pose().transformPosition(centreX, centreY, new Vector2f());
+		int screenX = Math.round(centre.x);
+		int screenY = Math.round(centre.y);
 
-		matrices.pop();
+		int half = boxSize / 2;
+		context.guiRenderState.addPicturesInPictureState(new CreaturePreviewRenderState(
+				mesh, spin, midX, midY, midZ,
+				screenX - half, screenY - half, screenX + half, screenY + half,
+				scale, context.scissorStack.peek()));
 		return true;
 	}
 
@@ -101,7 +101,7 @@ public final class CreaturePreview {
 	 * Full brightness: a plate in a book is lit by the book, not by wherever the animal was
 	 * standing, and inheriting world light would leave specimens collected at night unreadable.
 	 */
-	private static void emit(MeshData mesh, MatrixStack.Entry entry, VertexConsumer consumer) {
+	static void emit(MeshData mesh, PoseStack.Pose entry, VertexConsumer consumer) {
 		float[] positions = mesh.positions;
 		float[] normals = mesh.normals;
 		float[] colors = mesh.colors;
@@ -129,14 +129,14 @@ public final class CreaturePreview {
 				float ny = sharp ? face.y : normals[p + 1];
 				float nz = sharp ? face.z : normals[p + 2];
 
-				consumer.vertex(entry, positions[p], positions[p + 1], positions[p + 2])
-						.color(flatColour ? tint.x : colors[p],
+				consumer.addVertex(entry, positions[p], positions[p + 1], positions[p + 2])
+						.setColor(flatColour ? tint.x : colors[p],
 								flatColour ? tint.y : colors[p + 1],
 								flatColour ? tint.z : colors[p + 2], 1f)
-						.texture(u, t)
-						.overlay(OverlayTexture.DEFAULT_UV)
-						.light(light)
-						.normal(entry, nx, ny, nz);
+						.setUv(u, t)
+						.setOverlay(OverlayTexture.NO_OVERLAY)
+						.setLight(light)
+						.setNormal(entry, nx, ny, nz);
 			}
 		}
 	}

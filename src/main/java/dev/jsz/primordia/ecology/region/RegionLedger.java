@@ -1,11 +1,13 @@
 package dev.jsz.primordia.ecology.region;
 
+import com.mojang.serialization.Codec;
 import dev.jsz.primordia.Primordia;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.PersistentState;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.util.datafix.DataFixTypes;
+import net.minecraft.world.level.saveddata.SavedData;
+import net.minecraft.world.level.saveddata.SavedDataType;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -15,7 +17,7 @@ import java.util.Map;
 /**
  * The world's memory of its own ecology, one record per region, persisted with the save.
  * <p>
- * Kept as a single {@link PersistentState} rather than as chunk data on purpose. A region's record
+ * Kept as a single {@link SavedData} rather than as chunk data on purpose. A region's record
  * has to be readable when its chunks are <i>not</i> loaded — migration reads its neighbours, and the
  * regional simulation integrates regions the player has left — and chunk-attached data is by
  * definition unavailable exactly then.
@@ -25,19 +27,33 @@ import java.util.Map;
  * of magnitude cheaper than a population as entities, which is what makes simulating the parts of
  * the world nobody is looking at affordable at all.
  */
-public class RegionLedger extends PersistentState implements RegionNeighbourhood {
-	private static final String STATE_ID = Primordia.MOD_ID + "_regions";
+public class RegionLedger extends SavedData implements RegionNeighbourhood {
+	/** The mod id now comes from the identifier's namespace, so the path is the bare noun. */
+	private static final String STATE_ID = "regions";
 
 	private final Map<Long, RegionRecord> records = new HashMap<>();
 
-	public static final Type<RegionLedger> TYPE = new Type<>(
-			RegionLedger::new, RegionLedger::readNbt, null);
+	/**
+	 * Persistence goes through a compound tag rather than a hand-written record codec: the ledger
+	 * is a sparse map keyed by packed region coordinates, which a struct codec expresses badly and
+	 * an NBT map expresses exactly.
+	 * <p>
+	 * The data fixer type is nominal. {@code DataFixTypes.update} only rewrites a tag whose stored
+	 * version predates the running one, and this mod's 26.2 line writes no older versions, so no
+	 * vanilla fixer ever sees these keys.
+	 */
+	public static final Codec<RegionLedger> CODEC =
+			CompoundTag.CODEC.xmap(RegionLedger::readNbt, RegionLedger::toNbt);
+
+	public static final SavedDataType<RegionLedger> TYPE = new SavedDataType<>(
+			Primordia.id(STATE_ID), RegionLedger::new, CODEC,
+			DataFixTypes.SAVED_DATA_RANDOM_SEQUENCES);
 
 	public RegionLedger() {
 	}
 
-	public static RegionLedger get(ServerWorld world) {
-		return world.getPersistentStateManager().getOrCreate(TYPE, STATE_ID);
+	public static RegionLedger get(ServerLevel world) {
+		return world.getDataStorage().computeIfAbsent(TYPE);
 	}
 
 	/**
@@ -50,12 +66,12 @@ public class RegionLedger extends PersistentState implements RegionNeighbourhood
 		return records.computeIfAbsent(pos.key(), key -> {
 			RegionRecord record = new RegionRecord(pos);
 			record.seed = pos.seed(worldSeed);
-			markDirty();
+			setDirty();
 			return record;
 		});
 	}
 
-	public RegionRecord at(ServerWorld world, BlockPos pos) {
+	public RegionRecord at(ServerLevel world, BlockPos pos) {
 		return at(RegionPos.of(pos), world.getSeed());
 	}
 
@@ -81,14 +97,14 @@ public class RegionLedger extends PersistentState implements RegionNeighbourhood
 				any = true;
 			}
 		}
-		if (any) markDirty();
+		if (any) setDirty();
 	}
 
 	// ---------------------------------------------------------------------- nbt
 
-	@Override
-	public NbtCompound writeNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup lookup) {
-		NbtCompound regions = new NbtCompound();
+	public CompoundTag toNbt() {
+		CompoundTag nbt = new CompoundTag();
+		CompoundTag regions = new CompoundTag();
 		for (Map.Entry<Long, RegionRecord> entry : records.entrySet()) {
 			regions.put(Long.toString(entry.getKey()), entry.getValue().writeNbt());
 		}
@@ -96,17 +112,15 @@ public class RegionLedger extends PersistentState implements RegionNeighbourhood
 		return nbt;
 	}
 
-	public static RegionLedger readNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup lookup) {
+	public static RegionLedger readNbt(CompoundTag nbt) {
 		RegionLedger ledger = new RegionLedger();
-		NbtCompound regions = nbt.getCompound("Regions");
-		for (String key : regions.getKeys()) {
+		CompoundTag regions = nbt.getCompoundOrEmpty("Regions");
+		for (String key : regions.keySet()) {
 			try {
 				long packed = Long.parseLong(key);
 				RegionPos pos = RegionPos.fromKey(packed);
-				ledger.records.put(packed, RegionRecord.readNbt(pos, regions.getCompound(key)));
+				ledger.records.put(packed, RegionRecord.readNbt(pos, regions.getCompoundOrEmpty(key)));
 			} catch (NumberFormatException ignored) {
-				// A key that is not a packed region coordinate is not ours. Skipping it is better
-				// than failing to load the save.
 			}
 		}
 		return ledger;

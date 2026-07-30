@@ -1,10 +1,10 @@
 package dev.jsz.primordia.lab;
 
 import dev.jsz.primordia.genome.Genome;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.NbtComponent;
-import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtCompound;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.nbt.CompoundTag;
 
 /**
  * The genetic payload an item carries through the lab pipeline.
@@ -26,12 +26,14 @@ public record SampleData(Genome genome, long collectedAtTick, String lineageHex)
 	private static final String KEY_LINEAGE = "Lineage";
 
 	/**
-	 * How long a sample keeps before it is no good, in ticks. Two in-game days at room
-	 * temperature — long enough to walk a sample home from a expedition, short enough that
-	 * stockpiling them without a {@link dev.jsz.primordia.block.PreservationCaseBlock} is a losing
-	 * strategy.
+	 * How long a sample keeps before it is no good, in ticks — half an in-game day.
+	 * <p>
+	 * Short on purpose. At two full days a sample outlived any trip a player would actually make, so
+	 * decay never happened and the Preservation Case was decoration. Half a day is long enough to
+	 * take a sample and walk it back to a lab you have already built, and not long enough to tour the
+	 * map with a pocket full of tissue — which is the decision the case is there to answer.
 	 */
-	public static final long SHELF_LIFE = 48_000L;
+	public static final long SHELF_LIFE = 12_000L;
 
 	/** Builds the payload for a freshly taken swab. */
 	public static SampleData of(Genome genome, long worldTime) {
@@ -78,33 +80,33 @@ public record SampleData(Genome genome, long collectedAtTick, String lineageHex)
 
 	/** Reads the payload off a stack, or null when the stack is not carrying one. */
 	public static SampleData get(ItemStack stack) {
-		NbtComponent component = stack.get(DataComponentTypes.CUSTOM_DATA);
+		CustomData component = stack.get(DataComponents.CUSTOM_DATA);
 		if (component == null) return null;
-		NbtCompound root = component.copyNbt();
+		CompoundTag root = component.copyTag();
 		if (!root.contains(ROOT)) return null;
-		NbtCompound nbt = root.getCompound(ROOT);
+		CompoundTag nbt = root.getCompoundOrEmpty(ROOT);
 
-		Genome genome = Genome.decode(nbt.getString(KEY_GENOME));
+		Genome genome = Genome.decode(nbt.getStringOr(KEY_GENOME, ""));
 		if (genome == null) return null;
-		return new SampleData(genome, nbt.getLong(KEY_COLLECTED), nbt.getString(KEY_LINEAGE));
+		return new SampleData(genome, nbt.getLongOr(KEY_COLLECTED, 0L), nbt.getStringOr(KEY_LINEAGE, ""));
 	}
 
 	/** Writes the payload onto a stack, replacing any already there. */
 	public void write(ItemStack stack) {
-		NbtComponent existing = stack.get(DataComponentTypes.CUSTOM_DATA);
-		NbtCompound root = existing == null ? new NbtCompound() : existing.copyNbt();
+		CustomData existing = stack.get(DataComponents.CUSTOM_DATA);
+		CompoundTag root = existing == null ? new CompoundTag() : existing.copyTag();
 
-		NbtCompound nbt = new NbtCompound();
+		CompoundTag nbt = new CompoundTag();
 		nbt.putString(KEY_GENOME, genome.encode());
 		nbt.putLong(KEY_COLLECTED, collectedAtTick);
 		nbt.putString(KEY_LINEAGE, lineageHex);
 		root.put(ROOT, nbt);
 
-		stack.set(DataComponentTypes.CUSTOM_DATA, NbtComponent.of(root));
+		stack.set(DataComponents.CUSTOM_DATA, CustomData.of(root));
 	}
 
 	/** Convenience: a stack of {@code item} already carrying this payload. */
-	public ItemStack onto(net.minecraft.item.Item item) {
+	public ItemStack onto(net.minecraft.world.item.Item item) {
 		ItemStack stack = new ItemStack(item);
 		write(stack);
 		return stack;

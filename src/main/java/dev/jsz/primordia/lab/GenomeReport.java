@@ -6,8 +6,8 @@ import dev.jsz.primordia.body.DietGroup;
 import dev.jsz.primordia.entity.Temperament;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,72 +30,72 @@ public final class GenomeReport {
 	 * @param priorDecodes individuals of this lineage already on file, used to tell the player how
 	 *                     much more work would sharpen the picture
 	 */
-	public static List<Text> lines(Genome genome, DecodeAccuracy accuracy, int priorDecodes) {
-		List<Text> out = new ArrayList<>();
+	public static List<Component> lines(Genome genome, DecodeAccuracy accuracy, int priorDecodes) {
+		List<Component> out = new ArrayList<>();
 		BodyPlan plan = BodyPlanCache.get(genome);
 		DietGroup diet = DietGroup.of(genome);
 		Temperament temperament = Temperament.of(genome);
 
-		out.add(Text.literal("── Specimen [" + SampleData.shortLineage(genome) + "] ──")
-				.formatted(Formatting.AQUA, Formatting.BOLD));
-		out.add(Text.literal("  Reference: ").formatted(Formatting.GRAY)
-				.append(Text.literal(accuracy.label).formatted(accuracy.colour))
-				.append(Text.literal(" · " + priorDecodes + " on file").formatted(Formatting.DARK_GRAY)));
+		out.add(Component.literal("── Specimen [" + SampleData.shortLineage(genome) + "] ──")
+				.withStyle(ChatFormatting.AQUA, ChatFormatting.BOLD));
+		out.add(Component.literal("  Reference: ").withStyle(ChatFormatting.GRAY)
+				.append(Component.literal(accuracy.label).withStyle(accuracy.colour))
+				.append(Component.literal(" · " + priorDecodes + " on file").withStyle(ChatFormatting.DARK_GRAY)));
 
-		out.add(Text.literal(String.format("  Classification: Gen %d · %s · %s",
+		out.add(Component.literal(String.format("  Classification: Gen %d · %s · %s",
 				genome.generation(),
 				accuracy.describeCategory(diet.name().toLowerCase()),
 				accuracy.describeCategory(temperament.name().toLowerCase())))
-				.formatted(Formatting.WHITE));
+				.withStyle(ChatFormatting.WHITE));
 
 		if (plan != null) {
-			out.add(Text.literal("  Dimensions: "
+			out.add(Component.literal("  Dimensions: "
 					+ accuracy.describeMeasure(plan.bodyLength, "m") + " long · "
 					+ accuracy.describeMeasure(plan.height(), "m") + " tall · mass "
 					+ accuracy.describeMeasure(plan.mass, ""))
-					.formatted(Formatting.GRAY));
+					.withStyle(ChatFormatting.GRAY));
 			// Anatomy is countable, so it is either legible or it is not — there is no honest way
 			// to report "about four legs".
-			out.add(Text.literal(accuracy.atLeast(DecodeAccuracy.PARTIAL)
+			out.add(Component.literal(accuracy.atLeast(DecodeAccuracy.PARTIAL)
 					? String.format("  Anatomy: %d legs (%d segments) · %d arms · %d bones",
 					plan.legs.length,
 					plan.legs.length == 0 ? 0 : plan.legs[0].bones.length,
 					plan.arms.length, plan.bones.length)
 					: "  Anatomy: structure not resolved")
-					.formatted(Formatting.DARK_GRAY));
+					.withStyle(ChatFormatting.DARK_GRAY));
 		}
 
-		out.add(Text.literal("  Speed " + accuracy.describeFraction(genome.raw(Gene.SPEED))
+		out.add(Component.literal("  Speed " + accuracy.describeFraction(genome.raw(Gene.SPEED))
 				+ " · Aggression " + accuracy.describeFraction(genome.raw(Gene.AGGRESSION))
 				+ " · Fear " + accuracy.describeFraction(genome.raw(Gene.FEAR))
 				+ " · Social " + accuracy.describeFraction(genome.raw(Gene.SOCIABILITY)))
-				.formatted(Formatting.LIGHT_PURPLE));
+				.withStyle(ChatFormatting.LIGHT_PURPLE));
 
 		if (accuracy.atLeast(DecodeAccuracy.GOOD)) {
-			out.add(Text.literal("  Diet " + accuracy.describeFraction(genome.raw(Gene.DIET))
+			out.add(Component.literal("  Diet " + accuracy.describeFraction(genome.raw(Gene.DIET))
 					+ " · Stamina " + accuracy.describeFraction(genome.raw(Gene.STAMINA))
 					+ " · Mutability " + accuracy.describeFraction(genome.raw(Gene.MUTABILITY)))
-					.formatted(Formatting.DARK_AQUA));
+					.withStyle(ChatFormatting.DARK_AQUA));
 		}
 
 		int needed = accuracy.decodesUntilNextLevel(priorDecodes);
 		if (needed > 0) {
-			out.add(Text.literal("  Sequence " + needed + " more of this lineage to sharpen the read.")
-					.formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
+			out.add(Component.literal("  Sequence " + needed + " more of this lineage to sharpen the read.")
+					.withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
 		}
 		return out;
 	}
 
 	/** The condensed form that fits an item tooltip. */
-	public static List<Text> tooltip(Genome genome, DecodeAccuracy accuracy) {
-		List<Text> out = new ArrayList<>();
-		out.add(Text.literal("Lineage " + SampleData.shortLineage(genome))
-				.formatted(Formatting.AQUA));
-		out.add(Text.literal(accuracy.label + " · generation " + genome.generation())
-				.formatted(accuracy.colour));
-		out.add(Text.literal("Speed " + accuracy.describeFraction(genome.raw(Gene.SPEED))
+	public static List<Component> tooltip(Genome genome, DecodeAccuracy accuracy) {
+		List<Component> out = new ArrayList<>();
+		out.add(Component.literal("Lineage " + SampleData.shortLineage(genome))
+				.withStyle(ChatFormatting.AQUA));
+		out.add(Component.literal(accuracy.label + " · generation " + genome.generation())
+				.withStyle(accuracy.colour));
+		out.add(Component.literal("Speed " + accuracy.describeFraction(genome.raw(Gene.SPEED))
 				+ " · Aggr " + accuracy.describeFraction(genome.raw(Gene.AGGRESSION)))
-				.formatted(Formatting.GRAY));
+				.withStyle(ChatFormatting.GRAY));
 		return out;
 	}
 }

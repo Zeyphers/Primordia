@@ -1,0 +1,16 @@
+{
+  "model": {
+    "type": "minecraft:condition",
+    "property": "minecraft:has_component",
+    "component": "minecraft:custom_data",
+    "ignore_default": true,
+    "on_true": {
+      "type": "minecraft:model",
+      "model": "primordia:item/tissue_sample_full"
+    },
+    "on_false": {
+      "type": "minecraft:model",
+      "model": "primordia:item/tissue_sample"
+    }
+  }
+}

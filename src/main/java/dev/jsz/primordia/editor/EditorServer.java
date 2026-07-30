@@ -7,8 +7,8 @@ import dev.jsz.primordia.Primordia;
 import dev.jsz.primordia.entity.CreatureEntity;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.registry.PrimordiaEntities;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -22,12 +22,12 @@ import java.nio.charset.StandardCharsets;
 public final class EditorServer {
 	private static final int PORT = 8088;
 	private static HttpServer server;
-	private static ServerPlayerEntity activePlayer;
+	private static ServerPlayer activePlayer;
 
 	private EditorServer() {
 	}
 
-	public static synchronized void start(ServerPlayerEntity player) {
+	public static synchronized void start(ServerPlayer player) {
 		activePlayer = player;
 		if (server != null) return;
 
@@ -77,20 +77,23 @@ public final class EditorServer {
 			String responseText;
 			if (genomeCode != null && activePlayer != null) {
 				String finalGenome = genomeCode;
-				activePlayer.getServer().execute(() -> {
-					ServerWorld world = activePlayer.getServerWorld();
-					CreatureEntity creature = PrimordiaEntities.CREATURE.create(world);
+				activePlayer.level().getServer().execute(() -> {
+					ServerLevel world = activePlayer.level();
+					CreatureEntity creature = PrimordiaEntities.CREATURE.create(world, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
 					if (creature != null) {
-						creature.refreshPositionAndAngles(
-								activePlayer.getX() + activePlayer.getRotationVector().x * 3.5,
+						// getRotationVector() is a Vec2 of pitch and yaw in 26.2; the look
+						// direction this wants is getLookAngle().
+						net.minecraft.world.phys.Vec3 look = activePlayer.getLookAngle();
+						creature.snapTo(
+								activePlayer.getX() + look.x * 3.5,
 								activePlayer.getY() + 0.5,
-								activePlayer.getZ() + activePlayer.getRotationVector().z * 3.5,
-								activePlayer.getYaw() + 180f, 0f);
+								activePlayer.getZ() + look.z * 3.5,
+								activePlayer.getYRot() + 180f, 0f);
 						Genome decoded = Genome.decode(finalGenome);
 						if (decoded != null) {
 							creature.setGenome(decoded);
 						}
-						world.spawnEntity(creature);
+						world.addFreshEntity(creature);
 					}
 				});
 				responseText = "{\"status\":\"ok\",\"message\":\"Creature spawned in Minecraft!\"}";

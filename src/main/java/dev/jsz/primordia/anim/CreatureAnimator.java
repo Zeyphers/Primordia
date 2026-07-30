@@ -420,8 +420,8 @@ public final class CreatureAnimator {
 				// creatures extend their leg forward before planting it.
 				float e = MathX.smoothstep(s);
 				float overshoot = 0.15f * (float) Math.sin(Math.PI * s);
-				float ex = MathX.lerp((float) foot.prevX, (float) foot.plantX, Math.min(1f, e + overshoot));
-				float ez = MathX.lerp((float) foot.prevZ, (float) foot.plantZ, Math.min(1f, e + overshoot));
+				float ex = MathX.lerp((float) foot.xo, (float) foot.plantX, Math.min(1f, e + overshoot));
+				float ez = MathX.lerp((float) foot.zo, (float) foot.plantZ, Math.min(1f, e + overshoot));
 				foot.currentX = ex;
 				foot.currentZ = ez;
 				// Parabolic lift, peaking mid-swing.

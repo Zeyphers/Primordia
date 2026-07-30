@@ -1,9 +1,9 @@
 package dev.jsz.primordia.lab;
 
 import dev.jsz.primordia.Primordia;
-import net.minecraft.advancement.AdvancementEntry;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.util.Identifier;
+import net.minecraft.advancements.AdvancementHolder;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.resources.Identifier;
 
 /**
  * Awards the advancements that mark a reader's progress.
@@ -31,19 +31,17 @@ public final class Discoveries {
 	private Discoveries() {
 	}
 
-	public static void grant(ServerPlayerEntity player, Identifier advancement) {
-		AdvancementEntry entry = player.getServer().getAdvancementLoader().get(advancement);
-		// A missing advancement means a datapack removed it, which is the player's business rather
-		// than an error worth crashing a tick over.
+	public static void grant(ServerPlayer player, Identifier advancement) {
+		AdvancementHolder entry = player.level().getServer().getAdvancements().get(advancement);
 		if (entry == null) return;
-		player.getAdvancementTracker().grantCriterion(entry, CRITERION);
+		player.getAdvancements().award(entry, CRITERION);
 	}
 
 	/**
 	 * Checks the milestones that depend on what a guide now contains, and awards any that have
 	 * been reached. Called after a report is filed, which is the only moment they can change.
 	 */
-	public static void checkGuide(ServerPlayerEntity player, GuideData data) {
+	public static void checkGuide(ServerPlayer player, GuideData data) {
 		boolean mastered = data.entries().stream()
 				.anyMatch(e -> e.accuracy() == DecodeAccuracy.COMPLETE);
 		if (mastered) grant(player, FULLY_CHARACTERISED);

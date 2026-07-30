@@ -12,7 +12,7 @@ import dev.jsz.primordia.registry.PrimordiaItemGroup;
 import dev.jsz.primordia.registry.PrimordiaItems;
 import dev.jsz.primordia.registry.PrimordiaScreenHandlers;
 import net.fabricmc.api.ModInitializer;
-import net.minecraft.util.Identifier;
+import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,7 +21,7 @@ public class Primordia implements ModInitializer {
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
 	public static Identifier id(String path) {
-		return Identifier.of(MOD_ID, path);
+		return Identifier.fromNamespaceAndPath(MOD_ID, path);
 	}
 
 	@Override
@@ -38,8 +38,18 @@ public class Primordia implements ModInitializer {
 		PrimordiaCommands.register();
 		NameLineagePayload.register();
 		SpawnSpeciesPayload.register();
+		dev.jsz.primordia.lab.GuideDataSyncPayload.register();
 		EcologyTicker.register();
 		VanillaInteractions.register();
+
+		net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+			net.minecraft.server.level.ServerPlayer player = handler.getPlayer();
+			dev.jsz.primordia.lab.PlayerGuideData global = dev.jsz.primordia.lab.PlayerGuideData.get((net.minecraft.server.level.ServerLevel) player.level());
+			dev.jsz.primordia.lab.GuideData data = global.getGuide(player.getUUID());
+			net.minecraft.nbt.CompoundTag payloadData = new net.minecraft.nbt.CompoundTag();
+			data.writeInto(payloadData);
+			sender.sendPacket(new dev.jsz.primordia.lab.GuideDataSyncPayload(payloadData));
+		});
 
 		// Deliberately no BiomeModifications.addSpawn. Creatures are no longer placed by the
 		// vanilla spawner at all.

@@ -1,22 +1,25 @@
 package dev.jsz.primordia.client.config;
 
 import dev.jsz.primordia.mesh.GenomeMeshCache;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.tooltip.Tooltip;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.SliderWidget;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
+import net.minecraft.util.Mth;
 
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 
 /**
- * Settings screen for the client's rendering quality.
+ * Properties screen for the client's rendering quality.
  * <p>
- * Built from plain {@link SliderWidget} and {@link ButtonWidget} in a fixed layout rather than from
+ * Built from plain {@link AbstractSliderButton} and {@link Button} in a fixed layout rather than from
  * the vanilla options-list machinery. That machinery is convenient but its constructors have moved
  * almost every Minecraft version, and a settings screen is not worth making the mod fragile across
  * updates for.
@@ -60,7 +63,7 @@ public class PrimordiaConfigScreen extends Screen {
 	private Tab tab = Tab.POPULATION;
 
 	public PrimordiaConfigScreen(Screen parent) {
-		super(Text.literal("Primordia Settings"));
+		super(Component.literal("Primordia Properties"));
 		this.parent = parent;
 		this.config = PrimordiaConfig.get();
 	}
@@ -117,16 +120,19 @@ public class PrimordiaConfigScreen extends Screen {
 							config.voxelMode = !config.voxelMode;
 							// The voxel slider appears and disappears with the toggle, and every
 							// cached mesh was built the other way.
-							clearAndInit();
+							rebuildWidgets();
 						},
 						"Snap creatures to a world-aligned block grid instead of a smooth surface — "
 								+ "the same idea as Blender's voxel remesh.");
 				if (config.voxelMode) {
-					addSlider(left, top, i++, "Voxel size (px)", 1, 8,
+					addSlider(left, top, i++, "Voxel size (px)",
+							PrimordiaConfig.VOXEL_PIXELS_MIN, PrimordiaConfig.VOXEL_PIXELS_MAX,
+							PrimordiaConfig.VOXEL_PIXELS_STEP,
 							() -> config.voxelPixels, v -> config.voxelPixels = v,
 							"Voxel edge in Minecraft pixels; sixteen to the block. One matches the "
-									+ "world's own texel grid. Small voxels on a large creature are "
-									+ "expensive to bake.");
+									+ "world's own texel grid, and a quarter is as fine as it goes. "
+									+ "Cost is cubic: quarter-pixel voxels are sixty-four times the "
+									+ "bake of whole ones, which large creatures will feel.");
 				}
 				addShadingButton(left, top, i++);
 				addToggle(left, top, i++, "Face colour",
@@ -149,8 +155,8 @@ public class PrimordiaConfigScreen extends Screen {
 			}
 		}
 
-		addDrawableChild(ButtonWidget.builder(Text.literal("Done"), b -> close())
-				.dimensions(width / 2 - 100, height - 30, 200, WIDGET_HEIGHT).build());
+		addRenderableWidget(Button.builder(Component.literal("Done"), b -> onClose())
+				.bounds(width / 2 - 100, height - 30, 200, WIDGET_HEIGHT).build());
 	}
 
 	// --------------------------------------------------------------------- tabs
@@ -161,17 +167,17 @@ public class PrimordiaConfigScreen extends Screen {
 		for (int t = 0; t < count; t++) {
 			Tab which = Tab.VALUES[t];
 			boolean active = which == tab;
-			ButtonWidget button = ButtonWidget.builder(
-					Text.literal(which.label).formatted(active ? Formatting.YELLOW : Formatting.GRAY),
+			Button button = Button.builder(
+					Component.literal(which.label).withStyle(active ? ChatFormatting.YELLOW : ChatFormatting.GRAY),
 					b -> {
 						if (tab == which) return;
 						tab = which;
-						clearAndInit();
+						rebuildWidgets();
 					})
-					.dimensions(left + t * (tabWidth + TAB_GAP), y, tabWidth, TAB_H).build();
+					.bounds(left + t * (tabWidth + TAB_GAP), y, tabWidth, TAB_H).build();
 			button.active = !active;
-			button.setTooltip(Tooltip.of(Text.literal(which.blurb)));
-			addDrawableChild(button);
+			button.setTooltip(Tooltip.create(Component.literal(which.blurb)));
+			addRenderableWidget(button);
 		}
 	}
 
@@ -186,46 +192,46 @@ public class PrimordiaConfigScreen extends Screen {
 	}
 
 	private void addPresetButton(int left, int y) {
-		ButtonWidget button = ButtonWidget.builder(presetLabel(), b -> {
+		Button button = Button.builder(presetLabel(), b -> {
 			// Cycling past the end lands on CUSTOM, which is a legitimate stop: it leaves the
 			// individual sliders exactly where they are instead of overwriting them.
 			int next = (config.preset.ordinal() + 1) % QualityPreset.VALUES.length;
 			config.applyPreset(QualityPreset.VALUES[next]);
 			config.apply();
 			// The preset rewrote every other value, so every tab's widgets are stale.
-			clearAndInit();
-		}).dimensions(left, y, WIDGET_WIDTH * 2 + GAP_X, WIDGET_HEIGHT).build();
-		button.setTooltip(Tooltip.of(Text.literal(
+			rebuildWidgets();
+		}).bounds(left, y, WIDGET_WIDTH * 2 + GAP_X, WIDGET_HEIGHT).build();
+		button.setTooltip(Tooltip.create(Component.literal(
 				"Starting point for everything on every tab. Ultra holds many creatures at fine "
 						+ "detail much further out; changing any setting moves this to Custom.")));
-		addDrawableChild(button);
+		addRenderableWidget(button);
 	}
 
-	private Text presetLabel() {
-		return Text.literal("Quality: ").append(Text.literal(config.preset.label)
-				.formatted(config.preset.isCustom() ? Formatting.YELLOW : Formatting.AQUA));
+	private Component presetLabel() {
+		return Component.literal("Quality: ").append(Component.literal(config.preset.label)
+				.withStyle(config.preset.isCustom() ? ChatFormatting.YELLOW : ChatFormatting.AQUA));
 	}
 
 	private void addIkButton(int left, int top, int index) {
-		ButtonWidget button = ButtonWidget.builder(ikLabel(), b -> {
+		Button button = Button.builder(ikLabel(), b -> {
 			config.fullIkTier = (config.fullIkTier + 1) % 4;
 			config.markCustom();
 			config.apply();
 			b.setMessage(ikLabel());
-		}).dimensions(columnX(left, index), rowY(top, index), WIDGET_WIDTH, WIDGET_HEIGHT).build();
-		button.setTooltip(Tooltip.of(Text.literal(
+		}).bounds(columnX(left, index), rowY(top, index), WIDGET_WIDTH, WIDGET_HEIGHT).build();
+		button.setTooltip(Tooltip.create(Component.literal(
 				"How far out limbs are solved with real IK rather than a canned walk cycle.")));
-		addDrawableChild(button);
+		addRenderableWidget(button);
 	}
 
-	private Text ikLabel() {
+	private Component ikLabel() {
 		String tier = switch (config.fullIkTier) {
 			case 0 -> "Near only";
 			case 1 -> "To mid";
 			case 2 -> "To far";
 			default -> "Everywhere";
 		};
-		return Text.literal("Full IK: " + tier);
+		return Component.literal("Full IK: " + tier);
 	}
 
 	/**
@@ -237,25 +243,25 @@ public class PrimordiaConfigScreen extends Screen {
 	 * impression the old single slider gave, and why it read as doing nothing.
 	 */
 	private void addShadingButton(int left, int top, int index) {
-		ButtonWidget button = ButtonWidget.builder(shadingLabel(), b -> {
+		Button button = Button.builder(shadingLabel(), b -> {
 			config.sharpShading = !config.sharpShading;
 			config.markCustom();
 			config.apply();
 			// The softness slider belongs to smooth shading only, so the page changes shape.
-			clearAndInit();
-		}).dimensions(columnX(left, index), rowY(top, index), WIDGET_WIDTH, WIDGET_HEIGHT).build();
-		button.setTooltip(Tooltip.of(Text.literal(
+			rebuildWidgets();
+		}).bounds(columnX(left, index), rowY(top, index), WIDGET_WIDTH, WIDGET_HEIGHT).build();
+		button.setTooltip(Tooltip.create(Component.literal(
 				"Smooth blends each normal across the faces meeting at a vertex. Sharp gives every "
 						+ "face its own, so edges read as edges — the faceted look, and what voxel "
 						+ "mode wants. Purely a shading choice: the mesh is identical either way, "
 						+ "and switching costs nothing.")));
-		addDrawableChild(button);
+		addRenderableWidget(button);
 	}
 
-	private Text shadingLabel() {
-		return Text.literal("Shading: ").append(
-				Text.literal(config.sharpShading ? "Sharp" : "Smooth")
-						.formatted(config.sharpShading ? Formatting.GOLD : Formatting.AQUA));
+	private Component shadingLabel() {
+		return Component.literal("Shading: ").append(
+				Component.literal(config.sharpShading ? "Sharp" : "Smooth")
+						.withStyle(config.sharpShading ? ChatFormatting.GOLD : ChatFormatting.AQUA));
 	}
 
 	private void addGlowButton(int left, int top, int index) {
@@ -267,37 +273,37 @@ public class PrimordiaConfigScreen extends Screen {
 	/** An on/off button. {@code onToggle} owns flipping the value; this only redraws the label. */
 	private void addToggle(int left, int top, int index, String label,
 	                       BooleanSupplier getter, Runnable onToggle, String tooltip) {
-		ButtonWidget button = ButtonWidget.builder(toggleLabel(label, getter.getAsBoolean()), b -> {
+		Button button = Button.builder(toggleLabel(label, getter.getAsBoolean()), b -> {
 			onToggle.run();
 			config.markCustom();
 			config.apply();
 			b.setMessage(toggleLabel(label, getter.getAsBoolean()));
-		}).dimensions(columnX(left, index), rowY(top, index), WIDGET_WIDTH, WIDGET_HEIGHT).build();
-		if (tooltip != null) button.setTooltip(Tooltip.of(Text.literal(tooltip)));
-		addDrawableChild(button);
+		}).bounds(columnX(left, index), rowY(top, index), WIDGET_WIDTH, WIDGET_HEIGHT).build();
+		if (tooltip != null) button.setTooltip(Tooltip.create(Component.literal(tooltip)));
+		addRenderableWidget(button);
 	}
 
-	private static Text toggleLabel(String label, boolean on) {
+	private static Component toggleLabel(String label, boolean on) {
 		// "Flat"/"Blended" reads better than On/Off for the colour toggle, where neither state is
 		// an absence of anything.
 		if (label.equals("Face colour")) {
-			return Text.literal(label + ": ").append(Text.literal(on ? "Flat" : "Blended")
-					.formatted(on ? Formatting.GOLD : Formatting.AQUA));
+			return Component.literal(label + ": ").append(Component.literal(on ? "Flat" : "Blended")
+					.withStyle(on ? ChatFormatting.GOLD : ChatFormatting.AQUA));
 		}
-		return Text.literal(label + ": ").append(Text.literal(on ? "On" : "Off")
-				.formatted(on ? Formatting.GREEN : Formatting.GRAY));
+		return Component.literal(label + ": ").append(Component.literal(on ? "On" : "Off")
+				.withStyle(on ? ChatFormatting.GREEN : ChatFormatting.GRAY));
 	}
 
 	private void addSlider(int left, int top, int index, String label, int min, int max,
 	                       IntSupplier getter, IntConsumer setter, String tooltip) {
 		int x = columnX(left, index);
 		int y = rowY(top, index);
-		SliderWidget slider = new SliderWidget(x, y, WIDGET_WIDTH, WIDGET_HEIGHT,
-				Text.literal(label + ": " + getter.getAsInt()),
+		AbstractSliderButton slider = new AbstractSliderButton(x, y, WIDGET_WIDTH, WIDGET_HEIGHT,
+				Component.literal(label + ": " + getter.getAsInt()),
 				(getter.getAsInt() - min) / (double) (max - min)) {
 			@Override
 			protected void updateMessage() {
-				setMessage(Text.literal(label + ": " + current()));
+				setMessage(Component.literal(label + ": " + current()));
 			}
 
 			@Override
@@ -312,34 +318,78 @@ public class PrimordiaConfigScreen extends Screen {
 			}
 		};
 		if (tooltip != null) {
-			slider.setTooltip(Tooltip.of(Text.literal(tooltip)));
+			slider.setTooltip(Tooltip.create(Component.literal(tooltip)));
 		}
-		addDrawableChild(slider);
+		addRenderableWidget(slider);
+	}
+
+	/**
+	 * A slider over a fractional setting, snapped to {@code step}.
+	 * <p>
+	 * Snapped rather than continuous because the values that mean something here are exact fractions
+	 * of a texel; a free-running float would let the grid land between them, which looks like a
+	 * mistake and bakes no faster than the nearest step.
+	 */
+	private void addSlider(int left, int top, int index, String label, float min, float max,
+	                       float step, Supplier<Float> getter, Consumer<Float> setter,
+	                       String tooltip) {
+		int x = columnX(left, index);
+		int y = rowY(top, index);
+		AbstractSliderButton slider = new AbstractSliderButton(x, y, WIDGET_WIDTH, WIDGET_HEIGHT,
+				Component.literal(label + ": " + format(getter.get())),
+				(getter.get() - min) / (double) (max - min)) {
+			@Override
+			protected void updateMessage() {
+				setMessage(Component.literal(label + ": " + format(current())));
+			}
+
+			@Override
+			protected void applyValue() {
+				setter.accept(current());
+				config.markCustom();
+				config.apply();
+			}
+
+			private float current() {
+				float raw = (float) (min + value * (max - min));
+				return Mth.clamp(Math.round(raw / step) * step, min, max);
+			}
+		};
+		if (tooltip != null) {
+			slider.setTooltip(Tooltip.create(Component.literal(tooltip)));
+		}
+		addRenderableWidget(slider);
+	}
+
+	/** Whole numbers read as whole numbers; fractions keep just enough places to be unambiguous. */
+	private static String format(float value) {
+		if (value == Math.rint(value)) return String.valueOf((int) value);
+		return String.valueOf(Math.round(value * 100f) / 100f);
 	}
 
 	// ------------------------------------------------------------------- screen
 
 	@Override
-	public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-		super.render(context, mouseX, mouseY, delta);
-		context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 16, 0xFFFFFF);
+	public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+		super.extractRenderState(context, mouseX, mouseY, delta);
+		context.centeredText(font, title, width / 2, 16, 0xFFFFFF);
 
 		// One line saying what this tab is for. Cheaper to read than three tooltips.
-		context.drawCenteredTextWithShadow(textRenderer,
-				Text.literal(tab.blurb).formatted(Formatting.DARK_GRAY),
+		context.centeredText(font,
+				Component.literal(tab.blurb).withStyle(ChatFormatting.DARK_GRAY),
 				width / 2, 90, 0xAAAAAA);
 
 		// Live cache readout: the most direct feedback that a change actually did something, and
 		// the fastest way to notice a cache set too small to hold what is on screen.
 		String status = GenomeMeshCache.readyCount() + " meshes cached · "
 				+ GenomeMeshCache.pendingCount() + " baking";
-		context.drawCenteredTextWithShadow(textRenderer, Text.literal(status).formatted(Formatting.DARK_GRAY),
+		context.centeredText(font, Component.literal(status).withStyle(ChatFormatting.DARK_GRAY),
 				width / 2, height - 44, 0xAAAAAA);
 	}
 
 	@Override
-	public void close() {
+	public void onClose() {
 		config.applyAndSave();
-		if (client != null) client.setScreen(parent);
+		if (minecraft != null) minecraft.setScreenAndShow(parent);
 	}
 }

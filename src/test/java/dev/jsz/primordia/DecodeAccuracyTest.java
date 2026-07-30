@@ -58,17 +58,40 @@ class DecodeAccuracyTest {
 				DecodeAccuracy.resolve(4, 1f).describeFraction(0.73f));
 	}
 
+	/**
+	 * Decay used to cost exactly one level however far gone the sample was, which meant a swab
+	 * carried home in time and one left to rot for a day read almost the same. The penalty is now
+	 * graded, so this pins the shape of the curve rather than a single step.
+	 */
 	@Test
-	void aDegradedSampleCostsALevelButNeverAllOfThem() {
+	void aDegradedSampleCostsMoreTheFurtherGoneItIs() {
 		for (int decoded = 0; decoded <= 30; decoded++) {
 			DecodeAccuracy fresh = DecodeAccuracy.resolve(decoded, 1f);
+			DecodeAccuracy wilting = DecodeAccuracy.resolve(decoded, 0.5f);
+			DecodeAccuracy stale = DecodeAccuracy.resolve(decoded, 0.25f);
 			DecodeAccuracy rotten = DecodeAccuracy.resolve(decoded, 0f);
-			assertTrue(rotten.ordinal() <= fresh.ordinal(),
-					"a degraded sample decoded better than a fresh one at " + decoded);
-			assertTrue(fresh.ordinal() - rotten.ordinal() <= 1,
-					"a degraded sample lost more than one level at " + decoded);
+
 			assertNotNull(rotten, "a degraded sample produced no level at all");
+			// Never better for being older, at any age.
+			assertTrue(wilting.ordinal() <= fresh.ordinal(), "wilting beat fresh at " + decoded);
+			assertTrue(stale.ordinal() <= wilting.ordinal(), "stale beat wilting at " + decoded);
+			assertTrue(rotten.ordinal() <= stale.ordinal(), "rotten beat stale at " + decoded);
 		}
+	}
+
+	/**
+	 * The point of the change: on a species the library knows well, letting the sample rot has to
+	 * cost real confidence rather than shaving one step off the top.
+	 */
+	@Test
+	void rotCostsAWellStudiedSpeciesMoreThanOneLevel() {
+		DecodeAccuracy fresh = DecodeAccuracy.resolve(50, 1f);
+		DecodeAccuracy rotten = DecodeAccuracy.resolve(50, 0f);
+		assertEquals(DecodeAccuracy.COMPLETE, fresh);
+		assertTrue(fresh.ordinal() - rotten.ordinal() >= 2,
+				"rot cost only " + (fresh.ordinal() - rotten.ordinal()) + " level(s) on a studied species");
+		// Still a report, not a failure — an unusable item would be a dead end.
+		assertNotNull(rotten);
 	}
 
 	@Test

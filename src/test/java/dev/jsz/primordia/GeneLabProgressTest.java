@@ -2,6 +2,9 @@ package dev.jsz.primordia;
 
 import dev.jsz.primordia.block.GeneLabBlockEntity;
 import dev.jsz.primordia.block.GeneLabBlockEntity.Stage;
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -14,6 +17,18 @@ import static org.junit.jupiter.api.Assertions.*;
  * or two that fill at once, would describe a machine that does not exist.
  */
 class GeneLabProgressTest {
+
+	/**
+	 * {@code lineFill} is pure arithmetic, but reaching it loads {@link GeneLabBlockEntity} and with
+	 * it {@code BlockEntity}, whose static initialiser touches the built-in registries. Since 26.2
+	 * those refuse to be read before the game is bootstrapped, so the game has to be brought up even
+	 * for a function that never asks it anything.
+	 */
+	@BeforeAll
+	static void bootstrapMinecraft() {
+		SharedConstants.tryDetectVersion();
+		Bootstrap.bootStrap();
+	}
 
 	private static float fill(int line, Stage stage, int ticks) {
 		return GeneLabBlockEntity.lineFill(line, stage, ticks);

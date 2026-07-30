@@ -1,9 +1,9 @@
 package dev.jsz.primordia.entity.goal;
 
 import dev.jsz.primordia.entity.CreatureEntity;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.ai.goal.TrackTargetGoal;
-import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.goal.target.TargetGoal;
+import net.minecraft.world.entity.player.Player;
 
 import java.util.EnumSet;
 
@@ -17,7 +17,7 @@ import java.util.EnumSet;
  * owner's attack counter instead, or the creature would re-acquire a target the owner has since
  * deliberately walked away from and drag the fight back.
  */
-public class DefendOwnerGoal extends TrackTargetGoal {
+public class DefendOwnerGoal extends TargetGoal {
 	private final CreatureEntity creature;
 	private LivingEntity candidate;
 	/** The owner's attack counter as of the last assist, so each swing only recruits once. */
@@ -26,26 +26,26 @@ public class DefendOwnerGoal extends TrackTargetGoal {
 	public DefendOwnerGoal(CreatureEntity creature) {
 		super(creature, false);
 		this.creature = creature;
-		setControls(EnumSet.of(Control.TARGET));
+		setFlags(EnumSet.of(Flag.TARGET));
 	}
 
 	@Override
-	public boolean canStart() {
+	public boolean canUse() {
 		if (!creature.isDomesticated() || creature.isSitting()) return false;
 
 		LivingEntity owner = creature.getOwner();
 		if (owner == null) return false;
 
 		// Whatever is hitting the owner, first and continuously.
-		LivingEntity attacker = owner.getAttacker();
+		LivingEntity attacker = owner.getLastHurtByMob();
 		if (isValidTarget(attacker, owner)) {
 			candidate = attacker;
 			return true;
 		}
 
 		// Otherwise join whatever the owner has just swung at.
-		LivingEntity attacking = owner.getAttacking();
-		int attackTime = owner.getLastAttackedTime();
+		LivingEntity attacking = owner.getLastHurtMob();
+		int attackTime = owner.getLastHurtMobTimestamp();
 		if (attackTime != lastAssistedAttackTime && isValidTarget(attacking, owner)) {
 			candidate = attacking;
 			lastAssistedAttackTime = attackTime;
@@ -62,13 +62,13 @@ public class DefendOwnerGoal extends TrackTargetGoal {
 	private boolean isValidTarget(LivingEntity target, LivingEntity owner) {
 		if (target == null || target == creature || target == owner) return false;
 		if (!target.isAlive()) return false;
-		if (target instanceof PlayerEntity) return false;
+		if (target instanceof Player) return false;
 		if (target instanceof CreatureEntity other
 				&& other.isDomesticated()
-				&& owner.getUuid().equals(other.getOwnerUuid())) {
+				&& owner.getUUID().equals(other.getOwnerUuid())) {
 			return false;
 		}
-		return creature.canTarget(target);
+		return creature.canAttack(target);
 	}
 
 	@Override

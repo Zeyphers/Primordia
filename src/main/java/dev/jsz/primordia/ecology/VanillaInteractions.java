@@ -6,20 +6,20 @@ import dev.jsz.primordia.entity.Temperament;
 import dev.jsz.primordia.genome.Archetype;
 import dev.jsz.primordia.genome.Genome;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.ai.goal.ActiveTargetGoal;
-import net.minecraft.entity.ai.goal.FleeEntityGoal;
-import net.minecraft.entity.ai.goal.RevengeGoal;
-import net.minecraft.entity.mob.HostileEntity;
-import net.minecraft.entity.mob.MobEntity;
-import net.minecraft.entity.passive.AnimalEntity;
-import net.minecraft.entity.passive.GoatEntity;
-import net.minecraft.entity.passive.LlamaEntity;
-import net.minecraft.entity.passive.PolarBearEntity;
-import net.minecraft.entity.passive.VillagerEntity;
-import net.minecraft.entity.passive.IronGolemEntity;
-import net.minecraft.entity.mob.SkeletonEntity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
+import net.minecraft.world.entity.ai.goal.AvoidEntityGoal;
+import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
+import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.animal.Animal;
+import net.minecraft.world.entity.animal.goat.Goat;
+import net.minecraft.world.entity.animal.equine.Llama;
+import net.minecraft.world.entity.animal.polarbear.PolarBear;
+import net.minecraft.world.entity.npc.villager.Villager;
+import net.minecraft.world.entity.animal.golem.IronGolem;
+import net.minecraft.world.entity.monster.skeleton.Skeleton;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -93,81 +93,59 @@ public final class VanillaInteractions {
 	public static void register() {
 		ServerEntityEvents.ENTITY_LOAD.register((entity, world) -> {
 			if (entity instanceof CreatureEntity) return;
-			if (entity instanceof MobEntity mob) attach(mob);
+			if (entity instanceof Mob mob) attach(mob);
 		});
 	}
 
-	private static void attach(MobEntity mob) {
+	private static void attach(Mob mob) {
 		float mass = massOf(mob.getType());
 		if (mass <= 0f) return;
 
-		if (mob instanceof HostileEntity hostile) {
-			// Hostiles attack anything alive, so size does not enter into it. Tamed creatures are
-			// included deliberately — a zombie does not care whose animal it is.
-			hostile.targetSelector.add(4, new ActiveTargetGoal<>(hostile, CreatureEntity.class,
-					10, true, false, VanillaInteractions::isAvailableTarget));
+		if (mob instanceof Monster hostile) {
+			hostile.targetSelector.addGoal(4, new NearestAttackableTargetGoal<>(hostile, CreatureEntity.class,
+					10, true, false, (target, level) -> isAvailableTarget(target)));
 			return;
 		}
 
-		if (mob instanceof IronGolemEntity golem) {
-			// A golem is a guard, not a predator: it goes after what threatens the village rather
-			// than after anything it could beat.
-			golem.targetSelector.add(3, new ActiveTargetGoal<>(golem, CreatureEntity.class,
-					10, true, false, target -> isAvailableTarget(target)
+		if (mob instanceof IronGolem golem) {
+			golem.targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(golem, CreatureEntity.class,
+					10, true, false, (target, level) -> isAvailableTarget(target)
 					&& ((CreatureEntity) target).getTemperament() == Temperament.AGGRESSIVE));
 			return;
 		}
 
-		// Everything else is an animal, and which side of the food web it is on depends on its size
-		// against the creature's — the same question the creatures ask about each other.
-		boolean hunter = mob instanceof net.minecraft.entity.passive.FoxEntity
-				|| mob instanceof net.minecraft.entity.passive.OcelotEntity
-				|| mob instanceof net.minecraft.entity.passive.CatEntity
-				|| mob instanceof net.minecraft.entity.passive.WolfEntity
-				|| mob instanceof PolarBearEntity;
+		boolean hunter = mob instanceof net.minecraft.world.entity.animal.fox.Fox
+				|| mob instanceof net.minecraft.world.entity.animal.feline.Ocelot
+				|| mob instanceof net.minecraft.world.entity.animal.feline.Cat
+				|| mob instanceof net.minecraft.world.entity.animal.wolf.Wolf
+				|| mob instanceof PolarBear;
 
 		if (hunter) {
-			mob.targetSelector.add(5, new ActiveTargetGoal<>(mob, CreatureEntity.class,
-					10, true, false, target -> isAvailableTarget(target)
-					// Wild only. A predator picking off a player's tamed animals is not an
-					// ecosystem, it is a grief.
+			mob.targetSelector.addGoal(5, new NearestAttackableTargetGoal<>(mob, CreatureEntity.class,
+					10, true, false, (target, level) -> isAvailableTarget(target)
 					&& !((CreatureEntity) target).isTamed()
 					&& EnergyBudget.isWorthHunting(mass, massOf(target))));
 		}
 
-		// Both of the goals below steer with a navigator, which only a PathAwareEntity has. Every
-		// animal and villager is one; the check is here because MobEntity in general is not.
-		if (!(mob instanceof net.minecraft.entity.mob.PathAwareEntity pathAware)) return;
+		if (!(mob instanceof net.minecraft.world.entity.PathfinderMob pathAware)) return;
 
-		// A defender fights back rather than running, and everything else runs.
-		if (mob instanceof LlamaEntity || mob instanceof GoatEntity || mob instanceof PolarBearEntity) {
-			pathAware.targetSelector.add(2, new RevengeGoal(pathAware));
-		} else if (mob instanceof AnimalEntity || mob instanceof VillagerEntity) {
+		if (mob instanceof Llama || mob instanceof Goat || mob instanceof PolarBear) {
+			pathAware.targetSelector.addGoal(2, new HurtByTargetGoal(pathAware));
+		} else if (mob instanceof Animal || mob instanceof Villager) {
 			final float preyMass = mass;
-			pathAware.goalSelector.add(3, new FleeEntityGoal<>(pathAware, CreatureEntity.class,
+			pathAware.goalSelector.addGoal(3, new AvoidEntityGoal<>(pathAware, CreatureEntity.class,
 					8.0f, 1.3, 1.6,
-					// Flee what could actually eat you. A cow has no reason to run from something
-					// the size of a rabbit, and every reason to run from the thing that has been
-					// eating rabbits.
 					creature -> isAvailableTarget(creature)
 							&& (EnergyBudget.isWorthHunting(massOf(creature), preyMass)
 							|| ((CreatureEntity) creature).getTemperament() == Temperament.AGGRESSIVE)));
 		}
 
-		if (mob instanceof SkeletonEntity skeleton) {
-			// Shoots at creatures the way it shoots at anything else that moves.
-			skeleton.targetSelector.add(4, new ActiveTargetGoal<>(skeleton, CreatureEntity.class,
-					10, true, false, VanillaInteractions::isAvailableTarget));
+		if (mob instanceof Skeleton skeleton) {
+			skeleton.targetSelector.addGoal(4, new NearestAttackableTargetGoal<>(skeleton, CreatureEntity.class,
+					10, true, false, (target, level) -> isAvailableTarget(target)));
 		}
 	}
 
-	/**
-	 * Whether this creature is something vanilla should react to at all.
-	 * <p>
-	 * A carcass is already dead and a cave dweller is forty blocks down — neither is anything a
-	 * surface mob should be pathing toward. The habitat check mirrors the one the regional
-	 * simulation makes when deciding who can eat whom, so the two agree about who ever meets.
-	 */
 	private static boolean isAvailableTarget(LivingEntity entity) {
 		if (!(entity instanceof CreatureEntity creature)) return false;
 		if (!creature.isAlive() || creature.isCarcass() || creature.isPosing()) return false;
@@ -181,19 +159,11 @@ public final class VanillaInteractions {
 		return plan == null ? 0.2f : plan.mass;
 	}
 
-	/**
-	 * A mob's nominal mass on Primordia's scale, or zero if it is outside the food web.
-	 * <p>
-	 * Keyed by registry id rather than by {@code EntityType} constant so that the table is data and
-	 * not code. Two things follow: it can be read without the game's registries existing, which is
-	 * what lets the food web be tested at all — and a mob from another mod can be given a place in
-	 * it later without this class needing to compile against that mod.
-	 */
 	public static float massOf(String entityId) {
 		return MASS.getOrDefault(entityId, 0f);
 	}
 
 	public static float massOf(EntityType<?> type) {
-		return massOf(net.minecraft.registry.Registries.ENTITY_TYPE.getId(type).toString());
+		return massOf(net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(type).toString());
 	}
 }

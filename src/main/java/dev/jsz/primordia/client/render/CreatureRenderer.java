@@ -173,17 +173,9 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity, CreatureRen
 		//     poseStack.translate(0f, plan.hipHeight * 0.5f * climb, 0f);
 		// }
 		if (state.carcass) {
-			// A dead animal ends up on its back, legs in the air. Rolling the whole body is the right
-			// level to do this at — the alternative is posing every bone into a heap, which the
-			// skeleton has no concept of and which would need a second solver to look like anything.
-			//
-			// Read bottom-up, which is the order the geometry passes through: drop the trunk from
-			// standing height onto the model origin, turn it over, then lift by half the body's
-			// thickness so the back it is now lying on meets the ground. Turning first would swing the
-			// whole animal through the floor, because the model origin is between its feet rather than
-			// through the middle of it.
-			//
-			poseStack.translate(0f, carcassLift(plan), 0f);
+			float sinkFactor = PrimordiaConfig.get().carcassSinkFactor;
+			float carcassLift = carcassLift(plan, sinkFactor);
+			poseStack.translate(0f, carcassLift, 0f);
 			poseStack.mulPose(Axis.ZP.rotationDegrees(180f));
 			poseStack.translate(0f, -plan.hipHeight, 0f);
 		}
@@ -216,9 +208,21 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity, CreatureRen
 	 * way round — a body sunk slightly into the ground reads as a body on the ground, and one hovering
 	 * above it does not.
 	 */
-	private static float carcassLift(BodyPlan plan) {
-		// Lift the flipped body by its dorsal height above the hip so its back rests flat on the ground plane (y = 0).
-		return Math.max(0.1f, plan.boundsMax.y - plan.hipHeight);
+	private static float carcassLift(BodyPlan plan, float sinkFactor) {
+		float maxSpineY = -1f;
+		if (plan.bones != null) {
+			for (BoneDef bone : plan.bones) {
+				if (bone != null && bone.name != null && bone.name.startsWith("spine")) {
+					float topHead = bone.head.y + bone.radiusHead;
+					float topTail = bone.tail.y + bone.radiusTail;
+					maxSpineY = Math.max(maxSpineY, Math.max(topHead, topTail));
+				}
+			}
+		}
+		float heightAboveHip = (maxSpineY > 0f)
+				? (maxSpineY - plan.hipHeight)
+				: (plan.boundsMax.y - plan.hipHeight);
+		return heightAboveHip - plan.hipHeight * sinkFactor;
 	}
 
 	/**

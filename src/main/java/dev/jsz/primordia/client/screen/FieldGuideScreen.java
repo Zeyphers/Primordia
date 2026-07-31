@@ -25,6 +25,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
 import dev.jsz.primordia.Primordia;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.Mth;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -144,6 +145,10 @@ public class FieldGuideScreen extends Screen {
 
 	/** Milliseconds within which a second click on the same name counts as a double-click. */
 	private static final long DOUBLE_CLICK_MS = 400;
+
+	private static final java.util.Set<String> viewedChapters = new java.util.HashSet<>();
+	private static final java.util.Set<Long> viewedLineages = new java.util.HashSet<>();
+	private static int viewedTreeEntryCount = -1;
 
 	/**
 	 * Turntable angle for the specimen plate, in radians.
@@ -284,6 +289,8 @@ public class FieldGuideScreen extends Screen {
 		nameBuffer = "";
 		if (section == GuideChapters.REFERENCE_TAB) buildReference();
 		if (section == GuideChapters.LINEAGE_TAB) buildLineages();
+
+		markSectionViewed(section, data);
 	}
 
 	/**
@@ -1042,6 +1049,47 @@ public class FieldGuideScreen extends Screen {
 		super.extractRenderState(context, mouseX, mouseY, delta);
 	}
 
+	private void markSectionViewed(int sec, GuideData data) {
+		if (sec < GuideChapters.REFERENCE_TAB) {
+			GuideChapters.Section s = GuideChapters.SECTIONS.get(sec);
+			for (GuideChapters.Chapter chapter : s.chapters()) {
+				if (chapter.unlocked(data)) {
+					viewedChapters.add(chapter.title());
+				}
+			}
+		} else if (sec == GuideChapters.REFERENCE_TAB) {
+			for (GuideData.Entry entry : data.entries()) {
+				viewedLineages.add(entry.lineage());
+			}
+		} else if (sec == GuideChapters.LINEAGE_TAB) {
+			viewedTreeEntryCount = data.entries().size();
+		}
+	}
+
+	private static boolean isTabUnread(int sec) {
+		GuideData data = dev.jsz.primordia.PrimordiaClient.getClientGuideData();
+		if (sec < GuideChapters.REFERENCE_TAB) {
+			GuideChapters.Section s = GuideChapters.SECTIONS.get(sec);
+			for (GuideChapters.Chapter chapter : s.chapters()) {
+				if (chapter.unlocked(data) && !viewedChapters.contains(chapter.title())) {
+					return true;
+				}
+			}
+			return false;
+		} else if (sec == GuideChapters.REFERENCE_TAB) {
+			for (GuideData.Entry entry : data.entries()) {
+				if (!viewedLineages.contains(entry.lineage())) {
+					return true;
+				}
+			}
+			return false;
+		} else if (sec == GuideChapters.LINEAGE_TAB) {
+			int currentCount = data.entries().size();
+			return currentCount >= 2 && currentCount > viewedTreeEntryCount;
+		}
+		return false;
+	}
+
 	/**
 	 * Draws the tab strip.
 	 * <p>
@@ -1055,17 +1103,30 @@ public class FieldGuideScreen extends Screen {
 			int tx = i * (TAB_W + 2);
 			boolean active = i == section;
 			boolean over = tabAt(mx, my) == i;
+			boolean unread = isTabUnread(i);
 
 			// The active tab is a pixel taller and runs into the page below, so it reads as joined
 			// to it rather than as a button sitting on top.
 			int height = active ? TAB_H + 1 : TAB_H - 2;
 			int ty = active ? 0 : 2;
 
+			if (unread) {
+				float pulse = 0.6f + 0.4f * Mth.sin(age * 0.12f);
+				int alpha = (int) (pulse * 225);
+				int glowColor = (alpha << 24) | 0xFFD700;
+				context.fill(tx - 2, ty - 2, tx + TAB_W + 2, ty + height + 1, glowColor);
+			}
+
 			context.fill(tx - 1, ty - 1, tx + TAB_W + 1, ty + height, FRAME);
 			context.blit(RenderPipelines.GUI_TEXTURED, PAGE_TEXTURE, tx, ty, TAB_SAMPLE_U, TAB_SAMPLE_V,
 					TAB_W, height, 512, 256);
 			if (!active) context.fill(tx, ty, tx + TAB_W, ty + height, 0x44231B0E);
 			if (over && !active) context.fill(tx, ty, tx + TAB_W, ty + height, 0x22FFFFFF);
+
+			if (unread) {
+				context.fill(tx + TAB_W - 5, ty + 2, tx + TAB_W - 1, ty + 6, 0xFFFFF066);
+				context.fill(tx + TAB_W - 4, ty + 3, tx + TAB_W - 2, ty + 5, 0xFFFFD700);
+			}
 
 			context.item(tabIcons.get(i), tx + (TAB_W - 16) / 2, ty + (height - 16) / 2 - 1);
 		}

@@ -32,11 +32,13 @@ public final class SurvivalDrops {
 		int meatCount = scale(1 + (int) Math.min(8, plan.mass * 4.5f), share);
 		if (meatCount > 0) {
 			boolean cooked = creature.isOnFire();
-			creature.spawnAtLocation(world, new ItemStack(
-					carnivore
+			boolean fresh = creature.isFreshCarcass();
+			var item = !fresh
+					? Items.ROTTEN_FLESH
+					: (carnivore
 							? (cooked ? Items.COOKED_BEEF : Items.BEEF)
-							: (cooked ? Items.COOKED_MUTTON : Items.MUTTON),
-					meatCount));
+							: (cooked ? Items.COOKED_MUTTON : Items.MUTTON));
+			creature.spawnAtLocation(world, new ItemStack(item, meatCount));
 		}
 
 		int hideCount = scale((int) Math.min(5, plan.mass * 2.5f), share);

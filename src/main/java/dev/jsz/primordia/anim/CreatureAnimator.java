@@ -132,14 +132,28 @@ public final class CreatureAnimator {
 	}
 
 	public void update(AnimationContext ctx) {
+		boolean isDead = ctx.collapse >= 0.99f || ctx.activity == dev.jsz.primordia.entity.CreatureActivity.CARCASS;
 		float dt;
-		if (Float.isNaN(lastTime)) {
+		if (isDead || Float.isNaN(lastTime)) {
 			dt = 0f;
 		} else {
 			// Clamped so a lag spike or a pause cannot teleport the gait forward.
 			dt = MathX.clamp(ctx.time - lastTime, 0f, 0.25f);
 		}
 		lastTime = ctx.time;
+
+		if (isDead) {
+			tailLag = 0f;
+			lateralBend = 0f;
+			riderLean = 0f;
+			activityHeadPitch = 0.8f;
+			activityHeadYaw = 0f;
+			activityTailYaw = 0f;
+			activityArmSwing = 0f;
+			activityLunge = 0f;
+			activityCrouch = 1f;
+			jawOpen = 0f;
+		}
 
 		updateActivity(ctx, dt);
 		updateGait(ctx, dt);
@@ -155,7 +169,7 @@ public final class CreatureAnimator {
 
 		skeleton.updateWorld();
 
-		if (LodTier.usesInverseKinematics(ctx.tier)) {
+		if (isDead || LodTier.usesInverseKinematics(ctx.tier)) {
 			for (int i = 0; i < plan.legs.length; i++) {
 				solveLeg(ctx, plan.legs[i], feet[i]);
 			}
@@ -555,9 +569,10 @@ public final class CreatureAnimator {
 			int bone = spineBones[i];
 			float along = spineBones.length == 1 ? 0f : (float) i / (spineBones.length - 1);
 			// Undulation travels from hips to shoulders.
-			float wave = amplitude * (float) Math.sin(gaitPhase * Math.PI * 2.0 - along * 2.2);
+			boolean isDead = ctx.collapse >= 0.99f || ctx.activity == dev.jsz.primordia.entity.CreatureActivity.CARCASS;
+			float wave = isDead ? 0f : amplitude * (float) Math.sin(gaitPhase * Math.PI * 2.0 - along * 2.2);
 			float yaw = lateralBend / spineBones.length + wave;
-			float breathe = 0.012f * (float) Math.sin(ctx.time * 1.7 + along);
+			float breathe = isDead ? 0f : 0.012f * (float) Math.sin(ctx.time * 1.7 + along);
 			// Weight the bend toward the middle of the back — the shoulders and hips are anchored
 			// by the limbs, so a hump-shaped curve is what a real spine does over a rise.
 			float bend = spinePitch * (0.6f + 0.8f * (float) Math.sin(Math.PI * (0.15f + 0.7f * along)));
@@ -572,10 +587,9 @@ public final class CreatureAnimator {
 
 	private void updateNeckAndHead(AnimationContext ctx) {
 		int total = neckBones.length + 1;
-		// Behaviour is added to the look direction, not substituted for it, so a grazing creature
-		// still tracks a player it has noticed while its head is down.
-		float yaw = MathX.clamp(ctx.lookYaw + activityHeadYaw, -1.4f, 1.4f);
-		float pitch = MathX.clamp(ctx.lookPitch + activityHeadPitch, -0.9f, 1.5f);
+		boolean isDead = ctx.collapse >= 0.99f || ctx.activity == dev.jsz.primordia.entity.CreatureActivity.CARCASS;
+		float yaw = isDead ? 0f : MathX.clamp(ctx.lookYaw + activityHeadYaw, -1.4f, 1.4f);
+		float pitch = isDead ? 0.8f : MathX.clamp(ctx.lookPitch + activityHeadPitch, -0.9f, 1.5f);
 
 		// Spread the look across the neck so long-necked creatures curve instead of snapping at the base.
 		for (int i = 0; i < neckBones.length; i++) {
@@ -627,15 +641,14 @@ public final class CreatureAnimator {
 			default -> 0f;
 		};
 
-		// Panting while moving, slow breathing at rest, over a floor that keeps the mouth from
-		// clamping perfectly shut.
-		float ambient = BodyPlan.JAW_REST_SLACK + (ctx.speed > IDLE_SPEED
+		boolean isDead = ctx.collapse >= 0.99f || ctx.activity == dev.jsz.primordia.entity.CreatureActivity.CARCASS;
+		float ambient = isDead ? BodyPlan.JAW_REST_SLACK : (BodyPlan.JAW_REST_SLACK + (ctx.speed > IDLE_SPEED
 				? 0.10f + 0.07f * (float) Math.sin(ctx.time * 6.5)
-				: 0.02f + 0.02f * (float) Math.sin(ctx.time * 1.5));
+				: 0.02f + 0.02f * (float) Math.sin(ctx.time * 1.5)));
 
 		// Snapping shut is far faster than opening — a jaw closes under muscle and gravity
 		// together, and easing both ways at one rate makes every bite look languid.
-		float goal = MathX.clamp01(target + ambient);
+		float goal = isDead ? BodyPlan.JAW_REST_SLACK : MathX.clamp01(target + ambient);
 		float rate = goal < jawOpen ? 26f : 14f;
 		jawOpen = MathX.damp(jawOpen, goal, rate, dt);
 
@@ -668,16 +681,18 @@ public final class CreatureAnimator {
 		float rollCounterbalance = -bodyRoll * 1.5f - riderLean * TAIL_COUNTER_LEAN;
 		float stepSway = ctx.speed > IDLE_SPEED ? -0.18f * (float) Math.sin(gaitPhase * Math.PI * 2.0) : 0f;
 
+		boolean isDead = ctx.collapse >= 0.99f || ctx.activity == dev.jsz.primordia.entity.CreatureActivity.CARCASS;
 		for (int i = 0; i < tailBones.length; i++) {
 			int bone = tailBones[i];
 			float along = (float) (i + 1) / tailBones.length;
 			// Amplitude grows toward the tip, so the tail whips and counterbalances dynamically.
+			float tailSine = isDead ? 0f : (0.14f * along * (float) Math.sin(ctx.time * 2.4 - along * 2.5));
 			float yaw = tailLag * along * 0.55f
 					+ (rollCounterbalance + stepSway) * along * 0.70f
-					+ 0.14f * along * (float) Math.sin(ctx.time * 2.4 - along * 2.5)
+					+ tailSine
 					+ activityTailYaw * along * along;
-			float pitch = 0.10f * along * (float) Math.sin(ctx.time * 1.9 - along * 2.0)
-					- (ctx.speed > IDLE_SPEED ? 0.12f * along : 0f);
+			float pitch = isDead ? 0f : (0.10f * along * (float) Math.sin(ctx.time * 1.9 - along * 2.0)
+					- (ctx.speed > IDLE_SPEED ? 0.12f * along : 0f));
 
 			skeleton.bindDirection(bone, dir);
 			q0.identity().rotateY(yaw).rotateX(pitch).rotateZ(-rollCounterbalance * along * 0.5f);
@@ -700,10 +715,26 @@ public final class CreatureAnimator {
 
 		toModel(ctx, foot.currentX, foot.currentY, foot.currentZ, v1);
 
-		// Clamp foot target in model space below hip height so legs never get pinned upside down in the air
-		float maxFootY = jointScratch[0].y - 0.05f;
-		if (v1.y > maxFootY) {
-			v1.y = maxFootY;
+		boolean isDead = ctx.collapse >= 0.99f || ctx.activity == dev.jsz.primordia.entity.CreatureActivity.CARCASS;
+		if (isDead) {
+			dev.jsz.primordia.client.config.PrimordiaConfig cfg = dev.jsz.primordia.client.config.PrimordiaConfig.get();
+			float legLen = leg.totalLength;
+			float sideSign = leg.side > 0 ? 1f : -1f;
+			float splayX = Math.max(0.10f, Math.abs(leg.restEffector.x) * 0.95f + legLen * cfg.deadIkOffsetX * 0.50f);
+
+			// Laying down on back: front legs extend forward (+Z), hind legs extend backward (-Z), uncrossed
+			boolean isFrontLeg = leg.restEffector.z >= 0f;
+			float zDir = isFrontLeg ? 1.0f : -1.0f;
+
+			v1.x = sideSign * splayX;
+			v1.y = jointScratch[0].y - legLen * (0.62f + cfg.deadIkOffsetY * 0.40f);
+			v1.z = jointScratch[0].z + zDir * (legLen * 0.28f) + legLen * cfg.deadIkOffsetZ * 0.40f;
+		} else {
+			// Clamp foot target in model space below hip height so legs never get pinned upside down in the air
+			float maxFootY = jointScratch[0].y - 0.05f;
+			if (v1.y > maxFootY) {
+				v1.y = maxFootY;
+			}
 		}
 
 		// Absorb over-reach by letting the limb stretch a little rather than locking straight.
@@ -736,6 +767,9 @@ public final class CreatureAnimator {
 	 * full IK solve — they have nothing to reach for.
 	 */
 	private void swingArm(AnimationContext ctx, LimbChain arm) {
+		boolean isDead = ctx.collapse >= 0.99f || ctx.activity == dev.jsz.primordia.entity.CreatureActivity.CARCASS;
+		if (isDead) return;
+
 		float amplitude = ctx.speed > IDLE_SPEED ? 0.30f : 0.06f;
 		float swing = amplitude * (float) Math.sin(gaitPhase * Math.PI * 2.0 + (arm.side > 0 ? Math.PI : 0.0));
 

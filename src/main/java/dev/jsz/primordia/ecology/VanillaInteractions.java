@@ -101,12 +101,6 @@ public final class VanillaInteractions {
 		float mass = massOf(mob.getType());
 		if (mass <= 0f) return;
 
-		if (mob instanceof Monster hostile) {
-			hostile.targetSelector.addGoal(4, new NearestAttackableTargetGoal<>(hostile, CreatureEntity.class,
-					10, true, false, (target, level) -> isAvailableTarget(target)));
-			return;
-		}
-
 		if (mob instanceof IronGolem golem) {
 			golem.targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(golem, CreatureEntity.class,
 					10, true, false, (target, level) -> isAvailableTarget(target)
@@ -138,11 +132,6 @@ public final class VanillaInteractions {
 					creature -> isAvailableTarget(creature)
 							&& (EnergyBudget.isWorthHunting(massOf(creature), preyMass)
 							|| ((CreatureEntity) creature).getTemperament() == Temperament.AGGRESSIVE)));
-		}
-
-		if (mob instanceof Skeleton skeleton) {
-			skeleton.targetSelector.addGoal(4, new NearestAttackableTargetGoal<>(skeleton, CreatureEntity.class,
-					10, true, false, (target, level) -> isAvailableTarget(target)));
 		}
 	}
 

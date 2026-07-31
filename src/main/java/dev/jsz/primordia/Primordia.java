@@ -62,6 +62,29 @@ public class Primordia implements ModInitializer {
 			}
 		});
 
+		net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> {
+			dev.jsz.primordia.lab.PlayerGuideData global = dev.jsz.primordia.lab.PlayerGuideData.get((net.minecraft.server.level.ServerLevel) newPlayer.level());
+			dev.jsz.primordia.lab.GuideData data = global.getGuide(newPlayer.getUUID());
+			net.minecraft.nbt.CompoundTag payloadData = new net.minecraft.nbt.CompoundTag();
+			data.writeInto(payloadData);
+			net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(newPlayer, new dev.jsz.primordia.lab.GuideDataSyncPayload(payloadData));
+
+			var inv = newPlayer.getInventory();
+			boolean hasGuide = false;
+			for (int i = 0; i < inv.getContainerSize(); i++) {
+				if (inv.getItem(i).is(PrimordiaItems.FIELD_GUIDE)) {
+					hasGuide = true;
+					break;
+				}
+			}
+			if (!hasGuide) {
+				net.minecraft.world.item.ItemStack guide = new net.minecraft.world.item.ItemStack(PrimordiaItems.FIELD_GUIDE);
+				if (!newPlayer.getInventory().add(guide)) {
+					newPlayer.drop(guide, false);
+				}
+			}
+		});
+
 		// Deliberately no BiomeModifications.addSpawn. Creatures are no longer placed by the
 		// vanilla spawner at all.
 		//

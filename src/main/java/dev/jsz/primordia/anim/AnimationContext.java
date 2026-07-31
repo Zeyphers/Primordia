@@ -53,6 +53,7 @@ public final class AnimationContext {
 	 * read it every frame regardless of what else is going on.
 	 */
 	public float collapse;
+	public boolean carcassSideways;
 
 	public GroundProbe ground = GroundProbe.flat(0f);
 

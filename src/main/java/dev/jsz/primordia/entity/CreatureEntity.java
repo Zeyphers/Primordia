@@ -173,8 +173,10 @@ public class CreatureEntity extends PathfinderMob {
 	 * that a trail is the record of many crossings rather than of one.
 	 */
 	private static final float TRAIL_CHANCE_PER_TICK = 0.0006f;
-	/** Ticks a carcass lasts before it rots away, if nothing eats it first. Five minutes. */
-	private static final int CARCASS_LIFETIME = 6000;
+	/** Ticks a carcass lasts before it rots away, if nothing eats it first. One in-game day (24,000 ticks). */
+	public static final int CARCASS_LIFETIME = 24000;
+	/** Ticks a carcass remains fresh (5 in-game hours = 5,000 ticks). After this, butchering yields rotten flesh. */
+	public static final int FRESH_CARCASS_TICKS = 5000;
 	/**
 	 * Ticks a successful hunter is stood down for, so it eats its kill rather than starting another.
 	 * Only needs to outlast the walk back to the body; feeding takes it from there.
@@ -1058,7 +1060,14 @@ public class CreatureEntity extends PathfinderMob {
 		CreatureEntity carcass = PrimordiaEntities.CREATURE.create(world, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
 		if (carcass == null) return;
 		carcass.setGenome(g);
-		carcass.snapTo(dead.getX(), dead.getY(), dead.getZ(), dead.getYRot(), 0f);
+		float deathYaw = dead.yBodyRot;
+		carcass.snapTo(dead.getX(), dead.getY(), dead.getZ(), deathYaw, 0f);
+		carcass.setYRot(deathYaw);
+		carcass.yRotO = deathYaw;
+		carcass.yBodyRot = deathYaw;
+		carcass.yBodyRotO = deathYaw;
+		carcass.yHeadRot = deathYaw;
+		carcass.yHeadRotO = deathYaw;
 		carcass.becomeCarcass(EnergyBudget.carcassNutrition(plan));
 		world.addFreshEntity(carcass);
 	}
@@ -1073,6 +1082,7 @@ public class CreatureEntity extends PathfinderMob {
 		setPersistenceRequired();
 		getNavigation().stop();
 		setTarget(null);
+		refreshDimensions();
 	}
 
 	public float consumeCarcass(float requested) {
@@ -1082,8 +1092,19 @@ public class CreatureEntity extends PathfinderMob {
 		return taken;
 	}
 
+	public int getCarcassTicks() {
+		return carcassTicks;
+	}
+
+	public boolean isFreshCarcass() {
+		return !isCarcass() || carcassTicks <= FRESH_CARCASS_TICKS;
+	}
+
 	private void tickCarcass() {
 		carcassTicks++;
+		yBodyRot = yBodyRotO;
+		setYRot(yBodyRotO);
+		yHeadRot = yBodyRotO;
 		if (carcassNutrition <= 0.001f) {
 			discard();
 			return;
@@ -1588,7 +1609,7 @@ public class CreatureEntity extends PathfinderMob {
 		// every tick, so a creature walking one way while a look goal aimed its head somewhere else
 		// turned to follow its gaze instead of its path — which read as an animal wandering sideways,
 		// and only whenever something happened to catch its eye.
-		if (getControllingPassenger() == null && !isMovingHorizontally()) {
+		if (getControllingPassenger() == null && !isMovingHorizontally() && !isDeadOrDying() && !isCarcass()) {
 			this.yBodyRot = Mth.rotateIfNecessary(this.yBodyRot, this.getYHeadRot(), 7.5f);
 		}
 
@@ -1959,6 +1980,24 @@ public class CreatureEntity extends PathfinderMob {
 					.setBaseValue(Math.max(1.0, Math.min(2.5, plan.hipHeight * 1.15 * growth)));
 		}
 		return EntityDimensions.scalable(width * growth, height * growth);
+	}
+
+	@Override
+	public boolean isPushable() {
+		if (isCarcass()) return false;
+		return super.isPushable();
+	}
+
+	@Override
+	public void push(Entity entity) {
+		if (isCarcass()) return;
+		super.push(entity);
+	}
+
+	@Override
+	public void push(double x, double y, double z) {
+		if (isCarcass()) return;
+		super.push(x, y, z);
 	}
 
 	public float clientActivityProgress(CreatureActivity activity, float tickDelta) {

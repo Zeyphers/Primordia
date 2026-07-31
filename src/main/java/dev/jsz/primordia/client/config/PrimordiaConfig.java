@@ -93,6 +93,18 @@ public final class PrimordiaConfig {
 	public static final float VOXEL_PIXELS_STEP = 0.25f;
 
 	/**
+	 * How far upside-down carcasses sink into the ground, scaled by creature leg height (hipHeight).
+	 */
+	public float carcassSinkFactor = 1.15f;
+
+	/**
+	 * Relative X, Y, Z offsets for dead leg IK targets, scaled by leg length.
+	 */
+	public float deadIkOffsetX = 0.00f;
+	public float deadIkOffsetY = -0.35f;
+	public float deadIkOffsetZ = 0.00f;
+
+	/**
 	 * Gives every face its own normal instead of sharing averaged ones with its neighbours.
 	 * <p>
 	 * The honest smooth-versus-sharp control. {@link #normalSmoothing} was never one: it blends two

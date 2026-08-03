@@ -26,6 +26,11 @@ import org.joml.Vector3f;
  * the mesher needs.
  */
 public final class BodySdf {
+	/**
+	 * Fillet radius where a limb meets the trunk, as a fraction of the within-group blend radius.
+	 */
+	private static final float TRUNK_LIMB_BLEND = 0.6f;
+
 	private static final float FAR = 1.0e4f;
 	private static final int TARGET_CELLS_PER_AXIS = 10;
 
@@ -294,7 +299,21 @@ public final class BodySdf {
 		} else if (limbs >= FAR) {
 			d = trunk;
 		} else {
-			d = Math.min(trunk, limbs);
+			// Where a limb meets the body, faired rather than butted.
+			//
+			// Grouping is what stops neighbouring legs fusing into webbing, and it works by refusing
+			// to blend across group boundaries at all. But the trunk is a group too, so the same rule
+			// that keeps two legs apart also butted every limb against the body with a hard min —
+			// a crease running right around each shoulder and hip, and on a fat torso a visible
+			// seam where the blob meets the spine.
+			//
+			// Blending here is safe in a way that blending limb-to-limb is not: {@code limbs} is
+			// already the plain minimum across the separate limb groups, so smoothing it against the
+			// trunk fairs each limb into the body without giving two limbs any way to reach each
+			// other. Narrower than the within-group radius, because a shoulder should be a fillet,
+			// not a merge — at the full radius a limb root swells into the torso and the leg appears
+			// to start halfway down the body.
+			d = MathX.smoothMin(trunk, limbs, blendRadius * TRUNK_LIMB_BLEND);
 		}
 		// Subtractive pass, applied after so carving always wins.
 		for (int i = from; i < to; i++) {
@@ -350,6 +369,43 @@ public final class BodySdf {
 			}
 		}
 		return Feature.VALUES[bestFeature];
+	}
+
+	/**
+	 * Blend group of the part nearest to the given point — {@link BoneDef#AXIAL} for the trunk, or
+	 * a limb's own id.
+	 * <p>
+	 * Exists so {@link dev.jsz.primordia.mesh.SurfaceNets} can tell <i>which</i> limb a piece of
+	 * surface belongs to. The extraction lattice stores one vertex per cell, so without this two
+	 * limbs passing through a single cell are given one shared vertex and are welded into each
+	 * other; the field keeps them apart and the lattice puts them back together. Same question as
+	 * {@link #featureAt}, and answered the same way, but about the blending identity rather than
+	 * the colouring one.
+	 */
+	public int groupAt(float x, float y, float z) {
+		int cell = cellFor(x, y, z);
+		int from = binStart[cell], to = binStart[cell + 1];
+		float best = FAR;
+		int bestGroup = BoneDef.AXIAL;
+		for (int i = from; i < to; i++) {
+			int part = binParts[i];
+			float d;
+			int group;
+			if (part < capsuleCount) {
+				d = capsuleDistance(part, x, y, z);
+				group = capsuleGroup[part];
+			} else {
+				int b = part - capsuleCount;
+				if (blobSubtract[b]) continue;
+				d = blobDistance(b, x, y, z);
+				group = blobGroup[b];
+			}
+			if (d < best) {
+				best = d;
+				bestGroup = group;
+			}
+		}
+		return bestGroup;
 	}
 
 	private float capsuleDistance(int index, float px, float py, float pz) {

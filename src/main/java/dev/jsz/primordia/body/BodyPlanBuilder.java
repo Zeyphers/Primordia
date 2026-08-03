@@ -60,6 +60,27 @@ public final class BodyPlanBuilder {
 	private static final float FOREMOST_LEG_U = 0.88f;
 	/** Spine parameter the rear-most pair reaches at maximum clustering. */
 	private static final float HINDMOST_LEG_U = 0.62f;
+
+	/**
+	 * Upper bound of the {@code size} local variable (metres, roughly) that
+	 * {@code g.biased(Gene.SIZE, 0.35f, 1.45f, 2.2f)} can produce. Named and reused rather than
+	 * repeated as a literal so the leg-narrowing curve below cannot silently drift out of step with
+	 * the range it is narrowing across.
+	 */
+	private static final float SIZE_RANGE_MAX = 1.45f;
+	/**
+	 * {@code size} above which a creature starts standing straighter under itself. Comfortably past
+	 * the middle of the size range — narrowing only matters once an animal is genuinely large, not
+	 * merely above average.
+	 */
+	private static final float GRAVIPORTAL_SIZE_THRESHOLD = 0.85f;
+	/**
+	 * Stance width remaining at {@link #SIZE_RANGE_MAX}, as a fraction of what the splay gene alone
+	 * would give. Well short of zero: even the largest creature still has a real gene-driven stance,
+	 * just a narrow one, so {@code LEG_SPLAY} keeps doing something at every size rather than being
+	 * overridden into a fixed column.
+	 */
+	private static final float GRAVIPORTAL_STANCE_FLOOR = 0.45f;
 	/**
 	 * Required hip-to-hip spacing between adjacent leg pairs, in multiples of the leg radius.
 	 * Two capsules of radius r are exactly touching at 2r, so this is a 15% clearance margin.
@@ -90,7 +111,7 @@ public final class BodyPlanBuilder {
 		// cubic curve puts the median creature near 0.9 m while still allowing 5 m outliers, so a
 		// large animal reads as an event. With a gentler curve the whole population drifts big and
 		// nothing looks large by comparison.
-		float size = g.biased(Gene.SIZE, 0.35f, 1.45f, 2.2f);
+		float size = g.biased(Gene.SIZE, 0.35f, SIZE_RANGE_MAX, 2.2f);
 		float torsoLength = size * g.range(Gene.TORSO_LENGTH, 0.45f, 1.7f);
 		float girth = size * g.range(Gene.TORSO_GIRTH, 0.10f, 0.38f);
 		float taper = g.range(Gene.TORSO_TAPER, 0.55f, 1.45f);
@@ -367,6 +388,21 @@ public final class BodyPlanBuilder {
 		// trait that the median creature has is not a tell — it is just the default silhouette.
 		float legArch = g.biased(Gene.LEG_ARCH, 0f, 1f, 2.6f);
 
+		// Large animals stand straighter under themselves — a real elephant's legs are close to
+		// vertical columns, not a lizard's sideways sprawl, because a wide stance turns body weight
+		// into a bending moment at the hip and that moment grows with both the weight (~size³) and
+		// the lever arm the splay itself creates. A small creature can afford to sprawl; scaled up
+		// to a sauropod's mass the same fraction of splay reads as an animal about to tear its own
+		// hip apart, and it does not just look wrong: a wide, huge stance was pushing the standing
+		// rest pose out toward the IK solver's stretch limit before a single step had been taken,
+		// so the ordinary sway of walking was enough to snap the leg against its own clamp.
+		// Narrowing here rather than only through the archetype bands is what makes any creature
+		// that ends up large — through mutation as much as through a SAURIAN founder — inherit the
+		// straighter stance its size actually needs.
+		float sizeNarrowing = MathX.lerp(1f, GRAVIPORTAL_STANCE_FLOOR,
+				MathX.clamp01((size - GRAVIPORTAL_SIZE_THRESHOLD)
+						/ (SIZE_RANGE_MAX - GRAVIPORTAL_SIZE_THRESHOLD)));
+
 		// Feet fan forward and back along the body instead of every leg reaching straight out to
 		// the side. Hip spacing alone only separates the limbs where they meet the body; parallel
 		// legs stay exactly as close for their whole length, so the fan is what keeps them apart
@@ -389,7 +425,7 @@ public final class BodyPlanBuilder {
 				// Arched limbs stand wider. A leg that tents up over the body has to put its foot
 				// further out to reach the ground at all, and the sprawl is half of what makes an
 				// arachnid read as one — the same span on straight legs is just a tall animal.
-				float stance = splay * (1f + 0.85f * legArch);
+				float stance = splay * (1f + 0.85f * legArch) * sizeNarrowing;
 				Vector3f hip = new Vector3f(s * rAt * 0.85f, spineAt.y - rAt * 0.35f, spineAt.z);
 				Vector3f foot = new Vector3f(hip.x + s * (rAt * 0.25f + hipHeight * stance), 0f,
 						hip.z + fanBias * fanReach);

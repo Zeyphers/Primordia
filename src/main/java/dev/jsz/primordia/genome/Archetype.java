@@ -120,7 +120,14 @@ public enum Archetype {
 				band(v, Gene.TAIL_SEGMENTS, 0.7f, 1f, random);
 				band(v, Gene.HEAD_SIZE, 0.05f, 0.3f, random);       // famously small head
 				band(v, Gene.TORSO_GIRTH, 0.6f, 0.9f, random);
-				band(v, Gene.LEG_LENGTH, 0.5f, 0.8f, random);
+				// Longer, and held close to the body rather than sprawled. "Pillar legs" was
+				// already the intent behind the thickness band below, but nothing had ever
+				// actually narrowed the stance to match it — legs this heavy at a splay left to
+				// chance came out sprawled far wider than a sauropod's near-vertical columns, and
+				// the standing rest pose already sat close to the IK solver's stretch limit before
+				// a single step had been taken, which is what read as the legs snapping.
+				band(v, Gene.LEG_LENGTH, 0.55f, 0.85f, random);
+				band(v, Gene.LEG_SPLAY, 0.05f, 0.25f, random);      // narrow, columnar stance
 				band(v, Gene.LEG_THICKNESS, 0.7f, 1f, random);      // pillar legs
 				band(v, Gene.DIET, 0f, 0.2f, random);
 				band(v, Gene.AGGRESSION, 0f, 0.3f, random);

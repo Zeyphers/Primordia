@@ -1,5 +1,6 @@
 package dev.jsz.primordia.mesh;
 
+import dev.jsz.primordia.body.BoneDef;
 import dev.jsz.primordia.sdf.BodySdf;
 import dev.jsz.primordia.util.MathX;
 import org.joml.Vector3f;
@@ -18,6 +19,8 @@ import org.joml.Vector3f;
  * then walk every sign-changing lattice edge and stitch the four cells around it into a quad.
  */
 public final class SurfaceNets {
+	/** No limb seen yet; distinct from {@link BoneDef#AXIAL}, which is a real group. */
+	private static final int NO_GROUP = -1;
 	/** Corner offsets, indexed 0..7 as (x, y, z) bit fields: bit0 = x, bit1 = y, bit2 = z. */
 	private static final int[][] CORNER = {
 			{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0},
@@ -111,6 +114,15 @@ public final class SurfaceNets {
 		int cellsX = nx - 1, cellsY = ny - 1, cellsZ = nz - 1;
 		int[] cellVertex = new int[cellsX * cellsY * cellsZ];
 		java.util.Arrays.fill(cellVertex, -1);
+		// A cell straddling two limbs carries a second vertex, one per limb. Parallel arrays rather
+		// than a map: the split is rare but the lookup is on the hot path of the quad pass, and a
+		// second int array per cell costs less than boxing a key for every cell that is not split.
+		int[] cellVertexB = new int[cellsX * cellsY * cellsZ];
+		int[] cellGroup = new int[cellsX * cellsY * cellsZ];
+		int[] cellGroupB = new int[cellsX * cellsY * cellsZ];
+		java.util.Arrays.fill(cellVertexB, -1);
+		java.util.Arrays.fill(cellGroup, NO_GROUP);
+		java.util.Arrays.fill(cellGroupB, NO_GROUP);
 
 		FloatList positions = new FloatList(4096);
 		FloatList normals = new FloatList(4096);
@@ -130,8 +142,16 @@ public final class SurfaceNets {
 					// All corners on the same side: no surface passes through this cell.
 					if (mask == 0 || mask == 0xFF) continue;
 
+					// Crossings are accumulated per limb as well as in total, because a cell holding
+					// two limbs at once has to produce a vertex for each of them rather than one
+					// vertex between them. Only two distinct limbs are tracked: a cell containing
+					// three separate ones would need all three within a cell of each other, which
+					// no body plan produces, and the general case would cost every cell a list.
 					float sx = 0f, sy = 0f, sz = 0f;
-					int crossings = 0;
+					float ax2 = 0f, ay2 = 0f, az2 = 0f;
+					float bx2 = 0f, by2 = 0f, bz2 = 0f;
+					int crossings = 0, countA = 0, countB = 0;
+					int limbA = NO_GROUP, limbB = NO_GROUP;
 					for (int e = 0; e < 12; e++) {
 						int a = EDGE[e][0], b = EDGE[e][1];
 						boolean insideA = (mask & (1 << a)) != 0;
@@ -140,35 +160,65 @@ public final class SurfaceNets {
 						// Linear interpolation to the zero crossing along this edge.
 						float t = corners[a] / (corners[a] - corners[b]);
 						t = MathX.clamp01(t);
-						sx += CORNER[a][0] + (CORNER[b][0] - CORNER[a][0]) * t;
-						sy += CORNER[a][1] + (CORNER[b][1] - CORNER[a][1]) * t;
-						sz += CORNER[a][2] + (CORNER[b][2] - CORNER[a][2]) * t;
+						float ex = CORNER[a][0] + (CORNER[b][0] - CORNER[a][0]) * t;
+						float ey = CORNER[a][1] + (CORNER[b][1] - CORNER[a][1]) * t;
+						float ez = CORNER[a][2] + (CORNER[b][2] - CORNER[a][2]) * t;
+						sx += ex;
+						sy += ey;
+						sz += ez;
 						crossings++;
+
+						int g = sdf.groupAt(min.x + (x + ex) * cell, min.y + (y + ey) * cell,
+								min.z + (z + ez) * cell);
+						// Trunk crossings belong to whichever limb is also present — a shoulder is
+						// one surface, and splitting it would tear the limb off the body.
+						if (g == BoneDef.AXIAL) continue;
+						if (limbA == NO_GROUP) limbA = g;
+						if (g == limbA) {
+							ax2 += ex; ay2 += ey; az2 += ez; countA++;
+						} else {
+							if (limbB == NO_GROUP) limbB = g;
+							if (g == limbB) {
+								bx2 += ex; by2 += ey; bz2 += ez; countB++;
+							}
+						}
 					}
 					if (crossings == 0) continue;
 
-					// The averaged crossing is what makes Surface Nets smooth; pinning the vertex to
-					// the middle of its cell instead is what makes it blocky. Every vertex then sits
-					// at a cell centre, so every quad joining two neighbouring cells is an
-					// axis-aligned square exactly one cell across — a voxel surface, arrived at by
-					// removing a step rather than by adding a mode.
-					float ox = voxels ? 0.5f : sx / crossings;
-					float oy = voxels ? 0.5f : sy / crossings;
-					float oz = voxels ? 0.5f : sz / crossings;
+					int slot = (z * cellsY + y) * cellsX + x;
 
-					float wx = min.x + (x + ox) * cell;
-					float wy = min.y + (y + oy) * cell;
-					float wz = min.z + (z + oz) * cell;
+					// The ordinary case, and every cell that is not straddling two limbs: one
+					// vertex at the average of the crossings. That average is what makes Surface
+					// Nets smooth; pinning the vertex to the middle of its cell instead is what
+					// makes it blocky. Every vertex then sits at a cell centre, so every quad
+					// joining two neighbouring cells is an axis-aligned square exactly one cell
+					// across — a voxel surface, arrived at by removing a step rather than adding a
+					// mode.
+					if (limbB == NO_GROUP || countA == 0 || countB == 0) {
+						float ox = voxels ? 0.5f : sx / crossings;
+						float oy = voxels ? 0.5f : sy / crossings;
+						float oz = voxels ? 0.5f : sz / crossings;
+						emitVertex(positions, normals, sdf, normal, min, cell, x, y, z, ox, oy, oz);
+						cellVertex[slot] = vertexCount++;
+						continue;
+					}
 
-					sdf.gradient(wx, wy, wz, normal);
-					positions.add(wx);
-					positions.add(wy);
-					positions.add(wz);
-					normals.add(normal.x);
-					normals.add(normal.y);
-					normals.add(normal.z);
+					// Two limbs in one cell. Each gets a vertex placed on its own surface, from its
+					// own crossings only, so the two stay separate solids instead of being joined
+					// through a single shared point sitting in the gap between them.
+					float oax = voxels ? 0.5f : ax2 / countA;
+					float oay = voxels ? 0.5f : ay2 / countA;
+					float oaz = voxels ? 0.5f : az2 / countA;
+					emitVertex(positions, normals, sdf, normal, min, cell, x, y, z, oax, oay, oaz);
+					cellVertex[slot] = vertexCount++;
+					cellGroup[slot] = limbA;
 
-					cellVertex[(z * cellsY + y) * cellsX + x] = vertexCount++;
+					float obx = voxels ? 0.5f : bx2 / countB;
+					float oby = voxels ? 0.5f : by2 / countB;
+					float obz = voxels ? 0.5f : bz2 / countB;
+					emitVertex(positions, normals, sdf, normal, min, cell, x, y, z, obx, oby, obz);
+					cellVertexB[slot] = vertexCount++;
+					cellGroupB[slot] = limbB;
 				}
 			}
 		}
@@ -199,25 +249,34 @@ public final class SurfaceNets {
 
 					// +X edge: spanned by cells varying in Y and Z.
 					if (x < nx - 1 && yInterior && zInterior) {
-						boolean inside1 = field[index(x + 1, y, z, nx, ny)] < 0f;
-						if (inside0 != inside1) {
-							emitQuad(quads, cellVertex, cellsX, cellsY, pos, nrm, inside0,
+						float v1 = field[index(x + 1, y, z, nx, ny)];
+						if (inside0 != (v1 < 0f)) {
+							float t = MathX.clamp01(v0 / (v0 - v1));
+							emitQuad(quads, cellVertex, cellVertexB, cellGroup, cellGroupB,
+									cellsX, cellsY, pos, nrm, inside0, sdf,
+									min.x + (x + t) * cell, min.y + y * cell, min.z + z * cell,
 									x, y - 1, z - 1, x, y, z - 1, x, y, z, x, y - 1, z);
 						}
 					}
 					// +Y edge: spanned by cells varying in X and Z.
 					if (y < ny - 1 && xInterior && zInterior) {
-						boolean inside1 = field[index(x, y + 1, z, nx, ny)] < 0f;
-						if (inside0 != inside1) {
-							emitQuad(quads, cellVertex, cellsX, cellsY, pos, nrm, inside0,
+						float v1 = field[index(x, y + 1, z, nx, ny)];
+						if (inside0 != (v1 < 0f)) {
+							float t = MathX.clamp01(v0 / (v0 - v1));
+							emitQuad(quads, cellVertex, cellVertexB, cellGroup, cellGroupB,
+									cellsX, cellsY, pos, nrm, inside0, sdf,
+									min.x + x * cell, min.y + (y + t) * cell, min.z + z * cell,
 									x - 1, y, z - 1, x - 1, y, z, x, y, z, x, y, z - 1);
 						}
 					}
 					// +Z edge: spanned by cells varying in X and Y.
 					if (z < nz - 1 && xInterior && yInterior) {
-						boolean inside1 = field[index(x, y, z + 1, nx, ny)] < 0f;
-						if (inside0 != inside1) {
-							emitQuad(quads, cellVertex, cellsX, cellsY, pos, nrm, inside0,
+						float v1 = field[index(x, y, z + 1, nx, ny)];
+						if (inside0 != (v1 < 0f)) {
+							float t = MathX.clamp01(v0 / (v0 - v1));
+							emitQuad(quads, cellVertex, cellVertexB, cellGroup, cellGroupB,
+									cellsX, cellsY, pos, nrm, inside0, sdf,
+									min.x + x * cell, min.y + y * cell, min.z + (z + t) * cell,
 									x - 1, y - 1, z, x, y - 1, z, x, y, z, x - 1, y, z);
 						}
 					}
@@ -244,14 +303,36 @@ public final class SurfaceNets {
 	 * {@link MeshBaker} re-checks this against the final smoothed normals afterwards, because
 	 * smoothing can rotate a vertex normal past the point where this decision still holds.
 	 */
-	private static void emitQuad(IntList out, int[] cellVertex, int cellsX, int cellsY,
+	private static void emitQuad(IntList out, int[] cellVertex, int[] cellVertexB,
+	                             int[] cellGroup, int[] cellGroupB, int cellsX, int cellsY,
 	                             float[] pos, float[] nrm, boolean flipHint,
+	                             BodySdf sdf, float wx, float wy, float wz,
 	                             int ax, int ay, int az, int bx, int by, int bz,
 	                             int cx, int cy, int cz, int dx, int dy, int dz) {
-		int a = cellVertex[(az * cellsY + ay) * cellsX + ax];
-		int b = cellVertex[(bz * cellsY + by) * cellsX + bx];
-		int c = cellVertex[(cz * cellsY + cy) * cellsX + cx];
-		int d = cellVertex[(dz * cellsY + dy) * cellsX + dx];
+		int sa = (az * cellsY + ay) * cellsX + ax;
+		int sb = (bz * cellsY + by) * cellsX + bx;
+		int sc = (cz * cellsY + cy) * cellsX + cx;
+		int sd = (dz * cellsY + dy) * cellsX + dx;
+
+		int a, b, c, d;
+		// Fast path: no cell around this edge holds two limbs, so there is nothing to disambiguate
+		// and no reason to pay for a field query. True for all but a handful of cells per creature.
+		if (cellVertexB[sa] < 0 && cellVertexB[sb] < 0 && cellVertexB[sc] < 0 && cellVertexB[sd] < 0) {
+			a = cellVertex[sa];
+			b = cellVertex[sb];
+			c = cellVertex[sc];
+			d = cellVertex[sd];
+		} else {
+			// Otherwise ask which limb this stretch of surface actually belongs to, and take the
+			// vertex each cell contributes to that limb. A cell with nothing on this limb returns
+			// -1 and the face is dropped, which is the point: that face would have been the one
+			// bridging two limbs.
+			int group = sdf.groupAt(wx, wy, wz);
+			a = vertexFor(cellVertex, cellVertexB, cellGroup, cellGroupB, sa, group);
+			b = vertexFor(cellVertex, cellVertexB, cellGroup, cellGroupB, sb, group);
+			c = vertexFor(cellVertex, cellVertexB, cellGroup, cellGroupB, sc, group);
+			d = vertexFor(cellVertex, cellVertexB, cellGroup, cellGroupB, sd, group);
+		}
 		if (a < 0 || b < 0 || c < 0 || d < 0) return;
 
 		float e1x = pos[b * 3] - pos[a * 3];
@@ -287,6 +368,38 @@ public final class SurfaceNets {
 
 	private static int index(int x, int y, int z, int nx, int ny) {
 		return (z * ny + y) * nx + x;
+	}
+
+	/** Appends one dual vertex at the given fractional offset within cell (x, y, z). */
+	private static void emitVertex(FloatList positions, FloatList normals, BodySdf sdf,
+	                               Vector3f normal, Vector3f min, float cell,
+	                               int x, int y, int z, float ox, float oy, float oz) {
+		float wx = min.x + (x + ox) * cell;
+		float wy = min.y + (y + oy) * cell;
+		float wz = min.z + (z + oz) * cell;
+		sdf.gradient(wx, wy, wz, normal);
+		positions.add(wx);
+		positions.add(wy);
+		positions.add(wz);
+		normals.add(normal.x);
+		normals.add(normal.y);
+		normals.add(normal.z);
+	}
+
+	/**
+	 * The vertex a cell contributes to a surface belonging to {@code group}, or -1 if it has none.
+	 * <p>
+	 * An unsplit cell answers with its single vertex whatever is asked, which is what keeps every
+	 * ordinary quad — the overwhelming majority — stitching exactly as before. A split cell answers
+	 * only with the vertex on the matching limb, so a face can never reach from one limb to the
+	 * other through it.
+	 */
+	private static int vertexFor(int[] cellVertex, int[] cellVertexB, int[] cellGroup,
+	                            int[] cellGroupB, int slot, int group) {
+		if (cellVertexB[slot] < 0) return cellVertex[slot];
+		if (cellGroup[slot] == group) return cellVertex[slot];
+		if (cellGroupB[slot] == group) return cellVertexB[slot];
+		return -1;
 	}
 
 	// ------------------------------------------------------- tiny growable buffers

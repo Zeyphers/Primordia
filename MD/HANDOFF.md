@@ -3,7 +3,7 @@
 Start here, then read [`README.md`](../README.md) for what the mod is and
 [`PITFALLS.md`](PITFALLS.md) before changing anything in the geometry pipeline.
 
-**State:** builds clean against Minecraft 1.21.1, 101 tests pass.
+**State:** builds clean against Minecraft 26.2, 189 tests pass.
 
 ---
 
@@ -14,17 +14,23 @@ no wrapper to invoke. Gradle and a JDK were installed separately:
 
 | | |
 |---|---|
-| JDK 21 | `/opt/homebrew/opt/openjdk@21` (via `brew install openjdk@21`; only JDK 19 was present) |
-| Gradle 8.10 | `~/dev/tools/gradle-8.10/bin/gradle` (matches the wrapper properties) |
+| JDK 25 | `/opt/homebrew/opt/openjdk@25` — `build.gradle` sets `options.release = 25` |
+| Gradle 9.6.1 | `~/dev/tools/gradle-9.6.1/bin/gradle` |
 
 Every command below needs `JAVA_HOME` set inline — it does not persist.
 
 ```bash
 cd "/Users/jake/AI projects __/Primordia"
-JAVA_HOME=/opt/homebrew/opt/openjdk@21 ~/dev/tools/gradle-8.10/bin/gradle build
-JAVA_HOME=/opt/homebrew/opt/openjdk@21 ~/dev/tools/gradle-8.10/bin/gradle test
-JAVA_HOME=/opt/homebrew/opt/openjdk@21 ~/dev/tools/gradle-8.10/bin/gradle runClient
+JAVA_HOME=/opt/homebrew/opt/openjdk@25 ~/dev/tools/gradle-9.6.1/bin/gradle build
+JAVA_HOME=/opt/homebrew/opt/openjdk@25 ~/dev/tools/gradle-9.6.1/bin/gradle test
+JAVA_HOME=/opt/homebrew/opt/openjdk@25 ~/dev/tools/gradle-9.6.1/bin/gradle runClient
 ```
+
+**Not JDK 21 and not Gradle 8.10**, both of which this file used to name and both of which now fail
+outright: Loom 1.17.17 publishes its plugin marker for Gradle 9.5+, so 8.10 cannot even resolve the
+classpath, and it fails at *configuration* time with a variant-matching wall of text that does not
+mention the Gradle version. `gradle/wrapper/gradle-wrapper.properties` still says 8.10 and is also
+stale; there is still no `gradlew`, so nothing reads it.
 
 `.agents/AGENTS.md` says never to use `runClient`. **That rule is about the author's Windows box**,
 where it opened an invisible window. On macOS it is the normal way to run, and it is how everything
@@ -210,3 +216,98 @@ was designed to provide.
 box and suffocates anything whose eye is inside a block, so an uncapped box would have long-necked
 creatures taking damage under every tree. `RegionMaterialiser.place` checks headroom for the animal
 it is actually placing, for the same reason.
+
+## Toes sticking together on spider-like creatures — root-caused and fixed
+
+The user's description, which is what made this findable: *"with spider like creatures the toes
+verts stick together causing a quad to be stretched between the legs, and it usually happens at the
+toes."* That is not a modelling complaint. It names the mechanism — vertices shared between two
+legs — and everything below followed from taking it literally.
+
+**Cause: `SkinBinder` ignored `blendGroup`.** A vertex could take real weight from two different
+limbs at once. It is then driven by both, follows neither, and the faces around it stretch across
+the gap as the gait swings the legs apart. Measured before the fix, at near tier: **8.8% of all
+arachnid vertices** were weighted to two different legs (insectoid 9.1%, crustacean 11.9%). After:
+**zero, on every archetype.**
+
+The fix is one rule — a vertex may be influenced by the trunk and by *one* limb, never two — and it
+is not a new idea, it is the rule `BoneDef.blendGroup` already encodes and that the SDF has always
+enforced to stop adjacent legs fusing into webbing. The field held a spider's legs apart and the
+skinning tied them back together. The two halves of the pipeline now agree.
+
+### Why the previous session's hop filter could not have worked
+
+`MAX_HOPS` is still there and still earns its place for the ornament case, but it cannot separate
+two legs and no tightening of it ever could. **`legA_0` and `legB_0` are both children of a spine
+bone, so a creature's opposite legs are two hops apart** — inside any budget that still lets a knee
+blend with its own thigh. The 6-hop margin in that constant's doc comment is sound arithmetic for
+ornament-to-leg and irrelevant to leg-to-leg. Distance is no help either: on an arachnid the
+neighbouring leg genuinely *is* nearby, which is simply what the animal looks like.
+
+### Why no existing test caught it, which is the part worth remembering
+
+- `LimbSeparationTest` asks the **SDF** whether there is material in the gap. There is not. The gap
+  is real and correct at every sample. Nothing about the field was ever wrong.
+- `SkinBindingTopologyTest` checks that the hop filter does what it was written to do. It does. That
+  was never the same claim as "the symptom is gone" — and the gap between those two is precisely
+  what this thread kept falling into.
+
+`CrossLimbSkinningTest` asserts on the **shipped bone weights**, which is the only place the defect
+is visible. It was confirmed to fail when the new filter is disabled, rather than being assumed to
+guard anything (`PITFALLS.md` warns about exactly that, and it nearly happened again here).
+
+## Two things measured and deliberately left unfixed
+
+Both were found by the same diagnostic and neither is what the user reported. Numbers are per 24
+specimens at near tier.
+
+**1. Arms weld into the front legs, and into each other.** Once the leg-to-leg skinning was fixed,
+every remaining face spanning two limbs was an arm: `arm0R_0 + leg0R_0` (340), `arm0L_0 + leg0L_0`
+(337) on arachnids; on crustaceans the worst is `arm0R_1 + arm1R_1` (468). **Zero leg-to-leg pairs
+remain.** Arms attach at `u = 0.92 - pair * 0.16` and the foremost legs at `FOREMOST_LEG_U = 0.88`,
+so they grow from nearly the same place on the spine.
+
+This is a *mesh topology* weld, not a skinning one, and it needs a different fix. The obvious trick
+does not transfer: **arms are not IK-solved.** `CreatureAnimator.swingArm` rotates them from
+`skeleton.bindDirection`, so unlike a leg — whose on-screen position comes from `restEffector` via
+FABRIK, leaving the bind pose free — moving an arm's bind pose visibly moves the arm. Fixing this
+means either separating the attachments (a silhouette change, and so the user's call) or making the
+mesher able to hold two surfaces apart inside one cell.
+
+**2. Toe capsules pass within one mesh cell of the neighbouring leg.** Worst same-side toe clearance
+is 0.61 cells on crustaceans, and 4 insectoid toes in 182 actually *interpenetrate* the next limb
+(worst gap -0.020). `LimbSeparationTest` cannot see this: it builds its pairs from `LimbChain.bones`,
+and **the toe bone is appended after `buildLimb` returns, so it is in no chain and is never
+examined.**
+
+### A bake-pose spread was tried for this, and it does not work
+
+Worth recording so it is not re-derived. Baking the legs further apart and letting IK pull them back
+to the true stance — the trick `BodyPlan.jawRestAngle` already uses for the mouth, and it does work
+for legs — cleanly fixed the toe numbers (foot welds 88 → 0 and 36 → 0, interpenetrations 4 → 0,
+worst clearance 0.61 → 1.74 cells). It was still reverted, because **it is self-defeating on exactly
+the creatures it targets.** Any spread enlarges the bind-pose bounding box; a larger box means a
+larger sampling span; `MeshBaker.resolutionFor` is capped at 1.8x the tier's resolution, so past that
+cap the cells simply get coarser. It buys sub-cell clearance by making the cell bigger. On thin-limbed
+arachnids that is a losing trade, and it showed up as `ThinLimbTest` failing with a whole limb
+vanishing from the mesh (`PITFALLS.md` §3) at every spread down to 1x the thinnest limb radius.
+
+**The real fix for both is in the mesher.** `SurfaceNets` stores one vertex per grid cell
+(`cellVertex`, one `int` per cell), so two surfaces passing through the same cell do not get one
+vertex each — they get one vertex *between* them, and pass 3 stitches quads through it. That is a
+structural limit of the extraction, and it is what both remaining items are. Splitting a cell's
+vertex by `blendGroup` would fix the class outright, at the cost of a real change to the core mesher
+and its quad stitching.
+
+## Still not confirmed on screen
+
+**The fix has not been looked at in a running client.** What it has is an oracle that measures the
+reported symptom directly rather than measuring the implementation — 8.8% to 0%, and a guard test
+proven to fail without it — which is a materially better position than this thread has been in
+before. It is not the same thing as having seen it.
+
+The veil/frill stretch was **not** investigated; the user explicitly deprioritised it ("I don't care
+about the veil so much"). The `SkinBinder` analysis in the previous handoff still stands for it: the
+binder knows only `plan.bones` and nothing of `plan.blobs`, so an ornament blob far from its anchor
+bone can still be misattributed, and the blend-group rule does not save it — if the owner is picked
+wrong, the wrong limb group is the one that gets admitted. Dedicated ornament bones remain the fix.

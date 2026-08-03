@@ -132,3 +132,14 @@ jar {
 		rename { "${it}_${project.archives_base_name}" }
 	}
 }
+
+// primordia-editor-task
+// Development-only viewer for the creature pipeline; see EditorServer's class comment. Uses the
+// test runtime classpath because that is what already carries main plus Minecraft, and because
+// keeping the tool out of the main source set is what keeps it out of the shipped jar.
+tasks.register('editor', JavaExec) {
+	group = 'primordia'
+	description = 'Serves the creature editor on http://127.0.0.1:8090/'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.editor.EditorServer'
+}

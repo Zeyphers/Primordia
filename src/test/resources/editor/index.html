@@ -1,0 +1,2097 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Primordia — creature editor</title>
+<style>
+  /* Monocraft: the open Minecraft-alike (SIL OFL), self-hosted so the tool works offline. */
+  @font-face {
+    font-family: 'Monocraft'; src: url('/assets/Monocraft.ttf') format('truetype');
+    font-weight: 400; font-display: swap;
+  }
+  @font-face {
+    font-family: 'Monocraft'; src: url('/assets/Monocraft-Bold.ttf') format('truetype');
+    font-weight: 700; font-display: swap;
+  }
+
+  /* Minecraft's dark GUI. Structure is carried by two-tone bevels — light top/left, dark
+     bottom/right — which is how every button and inset is drawn in game. Nothing is rounded or
+     blurred; the moment something is, it stops reading as Minecraft. Every text/background pair
+     below is checked at 4.5:1 or better. */
+  :root {
+    --void:        #101010;   /* viewport + page behind everything */
+    --panel:       #313131;   /* sidebar face */
+    --well:        #242424;   /* sunken group */
+    --edge-lit:    #5c5c5c;   /* bevel highlight */
+    --edge-dark:   #131313;   /* bevel shadow */
+    --btn:         #5a5a5a;
+    --btn-lit:     #7a7a7a;
+    --btn-hover:   #476690;
+    --ink:         #e4e4e4;
+    --ink-dim:     #a9a9a9;
+    --accent:      #3c8527;
+    --accent-lit:  #5aa83e;
+    --accent-dark: #2b5e1c;
+    --danger:      #a83232;
+    --amber:       #ffd54a;
+    --pixel: 2px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: var(--void); color: var(--ink);
+    font-family: 'Monocraft', ui-monospace, Menlo, monospace;
+    font-size: 14px; line-height: 1.55;
+    -webkit-font-smoothing: none; font-smooth: never;
+  }
+  #app { display: flex; height: 100%; }
+
+  /* Keyboard users land here first and can jump straight past 80-odd controls to the viewport. */
+  .skip {
+    position: absolute; left: -9999px; top: 0; z-index: 10; padding: 8px 12px;
+    background: var(--accent); color: #fff; border: var(--pixel) solid var(--accent-lit);
+  }
+  .skip:focus { left: 8px; top: 8px; }
+
+  /* ---- sidebar ---------------------------------------------------------- */
+  #side {
+    width: var(--side-w, 320px); flex: none; overflow-y: auto; overflow-x: hidden;
+    background: var(--panel); border-right: var(--pixel) solid var(--edge-dark); padding: 8px;
+  }
+  #side::-webkit-scrollbar { width: 10px; }
+  #side::-webkit-scrollbar-track { background: var(--well); }
+  #side::-webkit-scrollbar-thumb { background: var(--btn); border: var(--pixel) solid var(--btn-lit); }
+
+  #brand { display: block; width: 100%; height: auto; image-rendering: pixelated; margin-bottom: 8px; }
+
+  .group { margin-bottom: 8px; }
+  .group > .head, details.group > summary {
+    font-size: 13px; color: var(--ink-dim); letter-spacing: .05em; text-transform: uppercase;
+    padding: 5px 2px; user-select: none;
+  }
+  details.group > summary { cursor: pointer; list-style: none; }
+  details.group > summary::-webkit-details-marker { display: none; }
+  details.group > summary::before { content: '\25B6  '; font-size: 11px; }
+  details.group[open] > summary::before { content: '\25BC  '; }
+  details.group > summary:hover { color: var(--ink); }
+  details.group > summary:focus-visible { outline: var(--pixel) solid var(--ink); }
+
+  .well {
+    background: var(--well); padding: 7px;
+    border-top: var(--pixel) solid var(--edge-dark);
+    border-left: var(--pixel) solid var(--edge-dark);
+    border-bottom: var(--pixel) solid var(--edge-lit);
+    border-right: var(--pixel) solid var(--edge-lit);
+  }
+
+  /* ---- buttons ---------------------------------------------------------- */
+  button {
+    display: block; width: 100%; padding: 3px 6px; cursor: pointer;
+    font: inherit; font-size: 15px; color: #fff; background: var(--btn);
+    text-shadow: var(--pixel) var(--pixel) 0 var(--edge-dark);
+    border-top: var(--pixel) solid var(--btn-lit); border-left: var(--pixel) solid var(--btn-lit);
+    border-bottom: var(--pixel) solid var(--edge-dark); border-right: var(--pixel) solid var(--edge-dark);
+  }
+  button:hover { background: var(--btn-hover); }
+  button:focus-visible { outline: var(--pixel) solid #fff; outline-offset: var(--pixel); }
+  button:active, button[aria-pressed="true"] {
+    border-top: var(--pixel) solid var(--edge-dark); border-left: var(--pixel) solid var(--edge-dark);
+    border-bottom: var(--pixel) solid var(--btn-lit); border-right: var(--pixel) solid var(--btn-lit);
+  }
+  button[aria-pressed="true"] { background: var(--accent); }
+  button[aria-pressed="true"]:hover { background: var(--accent-lit); }
+  button.danger:hover { background: var(--danger); }
+  .btnrow { display: flex; gap: 5px; }
+  .btnrow > * { flex: 1; }
+  .seg { display: flex; }
+
+  /* ---- inputs ----------------------------------------------------------- */
+  label.field { display: block; margin: 9px 0 4px; font-size: 13px; color: var(--ink-dim); }
+  select, input[type=text], input[type=number], textarea {
+    width: 100%; padding: 8px; font: inherit; font-size: 14px; color: var(--ink);
+    background: var(--void); border: var(--pixel) solid var(--edge-lit);
+  }
+  select:focus-visible, input:focus-visible, textarea:focus-visible {
+    outline: var(--pixel) solid #fff; border-color: #fff;
+  }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none; width: 100%; height: 24px; background: var(--void);
+    border-top: var(--pixel) solid var(--edge-dark); border-left: var(--pixel) solid var(--edge-dark);
+    border-bottom: var(--pixel) solid var(--edge-lit); border-right: var(--pixel) solid var(--edge-lit);
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 22px; background: var(--btn);
+    border-top: var(--pixel) solid var(--btn-lit); border-left: var(--pixel) solid var(--btn-lit);
+    border-bottom: var(--pixel) solid var(--edge-dark); border-right: var(--pixel) solid var(--edge-dark);
+  }
+  input[type=range]:focus-visible { outline: var(--pixel) solid #fff; }
+  input[type=checkbox] { accent-color: var(--accent); width: 17px; height: 17px; cursor: pointer; }
+  input[type=checkbox]:focus-visible { outline: var(--pixel) solid #fff; }
+
+  .row { display: grid; grid-template-columns: max-content 1fr 54px; gap: 7px; align-items: center; margin: 5px 0; }
+  .row > .name { font-size: 13px; color: var(--ink-dim); white-space: nowrap; }
+  .row > input[type=range] { width: 100%; min-width: 0; }
+  .row > .val, input.val {
+    width: 54px; text-align: center; font-size: 13px; color: var(--ink);
+    background: var(--void); border: var(--pixel) solid var(--edge-dark);
+    padding: 2px 0; font-family: inherit; box-sizing: border-box; cursor: pointer;
+  }
+  input.val:focus-visible { outline: var(--pixel) solid #fff; border-color: #fff; }
+  input.val.selected {
+    background: var(--btn-hover) !important;
+    border-color: var(--amber) !important;
+    color: #fff !important;
+    outline: 1px solid var(--amber);
+  }
+
+  .gene-group { display: grid; grid-template-columns: max-content 1fr 54px; gap: 5px 7px; align-items: center; margin-bottom: 8px; }
+  .gene-group > .group-head { grid-column: 1 / -1; color: var(--accent); font-size: 9px; letter-spacing: .12em; margin: 10px 0 2px; text-transform: uppercase; }
+  .gene-row { display: contents; }
+  .gene-row > .name { font-size: 13px; color: var(--ink-dim); white-space: nowrap; }
+  .gene-row > input[type=range] { width: 100%; min-width: 0; }
+  .check { display: flex; align-items: center; gap: 8px; margin: 7px 0; min-height: 26px;
+    font-size: 13px; color: var(--ink-dim); cursor: pointer; }
+  .check:hover { color: var(--ink); }
+  .hint { font-size: 12px; color: var(--ink-dim); margin-top: 7px; line-height: 1.55; }
+
+  /* ---- viewport --------------------------------------------------------- */
+  /* Drag handle between the panel and the viewport. Wider than it looks — the visible rule is
+     2px but the grab area is 8px, because a 2px target is a miss most of the time. */
+  #resizer {
+    flex: none; width: 8px; cursor: col-resize; background: var(--void);
+    border-left: var(--pixel) solid var(--edge-dark);
+    border-right: var(--pixel) solid var(--edge-dark);
+  }
+  #resizer:hover, #resizer:focus-visible, #resizer.dragging { background: var(--accent); outline: none; }
+  #view { flex: 1; position: relative; min-width: 240px; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; outline: none; }
+  canvas:focus, canvas:focus-visible { outline: none !important; box-shadow: none !important; }
+
+  .overlay { position: absolute; pointer-events: none; color: var(--ink); font-size: 13px;
+    text-shadow: var(--pixel) var(--pixel) 0 #000; line-height: 1.7; }
+  #hud { top: 10px; left: 12px; }
+  #hud b { color: var(--amber); font-weight: normal; }
+  #hud .warn { color: #ff7a6b; }
+  #sel { bottom: 10px; left: 12px; }
+  #sel b { color: #7ee06a; font-weight: normal; }
+  #keys { bottom: 10px; right: 12px; text-align: right; color: #9a9a9a; font-size: 12px; }
+  #keys kbd { color: var(--amber); font: inherit; }
+  #mode {
+    top: 10px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff;
+    padding: 5px 12px; display: none; text-shadow: var(--pixel) var(--pixel) 0 var(--accent-dark);
+    border-top: var(--pixel) solid var(--accent-lit); border-left: var(--pixel) solid var(--accent-lit);
+    border-bottom: var(--pixel) solid var(--accent-dark); border-right: var(--pixel) solid var(--accent-dark);
+  }
+  #busy { top: 10px; right: 12px; color: var(--amber); display: none; }
+  #err {
+    left: 12px; right: 12px; bottom: 12px; display: none; pointer-events: auto;
+    background: var(--danger); color: #fff; padding: 8px 10px; white-space: pre-wrap;
+    text-shadow: var(--pixel) var(--pixel) 0 #4d1616;
+    border-top: var(--pixel) solid #c85454; border-left: var(--pixel) solid #c85454;
+    border-bottom: var(--pixel) solid #4d1616; border-right: var(--pixel) solid #4d1616;
+  }
+
+  /* ---- interactive guide spotlight overlay ------------------------------- */
+  #guideOverlay {
+    position: fixed; inset: 0; z-index: 1000; display: none;
+    background: transparent; pointer-events: none;
+  }
+  #guideHighlight {
+    position: fixed; pointer-events: none; z-index: 1001; display: none;
+    background: transparent;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.75), 0 0 0 var(--pixel) var(--amber);
+    transition: all 0.15s ease-out;
+  }
+  #guideTooltip {
+    position: fixed; z-index: 1002; display: none; width: 320px;
+    background: var(--panel); padding: 12px; pointer-events: auto;
+    border-top: var(--pixel) solid var(--edge-lit); border-left: var(--pixel) solid var(--edge-lit);
+    border-bottom: var(--pixel) solid var(--edge-dark); border-right: var(--pixel) solid var(--edge-dark);
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+  }
+  #guideTooltip .title {
+    font-size: 14px; font-weight: bold; color: var(--amber); margin-bottom: 6px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #guideTooltip .body {
+    font-size: 13px; color: var(--ink); line-height: 1.5; margin-bottom: 12px;
+  }
+  #guideTooltip .footer {
+    display: flex; justify-content: space-between; align-items: center; gap: 6px;
+  }
+  #guideTooltip .step-num { font-size: 12px; color: var(--ink-dim); }
+  #guideTooltip button { width: auto; padding: 3px 8px; font-size: 13px; }
+  
+  .brand-row { position: relative; width: 100%; margin-bottom: 8px; }
+  .brand-row img { width: 100%; height: auto; display: block; margin-bottom: 0 !important; }
+  #helpBtn {
+    position: absolute; top: 4px; left: 4px; z-index: 10;
+    width: 28px; height: 28px; padding: 0; text-align: center; line-height: 22px;
+    font-size: 14px; font-weight: bold; color: var(--amber);
+  }
+
+  /* Narrow windows: the sidebar would otherwise eat a small viewport entirely. */
+  @media (max-width: 720px) {
+    #side { width: var(--side-w, 250px); }
+    #keys { display: none; }
+  }
+
+  /* Minecraft's own UI is instant, and the Pixel Art style calls for instant transitions, so there
+     is nothing here to slow down. This disables the one thing that does move on its own: the walk
+     cycle auto-advancing. Playback stays available, it just will not start itself. */
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#gl">Skip to viewport</a>
+<div id="app">
+  <div id="side">
+    <div class="brand-row">
+      <button id="helpBtn" type="button" title="Interactive Guide">?</button>
+      <img id="brand" src="/assets/logo.png" alt="Primordia">
+    </div>
+
+    <div class="group">
+      <div class="head">Creature</div>
+      <div class="well">
+        <label class="field" for="archetype">Archetype</label>
+        <select id="archetype"></select>
+        <label class="field" for="seed">Seed</label>
+        <input type="number" id="seed" value="1">
+        <div class="btnrow" style="margin-top:8px">
+          <button id="reroll" type="button">Re-roll</button>
+        </div>
+        <div class="btnrow"><button id="resetGenes" type="button">Reset genes</button></div>
+      </div>
+    </div>
+
+    <!-- One choice instead of ten checkboxes. Each preset drives the individual toggles below, so
+         the underlying options still exist for anyone who wants them, but nobody has to assemble a
+         sensible combination by hand to see the creature. -->
+    <div class="group">
+      <div class="head">View</div>
+      <div class="well">
+        <div class="seg">
+          <button id="viewModel"    type="button" aria-pressed="true">Model</button>
+          <button id="viewRig"      type="button" aria-pressed="false">Rig</button>
+          <button id="viewDebug"    type="button" aria-pressed="false">Debug</button>
+        </div>
+        <div class="hint" id="viewHint">The creature exactly as the game draws it.</div>
+        <div class="row" style="margin-top:8px">
+          <span class="name">Blockiness</span>
+          <input type="range" id="voxel" min="0" max="0.25" step="0.03125" value="0.0625" list="voxelTicks"
+                 aria-label="Voxel size">
+          <datalist id="voxelTicks">
+            <option value="0"></option>
+            <option value="0.03125"></option>
+            <option value="0.0625"></option>
+            <option value="0.125"></option>
+            <option value="0.1875"></option>
+            <option value="0.25"></option>
+          </datalist>
+          <input type="text" class="val" id="voxelV" value="0.0625" aria-label="Blockiness value">
+        </div>
+        <div class="hint">0.0625 is the game's own. Drag to 0 for a smooth body.</div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="head">Animation</div>
+      <div class="well">
+        <div class="btnrow">
+          <button id="playBtn" type="button" aria-pressed="false">Play walk</button>
+          <button id="stopBtn" type="button">Stop</button>
+        </div>
+        <div class="row" style="margin-top:7px">
+          <span class="name">Speed</span>
+          <input type="range" id="animSpeed" min="0.2" max="6" step="0.1" value="0.8"
+                 aria-label="Walk speed">
+          <input type="text" class="val" id="animSpeedV" value="0.8" aria-label="Speed value">
+        </div>
+      </div>
+    </div>
+
+    <details class="group">
+      <summary>Genes</summary>
+      <div class="well">
+        <input type="text" id="geneFilter" placeholder="filter: leg, horn, hue..." aria-label="Filter genes">
+        <div class="btnrow" style="margin-top:6px">
+          <button id="selectAllGenes" type="button">Select all</button>
+          <button id="maxGenes" type="button">Set max</button>
+        </div>
+        <div id="genes" style="margin-top:6px"></div>
+      </div>
+    </details>
+
+    <details class="group">
+      <summary>Genome code</summary>
+      <div class="well">
+        <textarea id="code" readonly rows="3" aria-label="Genome code"></textarea>
+        <div class="btnrow" style="margin-top:6px"><button id="copyCode" type="button">Copy</button></div>
+        <div class="hint">Paste into <code>/primordia spawn code &lt;genome&gt;</code>.</div>
+      </div>
+    </details>
+
+    <details class="group">
+      <summary>Advanced</summary>
+      <div class="well">
+        <label class="check"><input type="checkbox" id="showStats"> Analytics overlay</label>
+        <label class="check"><input type="checkbox" id="showFps"> FPS counter</label>
+        <div class="hint">Vertex and face counts, bake time, weld count.</div>
+
+        <label class="field" for="tier">Detail tier</label>
+        <select id="tier">
+          <option value="0">Near (40)</option>
+          <option value="1">Mid (26)</option>
+          <option value="2">Far (15)</option>
+          <option value="3">Distant (9)</option>
+        </select>
+
+        <label class="field" for="colorBy">Colour by</label>
+        <select id="colorBy">
+          <option value="vertex">Vertex colour</option>
+          <option value="blend">Blend group</option>
+          <option value="normal">Normal</option>
+          <option value="weight">Selected bone weight</option>
+          <option value="flat">Flat grey</option>
+        </select>
+
+        <div style="margin-top:10px">
+          <label class="check"><input type="checkbox" id="showMesh" checked> Mesh</label>
+          <label class="check"><input type="checkbox" id="showBones"> Bones</label>
+          <label class="check"><input type="checkbox" id="showJoints"> Joints</label>
+          <label class="check"><input type="checkbox" id="showHandles"> Drag handles</label>
+          <label class="check"><input type="checkbox" id="inFront" checked> Draw through body</label>
+          <label class="check"><input type="checkbox" id="showWire"> Wireframe</label>
+          <label class="check"><input type="checkbox" id="showCross"> Cross-limb faces</label>
+          <label class="check"><input type="checkbox" id="showNormals"> Normals</label>
+          <label class="check"><input type="checkbox" id="showGrid" checked> Ground grid</label>
+          <label class="check"><input type="checkbox" id="emissive" checked> Emissive</label>
+          <label class="check"><input type="checkbox" id="sharpShade" checked> Sharp shading</label>
+          <label class="check"><input type="checkbox" id="flatFaceCol" checked> Flat face colour</label>
+        </div>
+
+        <div class="row" style="margin-top:10px">
+          <span class="name">Smoothing</span>
+          <input type="range" id="smoothing" min="0" max="1" step="0.01" value="0.75"
+                 aria-label="Normal smoothing">
+          <input type="text" class="val" id="smoothingV" value="0.75" aria-label="Smoothing value"></div>
+        <div class="hint">Only affects the smooth body; ignored while Blockiness is above zero.</div>
+      </div>
+    </details>
+  </div>
+
+  <div id="resizer" role="separator" aria-orientation="vertical" tabindex="0"
+       aria-label="Resize sidebar. Use left and right arrow keys."></div>
+
+  <div id="view">
+    <canvas id="gl" tabindex="0" role="img" aria-label="3D creature viewport. Drag to orbit, shift-drag to pan, scroll to zoom. Click a joint to select it."></canvas>
+    <div id="hud" class="overlay"></div>
+    <div id="fpsCounter" class="overlay" style="display:none; top: 12px; right: 12px; background: rgba(0,0,0,0.75); color: #00ff66; padding: 4px 8px; font-family: monospace; font-size: 12px; border: var(--pixel) solid rgba(0,255,102,0.3); z-index: 10;">60 FPS (16.7ms)</div>
+    <div id="toast" class="overlay" style="display:none; bottom: 44px; left: 50%; transform: translateX(-50%); background: var(--panel); border: var(--pixel) solid var(--amber); color: var(--amber); padding: 8px 16px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.5); z-index: 99; white-space: nowrap;">Pause animation to edit joints in Rig mode</div>
+    <div id="sel" class="overlay"></div>
+    <div id="busy" class="overlay">baking...</div>
+    <div id="keys" class="overlay">
+drag orbit &nbsp; <kbd>shift</kbd> pan &nbsp; <kbd>wheel</kbd> zoom &nbsp; <kbd>F</kbd> frame &nbsp; <kbd>space</kbd> play
+    </div>
+    <div id="err" class="overlay"></div>
+  </div>
+</div>
+
+<div id="guideOverlay"></div>
+<div id="guideHighlight"></div>
+<div id="guideTooltip">
+  <div class="title"><span id="guideTitle">Welcome</span></div>
+  <div class="body" id="guideText">Guide content goes here</div>
+  <div class="footer">
+    <span class="step-num" id="guideStepNum">Step 1 of 6</span>
+    <div class="btnrow" style="width:auto">
+      <button id="guidePrev" type="button">Back</button>
+      <button id="guideNext" type="button">Next</button>
+      <button id="guideSkip" type="button" class="danger">Skip</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------- tiny math
+// Column-major mat4, matching both JOML's Matrix4f.get(float[]) and WebGL's uniformMatrix4fv,
+// so matrices computed in Java arrive ready to use with no transposition anywhere.
+const M4 = {
+  ident: () => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
+  mul(a, b, out) {
+    out = out || new Float32Array(16);
+    for (let c = 0; c < 4; c++) {
+      const b0=b[c*4], b1=b[c*4+1], b2=b[c*4+2], b3=b[c*4+3];
+      out[c*4  ] = a[0]*b0 + a[4]*b1 + a[8]*b2  + a[12]*b3;
+      out[c*4+1] = a[1]*b0 + a[5]*b1 + a[9]*b2  + a[13]*b3;
+      out[c*4+2] = a[2]*b0 + a[6]*b1 + a[10]*b2 + a[14]*b3;
+      out[c*4+3] = a[3]*b0 + a[7]*b1 + a[11]*b2 + a[15]*b3;
+    }
+    return out;
+  },
+  fromQuat(q, out) {
+    const [x,y,z,w] = q;
+    out = out || new Float32Array(16);
+    const x2=x+x, y2=y+y, z2=z+z;
+    const xx=x*x2, xy=x*y2, xz=x*z2, yy=y*y2, yz=y*z2, zz=z*z2, wx=w*x2, wy=w*y2, wz=w*z2;
+    out[0]=1-(yy+zz); out[1]=xy+wz;     out[2]=xz-wy;     out[3]=0;
+    out[4]=xy-wz;     out[5]=1-(xx+zz); out[6]=yz+wx;     out[7]=0;
+    out[8]=xz+wy;     out[9]=yz-wx;     out[10]=1-(xx+yy);out[11]=0;
+    out[12]=0;        out[13]=0;        out[14]=0;        out[15]=1;
+    return out;
+  },
+  translate(x, y, z) {
+    const m = M4.ident(); m[12]=x; m[13]=y; m[14]=z; return m;
+  },
+  perspective(fovy, aspect, near, far) {
+    const f = 1/Math.tan(fovy/2), nf = 1/(near-far), o = new Float32Array(16);
+    o[0]=f/aspect; o[5]=f; o[10]=(far+near)*nf; o[11]=-1; o[14]=2*far*near*nf; return o;
+  },
+  lookAt(eye, at, up) {
+    let zx=eye[0]-at[0], zy=eye[1]-at[1], zz=eye[2]-at[2];
+    let l = Math.hypot(zx,zy,zz) || 1; zx/=l; zy/=l; zz/=l;
+    let xx=up[1]*zz-up[2]*zy, xy=up[2]*zx-up[0]*zz, xz=up[0]*zy-up[1]*zx;
+    l = Math.hypot(xx,xy,xz) || 1; xx/=l; xy/=l; xz/=l;
+    const yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
+    return new Float32Array([
+      xx,yx,zx,0, xy,yy,zy,0, xz,yz,zz,0,
+      -(xx*eye[0]+xy*eye[1]+xz*eye[2]),
+      -(yx*eye[0]+yy*eye[1]+yz*eye[2]),
+      -(zx*eye[0]+zy*eye[1]+zz*eye[2]), 1]);
+  },
+  transform(m, v) {
+    return [
+      m[0]*v[0]+m[4]*v[1]+m[8]*v[2]+m[12],
+      m[1]*v[0]+m[5]*v[1]+m[9]*v[2]+m[13],
+      m[2]*v[0]+m[6]*v[1]+m[10]*v[2]+m[14],
+      m[3]*v[0]+m[7]*v[1]+m[11]*v[2]+m[15]];
+  }
+};
+// General 4x4 inverse. Only used at load time, once per bone, so clarity beats cleverness.
+function invert4(m) {
+  const a = m, o = new Float32Array(16);
+  const b00=a[0]*a[5]-a[1]*a[4], b01=a[0]*a[6]-a[2]*a[4], b02=a[0]*a[7]-a[3]*a[4],
+        b03=a[1]*a[6]-a[2]*a[5], b04=a[1]*a[7]-a[3]*a[5], b05=a[2]*a[7]-a[3]*a[6],
+        b06=a[8]*a[13]-a[9]*a[12], b07=a[8]*a[14]-a[10]*a[12], b08=a[8]*a[15]-a[11]*a[12],
+        b09=a[9]*a[14]-a[10]*a[13], b10=a[9]*a[15]-a[11]*a[13], b11=a[10]*a[15]-a[11]*a[14];
+  let det = b00*b11-b01*b10+b02*b09+b03*b08-b04*b07+b05*b06;
+  if (!det) return M4.ident();
+  det = 1/det;
+  o[0]=(a[5]*b11-a[6]*b10+a[7]*b09)*det;  o[1]=(a[2]*b10-a[1]*b11-a[3]*b09)*det;
+  o[2]=(a[13]*b05-a[14]*b04+a[15]*b03)*det; o[3]=(a[10]*b04-a[9]*b05-a[11]*b03)*det;
+  o[4]=(a[6]*b08-a[4]*b11-a[7]*b07)*det;  o[5]=(a[0]*b11-a[2]*b08+a[3]*b07)*det;
+  o[6]=(a[14]*b02-a[12]*b05-a[15]*b01)*det; o[7]=(a[8]*b05-a[10]*b02+a[11]*b01)*det;
+  o[8]=(a[4]*b10-a[5]*b08+a[7]*b06)*det;  o[9]=(a[1]*b08-a[0]*b10-a[3]*b06)*det;
+  o[10]=(a[12]*b04-a[13]*b02+a[15]*b00)*det; o[11]=(a[9]*b02-a[8]*b04-a[11]*b00)*det;
+  o[12]=(a[5]*b07-a[4]*b09-a[6]*b06)*det; o[13]=(a[0]*b09-a[1]*b07+a[2]*b06)*det;
+  o[14]=(a[13]*b01-a[12]*b03-a[14]*b00)*det; o[15]=(a[8]*b03-a[9]*b01+a[10]*b00)*det;
+  return o;
+}
+
+const Q = {
+  ident: () => [0,0,0,1],
+  axisAngle(ax, ang) {
+    const h = ang/2, s = Math.sin(h), l = Math.hypot(ax[0],ax[1],ax[2]) || 1;
+    return [ax[0]/l*s, ax[1]/l*s, ax[2]/l*s, Math.cos(h)];
+  },
+  mul(a, b) {
+    return [
+      a[3]*b[0]+a[0]*b[3]+a[1]*b[2]-a[2]*b[1],
+      a[3]*b[1]-a[0]*b[2]+a[1]*b[3]+a[2]*b[0],
+      a[3]*b[2]+a[0]*b[1]-a[1]*b[0]+a[2]*b[3],
+      a[3]*b[3]-a[0]*b[0]-a[1]*b[1]-a[2]*b[2]];
+  },
+  fromEuler(x, y, z) {
+    let q = Q.axisAngle([1,0,0], x);
+    q = Q.mul(q, Q.axisAngle([0,1,0], y));
+    return Q.mul(q, Q.axisAngle([0,0,1], z));
+  }
+};
+
+// ---------------------------------------------------------------- state
+const S = {
+  data: null,            // last /api/bake payload
+  meta: null,            // /api/meta
+  genes: null,           // current gene values, authoritative between bakes
+  pose: [],              // per-bone quaternion, index-aligned with data.bones
+  rootOffset: [0,0,0],
+  selected: -1,
+  cam: { yaw: 0.7, pitch: 0.25, dist: 3, target: [0, 0.6, 0] },
+  bakeMs: 0,
+  dirty: true,
+  anim: null,        // {frames, bones, seconds, matrices} straight from CreatureAnimator
+  playing: false,
+  animT: 0,
+  handleDrag: null,  // {bone, group, gene, startLen, sx, sy}
+  solveNote: ''
+};
+
+// Which gene actually governs the length of the thing you grabbed. The solver needs one locus to
+// sweep, and these are the loci that BodyPlanBuilder derives each part's length from.
+const LENGTH_GENE = [
+  [/^leg/,  'LEG_LENGTH'], [/^foot/, 'FOOT_SIZE'],  [/^arm/,  'ARM_LENGTH'],
+  [/^neck/, 'NECK_LENGTH'],[/^tail/, 'TAIL_LENGTH'],[/^spine/,'TORSO_LENGTH'],
+  [/^head/, 'HEAD_SIZE'],  [/^jaw/,  'JAW_SIZE'],   [/^abdomen/, 'ABDOMEN_SIZE']
+];
+function geneForBone(name) {
+  for (const [re, g] of LENGTH_GENE) if (re.test(name)) return g;
+  return null;
+}
+
+const $ = id => document.getElementById(id);
+const canvas = $('gl');
+const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
+if (!gl) { $('err').style.display = 'block'; $('err').textContent = 'WebGL2 unavailable.'; }
+
+// ---------------------------------------------------------------- shaders
+function compile(vsSrc, fsSrc) {
+  const p = gl.createProgram();
+  for (const [type, src] of [[gl.VERTEX_SHADER, vsSrc], [gl.FRAGMENT_SHADER, fsSrc]]) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) + '\n' + src);
+    gl.attachShader(p, s);
+  }
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+// Linear blend skinning, identical in form to Skeleton.updateSkinMatrices + the game's skinning:
+// v' = sum(w_j * skin[j] * v). Bone matrices arrive in a float texture so bone count is unbounded.
+const meshProg = compile(`#version 300 es
+precision highp float;
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNrm;
+layout(location=2) in vec3 aCol;
+layout(location=3) in float aEmi;
+layout(location=4) in vec4 aIdx;
+layout(location=5) in vec4 aWgt;
+layout(location=6) in vec3 aFaceCol;
+uniform mat4 uViewProj;
+uniform mat4 uModel;
+uniform sampler2D uBones;
+uniform int uBoneCount;
+out vec3 vNrm; out vec3 vCol; out float vEmi; out vec4 vWgt; out vec4 vIdx;
+out vec3 vFaceCol; out vec3 vWorld;
+mat4 boneAt(int i) {
+  return mat4(texelFetch(uBones, ivec2(0,i), 0), texelFetch(uBones, ivec2(1,i), 0),
+              texelFetch(uBones, ivec2(2,i), 0), texelFetch(uBones, ivec2(3,i), 0));
+}
+void main() {
+  mat4 skin = mat4(0.0);
+  skin += boneAt(int(aIdx.x)) * aWgt.x;
+  skin += boneAt(int(aIdx.y)) * aWgt.y;
+  skin += boneAt(int(aIdx.z)) * aWgt.z;
+  skin += boneAt(int(aIdx.w)) * aWgt.w;
+  float sum = aWgt.x + aWgt.y + aWgt.z + aWgt.w;
+  if (sum < 0.0001) skin = mat4(1.0);
+  vec4 p = skin * vec4(aPos, 1.0);
+  vNrm = mat3(skin) * aNrm;
+  vCol = aCol; vEmi = aEmi; vWgt = aWgt; vIdx = aIdx; vFaceCol = aFaceCol;
+  vWorld = (uModel * p).xyz;
+  gl_Position = uViewProj * uModel * p;
+}`, `#version 300 es
+precision highp float;
+in vec3 vNrm; in vec3 vCol; in float vEmi; in vec4 vWgt; in vec4 vIdx;
+in vec3 vFaceCol; in vec3 vWorld;
+uniform int uColorBy; uniform int uEmissiveOn; uniform int uSelected;
+uniform vec3 uFlatColor; uniform int uSharp; uniform int uFlatFaceColour;
+out vec4 frag;
+vec3 groupTint(float g) {
+  float h = fract(g * 0.6180339887);
+  vec3 k = vec3(3.0, 2.0, 1.0) / 3.0;
+  return clamp(abs(fract(vec3(h) + k) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+}
+void main() {
+  // Sharp shading takes the true geometric normal from screen-space derivatives of the world
+  // position, so every facet is genuinely flat however the pose has deformed it. Interpolating the
+  // vertex normal instead is what rounds a voxel off — the shape says block, the shading says
+  // sphere. This is the editor's equivalent of the game's sharpShading setting.
+  vec3 n = uSharp == 1
+      ? normalize(cross(dFdx(vWorld), dFdy(vWorld)))
+      : normalize(vNrm);
+  vec3 base;
+  if (uColorBy == 0)      base = (uFlatFaceColour == 1) ? vFaceCol : vCol;
+  else if (uColorBy == 1) base = groupTint(vIdx.x);
+  else if (uColorBy == 2) base = n * 0.5 + 0.5;
+  else if (uColorBy == 3) {
+    float w = 0.0;
+    if (int(vIdx.x) == uSelected) w = max(w, vWgt.x);
+    if (int(vIdx.y) == uSelected) w = max(w, vWgt.y);
+    if (int(vIdx.z) == uSelected) w = max(w, vWgt.z);
+    if (int(vIdx.w) == uSelected) w = max(w, vWgt.w);
+    base = mix(vec3(0.10, 0.11, 0.14), vec3(1.0, 0.30, 0.15), w);
+  }
+  else base = uFlatColor;
+  // Two-sided: creatures draw on a no-cull layer in game, so a back face is lit, not black.
+  vec3 nn = gl_FrontFacing ? n : -n;
+  float key = max(dot(nn, normalize(vec3(0.45, 0.8, 0.35))), 0.0);
+  float fill = max(dot(nn, normalize(vec3(-0.5, 0.2, -0.6))), 0.0);
+  float amb = 0.34 + 0.16 * (nn.y * 0.5 + 0.5);
+  vec3 lit = base * (amb + key * 0.72 + fill * 0.18);
+  if (uEmissiveOn == 1) lit = mix(lit, base * 1.35, vEmi);
+  frag = vec4(pow(lit, vec3(0.4545)), 1.0);
+}`);
+
+// Flat coloured lines/points, used for bones, joints, gizmo, grid and normals.
+const lineProg = compile(`#version 300 es
+precision highp float;
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aCol;
+uniform mat4 uViewProj; uniform mat4 uModel; uniform float uPointSize;
+out vec3 vCol;
+void main() { vCol = aCol; gl_PointSize = uPointSize; gl_Position = uViewProj * uModel * vec4(aPos,1.0); }`,
+`#version 300 es
+precision highp float;
+in vec3 vCol; uniform float uAlpha; uniform int uRound;
+out vec4 frag;
+void main() {
+  if (uRound == 1) {
+    vec2 d = gl_PointCoord - 0.5;
+    float r = length(d);
+    if (r > 0.5) discard;
+    frag = vec4(mix(vCol, vec3(1.0), smoothstep(0.34, 0.5, r) * 0.55), uAlpha);
+  } else frag = vec4(vCol, uAlpha);
+}`);
+
+// ---------------------------------------------------------------- gpu buffers
+const G = { vao: null, count: 0, wireVao: null, wireCount: 0, boneTex: null, dyn: null, dynVao: null };
+
+function makeMesh(d) {
+  if (G.vao) gl.deleteVertexArray(G.vao);
+  if (G.wireVao) gl.deleteVertexArray(G.wireVao);
+  if (G.crossVao) gl.deleteVertexArray(G.crossVao);
+
+  const q = d.quads, pos = d.positions, nrm = d.normals, col = d.colors,
+        emi = d.emissive, bi = d.boneIndices, bw = d.boneWeights;
+  const quads = q.length / 4;
+
+  // Geometry is expanded so every face owns its corners outright, rather than sharing them with
+  // its neighbours through an index buffer.
+  //
+  // That is what flat shading actually requires. The game defaults to sharpShading + flatFaceColour
+  // — each face carries one normal and one colour, the mean of its corners — and neither can be
+  // expressed on shared vertices, because a shared corner belongs to several faces at once and can
+  // only hold one value. Smooth mode is then just the same buffer read differently, so the two
+  // modes cannot disagree about the geometry, only about how it is lit.
+  const TRI = [0, 1, 2, 0, 2, 3];
+  const n = quads * 6;
+  const aPos = new Float32Array(n * 3), aNrm = new Float32Array(n * 3);
+  const aCol = new Float32Array(n * 3), aFace = new Float32Array(n * 3);
+  const aEmi = new Float32Array(n),     aIdx = new Float32Array(n * 4);
+  const aWgt = new Float32Array(n * 4);
+
+  let o = 0;
+  for (let f = 0; f < quads; f++) {
+    const c0 = q[f*4], c1 = q[f*4+1], c2 = q[f*4+2], c3 = q[f*4+3];
+    const fr = (col[c0*3]  + col[c1*3]  + col[c2*3]  + col[c3*3]) * 0.25;
+    const fg = (col[c0*3+1]+ col[c1*3+1]+ col[c2*3+1]+ col[c3*3+1]) * 0.25;
+    const fb = (col[c0*3+2]+ col[c1*3+2]+ col[c2*3+2]+ col[c3*3+2]) * 0.25;
+    for (let t = 0; t < 6; t++) {
+      const v = q[f*4 + TRI[t]];
+      aPos[o*3]=pos[v*3]; aPos[o*3+1]=pos[v*3+1]; aPos[o*3+2]=pos[v*3+2];
+      aNrm[o*3]=nrm[v*3]; aNrm[o*3+1]=nrm[v*3+1]; aNrm[o*3+2]=nrm[v*3+2];
+      aCol[o*3]=col[v*3]; aCol[o*3+1]=col[v*3+1]; aCol[o*3+2]=col[v*3+2];
+      aFace[o*3]=fr; aFace[o*3+1]=fg; aFace[o*3+2]=fb;
+      aEmi[o]=emi[v];
+      for (let k = 0; k < 4; k++) { aIdx[o*4+k]=bi[v*4+k]; aWgt[o*4+k]=bw[v*4+k]; }
+      o++;
+    }
+  }
+
+  const buildVao = (spec) => {
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    for (const [loc, arr, size] of spec) {
+      const b = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, b);
+      gl.bufferData(gl.ARRAY_BUFFER, arr, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+    }
+    gl.bindVertexArray(null);
+    return vao;
+  };
+
+  G.vao = buildVao([[0,aPos,3],[1,aNrm,3],[2,aCol,3],[3,aEmi,1],[4,aIdx,4],[5,aWgt,4],[6,aFace,3]]);
+  G.count = n;
+
+  // Wireframe traces the quad outlines, not the triangulation, so what you see is the mesher's own
+  // topology rather than the diagonal split added for the GPU.
+  const wn = quads * 8;
+  const wPos = new Float32Array(wn * 3), wIdx = new Float32Array(wn * 4), wWgt = new Float32Array(wn * 4);
+  let w = 0;
+  for (let f = 0; f < quads; f++) {
+    for (let e = 0; e < 4; e++) {
+      for (const v of [q[f*4+e], q[f*4+(e+1)%4]]) {
+        wPos[w*3]=pos[v*3]; wPos[w*3+1]=pos[v*3+1]; wPos[w*3+2]=pos[v*3+2];
+        for (let k = 0; k < 4; k++) { wIdx[w*4+k]=bi[v*4+k]; wWgt[w*4+k]=bw[v*4+k]; }
+        w++;
+      }
+    }
+  }
+  G.wireVao = buildVao([[0,wPos,3],[4,wIdx,4],[5,wWgt,4]]);
+  G.wireCount = wn;
+
+  // Faces bridging two limbs, as their own draw so they can be laid over the body in a warning
+  // colour — the defect chased through SkinBinder and SurfaceNets, made visible instead of counted.
+  const cl = d.crossLimbQuads || [];
+  const cn = cl.length * 6;
+  const cPos = new Float32Array(cn * 3), cIdx = new Float32Array(cn * 4), cWgt = new Float32Array(cn * 4);
+  let c = 0;
+  for (const f of cl) {
+    for (let t = 0; t < 6; t++) {
+      const v = q[f*4 + TRI[t]];
+      cPos[c*3]=pos[v*3]; cPos[c*3+1]=pos[v*3+1]; cPos[c*3+2]=pos[v*3+2];
+      for (let k = 0; k < 4; k++) { cIdx[c*4+k]=bi[v*4+k]; cWgt[c*4+k]=bw[v*4+k]; }
+      c++;
+    }
+  }
+  G.crossVao = buildVao([[0,cPos,3],[4,cIdx,4],[5,cWgt,4]]);
+  G.crossCount = cn;
+
+  if (!G.boneTex) G.boneTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, G.boneTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, d.bones.length, 0, gl.RGBA, gl.FLOAT, null);
+}
+
+// Dynamic line/point geometry, rebuilt each frame; small enough that streaming is cheaper than
+// tracking which overlay changed.
+function makeDyn() {
+  G.dynVao = gl.createVertexArray();
+  gl.bindVertexArray(G.dynVao);
+  G.dynPos = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, G.dynPos);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+  gl.bindVertexArray(null);
+}
+makeDyn();
+
+// ---------------------------------------------------------------- skinning
+let skinMats = null, worldMats = null;
+
+function updatePose() {
+  const bones = S.data.bones, n = bones.length;
+  // Playing back a Java-computed cycle: the palette is already finished, so upload it as-is and
+  // skip the local hierarchy entirely. Anything else would be re-deriving the gait here.
+  if (S.playing && S.anim && S.anim.bones === n) {
+    const f = Math.floor(S.animT * S.anim.frames) % S.anim.frames;
+    const stride = n * 16;
+    const slice = S.anim.matrices.subarray(f * stride, (f + 1) * stride);
+    if (!skinMats || skinMats.length !== stride) { skinMats = new Float32Array(stride); worldMats = new Array(n); }
+    skinMats.set(slice);
+    // World matrices for the overlays: skin = world * bindWorldInverse, so world = skin * bindWorld.
+    for (let i = 0; i < n; i++) {
+      worldMats[i] = M4.mul(skinMats.subarray(i*16, i*16+16), bones[i]._bindWorld, new Float32Array(16));
+    }
+    gl.bindTexture(gl.TEXTURE_2D, G.boneTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4, n, gl.RGBA, gl.FLOAT, skinMats);
+    return;
+  }
+  if (!skinMats || skinMats.length !== n * 16) {
+    skinMats = new Float32Array(n * 16);
+    worldMats = new Array(n);
+  }
+  const root = M4.translate(S.rootOffset[0], S.rootOffset[1], S.rootOffset[2]);
+  const tmp = new Float32Array(16), tmp2 = new Float32Array(16);
+  for (let i = 0; i < n; i++) {
+    const b = bones[i];
+    const parentWorld = b.parent < 0 ? root : worldMats[b.parent];
+    // world = parentWorld * bindLocal * rotate(pose) — exactly Skeleton.updateBoneWorld.
+    M4.mul(parentWorld, b._bindLocal, tmp);
+    M4.mul(tmp, M4.fromQuat(S.pose[i] || Q.ident(), tmp2), tmp);
+    worldMats[i] = new Float32Array(tmp);
+    // skin = world * bindWorldInverse — exactly Skeleton.updateSkinMatrices.
+    M4.mul(worldMats[i], b._bindInv, tmp2);
+    skinMats.set(tmp2, i * 16);
+  }
+  gl.bindTexture(gl.TEXTURE_2D, G.boneTex);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4, n, gl.RGBA, gl.FLOAT, skinMats);
+}
+
+const boneHead = i => [worldMats[i][12], worldMats[i][13], worldMats[i][14]];
+const boneTail = i => M4.transform(worldMats[i], [0, S.data.bones[i].length, 0]);
+
+// ---------------------------------------------------------------- overlays
+const FEATURE_COLOR = {
+  BODY:[.55,.58,.66], HEAD:[.95,.72,.35], JAW:[.90,.55,.30], EYE:[.35,.85,.95],
+  LIMB:[.45,.80,.55], FOOT:[.30,.95,.60], TAIL:[.75,.55,.90], HORN:[.95,.85,.45],
+  FRILL:[.90,.45,.75], ABDOMEN:[.60,.50,.40]
+};
+function featureColor(f) { return FEATURE_COLOR[f] || [.5,.55,.62]; }
+
+function buildOverlay(eye) {
+  const v = [];
+  const push = (p, c) => { v.push(p[0], p[1], p[2], c[0], c[1], c[2]); };
+  const bones = S.data.bones;
+
+  const out = { boneStart: 0, boneCount: 0, jointStart: 0, jointCount: 0,
+                gizmoStart: 0, gizmoCount: 0, gridStart: 0, gridCount: 0,
+                normStart: 0, normCount: 0 };
+
+  // Bones are billboarded quads, not GL lines: WebGL reports ALIASED_LINE_WIDTH_RANGE of [1,1] on
+  // essentially every desktop driver, so gl.lineWidth is a no-op and a line-based skeleton is stuck
+  // one pixel wide however wide you ask for. Building the ribbon by hand is what makes the width
+  // control mean anything, and it keeps thickness constant on screen at any zoom.
+  const strut = (p0, p1, c, halfWidth) => {
+    const d = [p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2]];
+    const toEye = [eye[0]-p0[0], eye[1]-p0[1], eye[2]-p0[2]];
+    let s = [d[1]*toEye[2]-d[2]*toEye[1], d[2]*toEye[0]-d[0]*toEye[2], d[0]*toEye[1]-d[1]*toEye[0]];
+    const l = Math.hypot(s[0], s[1], s[2]);
+    if (l < 1e-9) return;
+    // Scaled by distance from the eye so a bone stays the same thickness on screen whether the
+    // camera is on top of a toe or looking at the whole animal.
+    const k = halfWidth * Math.hypot(toEye[0], toEye[1], toEye[2]) / l;
+    s = [s[0]*k, s[1]*k, s[2]*k];
+    const a=[p0[0]-s[0],p0[1]-s[1],p0[2]-s[2]], b=[p0[0]+s[0],p0[1]+s[1],p0[2]+s[2]];
+    const c2=[p1[0]+s[0],p1[1]+s[1],p1[2]+s[2]], d2=[p1[0]-s[0],p1[1]-s[1],p1[2]-s[2]];
+    push(a,c); push(b,c); push(c2,c);
+    push(a,c); push(c2,c); push(d2,c);
+  };
+  const half = 0.0022;
+
+  out.boneStart = v.length / 6;
+  for (let i = 0; i < bones.length; i++) {
+    const sel = i === S.selected;
+    const c = sel ? [1, .55, .1] : featureColor(bones[i].feature);
+    strut(boneHead(i), boneTail(i), c, sel ? half * 1.7 : half);
+  }
+  out.boneCount = v.length / 6 - out.boneStart;
+
+  out.jointStart = v.length / 6;
+  for (let i = 0; i < bones.length; i++) {
+    push(boneHead(i), i === S.selected ? [1, .6, .15] : [.16, .78, .95]);
+  }
+  out.jointCount = v.length / 6 - out.jointStart;
+
+  // No axis cross. It was drawn from the selected joint at a size scaled to stay readable, which
+  // on a spider meant three arms longer than the animal laid across the whole viewport — it hid the
+  // thing it was pointing at. Selection is already legible from the joint and bone turning orange,
+  // and the axis keys (X/Y/Z during R) say which axis is locked in the mode banner.
+  out.gizmoStart = v.length / 6;
+  out.gizmoCount = 0;
+
+  // Length handles: one grab point at the far end of each limb chain. Dragging one asks the server
+  // to find the gene value that makes the limb that long — see handleDrag / solveLength.
+  // A handle on every joint, not just limb tips. Any joint whose position responds to some gene can
+  // be dragged; the server works out which loci move it (see /api/reach), so there is no list here
+  // of what is draggable and nothing to keep in step as the generator grows.
+  out.handleStart = v.length / 6;
+  S.handles = [];
+  if ($('showHandles').checked && !S.playing) {
+    for (let i = 0; i < bones.length; i++) {
+      if (!bones[i].emits) continue;
+      const p = boneHead(i);
+      S.handles.push({ bone: i, name: bones[i].name, pos: p });
+      const active = S.handleDrag && S.handleDrag.bone === i;
+      push(p, active ? [1, .9, .2] : (i === S.selected ? [1, .5, .15] : [1, .40, .72]));
+    }
+    // The tip of each limb too — the end of a chain has no child bone to own a joint there, and it
+    // is the point you most want to grab on a leg.
+    const seen = new Set();
+    for (let i = bones.length - 1; i >= 0; i--) {
+      const b = bones[i];
+      if (!b.emits || b.blendGroup === 0 || seen.has(b.blendGroup)) continue;
+      seen.add(b.blendGroup);
+      const p = boneTail(i);
+      S.handles.push({ bone: i, name: b.name, tip: true, pos: p });
+      push(p, S.handleDrag && S.handleDrag.bone === i ? [1, .9, .2] : [1, .40, .72]);
+    }
+  }
+  out.handleCount = v.length / 6 - out.handleStart;
+
+  out.normStart = v.length / 6;
+  if ($('showNormals').checked) {
+    const p = S.data.positions, nr = S.data.normals;
+    const step = Math.max(1, Math.floor(p.length / 3 / 1500));
+    const s = Math.max(0.01, S.data.meta.hipHeight * 0.06);
+    for (let i = 0; i < p.length / 3; i += step) {
+      const a = [p[i*3], p[i*3+1], p[i*3+2]];
+      push(a, [.2,.9,.9]);
+      push([a[0]+nr[i*3]*s, a[1]+nr[i*3+1]*s, a[2]+nr[i*3+2]*s], [.9,.2,.6]);
+    }
+  }
+  out.normCount = v.length / 6 - out.normStart;
+
+  out.gridStart = v.length / 6;
+  const R = 2.5, step = 0.25;
+  // Scrolls under the creature while it walks. The animator moves the body through world space and
+  // plants feet on it, but the skinning palette is model-space so the creature stays centred — the
+  // ground is the only thing that can show the travel, and without it a correct stride still reads
+  // as marching on the spot.
+  const scroll = S.playing && S.anim ? (S.animT * S.anim.travel) % step : 0;
+  for (let i = -R; i <= R + 1e-6; i += step) {
+    const major = Math.abs(i) < 1e-6;
+    const c = major ? [.32,.36,.44] : [.17,.19,.23];
+    push([i,0,-R], c); push([i,0,R], c);
+    push([-R,0,i - scroll], c); push([R,0,i - scroll], c);
+  }
+  out.gridCount = v.length / 6 - out.gridStart;
+
+  const arr = new Float32Array(v);
+  gl.bindBuffer(gl.ARRAY_BUFFER, G.dynPos);
+  gl.bufferData(gl.ARRAY_BUFFER, arr, gl.DYNAMIC_DRAW);
+  return out;
+}
+
+// ---------------------------------------------------------------- render
+function viewProj() {
+  const c = S.cam;
+  const eye = [
+    c.target[0] + c.dist * Math.cos(c.pitch) * Math.sin(c.yaw),
+    c.target[1] + c.dist * Math.sin(c.pitch),
+    c.target[2] + c.dist * Math.cos(c.pitch) * Math.cos(c.yaw)];
+  const proj = M4.perspective(Math.PI/4, canvas.width / Math.max(1, canvas.height), 0.01, 200);
+  const view = M4.lookAt(eye, c.target, [0,1,0]);
+  return { vp: M4.mul(proj, view), eye };
+}
+
+let lastFrameTime = performance.now();
+let frameCount = 0;
+let fpsSum = 0;
+let currentFps = 60;
+let currentMs = 16.7;
+
+function updateFps(now) {
+  if (!now) now = performance.now();
+  const delta = now - lastFrameTime;
+  lastFrameTime = now;
+  if (delta > 0 && delta < 1000) {
+    const fps = 1000 / delta;
+    fpsSum += fps;
+    frameCount++;
+    if (frameCount >= 10) {
+      currentFps = Math.round(fpsSum / frameCount);
+      currentMs = (1000 / currentFps).toFixed(1);
+      fpsSum = 0;
+      frameCount = 0;
+    }
+  }
+  const counter = $('fpsCounter');
+  if (counter) {
+    if ($('showFps') && $('showFps').checked) {
+      counter.style.display = 'block';
+      counter.textContent = `${currentFps} FPS (${currentMs}ms)`;
+    } else {
+      counter.style.display = 'none';
+    }
+  }
+}
+
+function render(now) {
+  const w = canvas.clientWidth * devicePixelRatio, h = canvas.clientHeight * devicePixelRatio;
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.055, 0.063, 0.075, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);
+  gl.disable(gl.CULL_FACE);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  if (!S.data) { requestAnimationFrame(render); return; }
+  updatePose();
+  const { vp, eye } = viewProj();
+  const ov = buildOverlay(eye);
+  const model = M4.ident();
+
+  if ($('showMesh').checked) {
+    gl.useProgram(meshProg);
+    gl.uniformMatrix4fv(gl.getUniformLocation(meshProg, 'uViewProj'), false, vp);
+    gl.uniformMatrix4fv(gl.getUniformLocation(meshProg, 'uModel'), false, model);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, G.boneTex);
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uBones'), 0);
+    const cb = {vertex:0, blend:1, normal:2, weight:3, flat:4}[$('colorBy').value];
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uColorBy'), cb);
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uEmissiveOn'), $('emissive').checked ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uSelected'), S.selected);
+    gl.uniform3f(gl.getUniformLocation(meshProg, 'uFlatColor'), 0.62, 0.64, 0.68);
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uSharp'), $('sharpShade').checked ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uFlatFaceColour'), $('flatFaceCol').checked ? 1 : 0);
+    gl.bindVertexArray(G.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, G.count);
+  }
+
+  // Flagged faces, redrawn over the mesh in flat red so a weld is visible rather than counted.
+  if ($('showCross').checked && G.crossCount) {
+    gl.useProgram(meshProg);
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uColorBy'), 4);
+    gl.uniform3f(gl.getUniformLocation(meshProg, 'uFlatColor'), 1.0, 0.16, 0.12);
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uEmissiveOn'), 0);
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uSharp'), 0);
+    gl.disable(gl.DEPTH_TEST);
+    gl.bindVertexArray(G.crossVao);
+    gl.drawArrays(gl.TRIANGLES, 0, G.crossCount);
+    gl.enable(gl.DEPTH_TEST);
+  }
+
+  gl.useProgram(lineProg);
+  gl.uniformMatrix4fv(gl.getUniformLocation(lineProg, 'uViewProj'), false, vp);
+  gl.uniformMatrix4fv(gl.getUniformLocation(lineProg, 'uModel'), false, model);
+  const uAlpha = gl.getUniformLocation(lineProg, 'uAlpha');
+  const uRound = gl.getUniformLocation(lineProg, 'uRound');
+  const uPS = gl.getUniformLocation(lineProg, 'uPointSize');
+  gl.uniform1i(uRound, 0); gl.uniform1f(uPS, 1);
+
+  if ($('showWire').checked) {
+    // Wireframe rides the mesh program so it is skinned by the same palette; colour is forced flat.
+    gl.useProgram(meshProg);
+    gl.uniformMatrix4fv(gl.getUniformLocation(meshProg, 'uViewProj'), false, vp);
+    gl.uniformMatrix4fv(gl.getUniformLocation(meshProg, 'uModel'), false, model);
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uColorBy'), 4);
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uSharp'), 0);
+    gl.uniform1i(gl.getUniformLocation(meshProg, 'uEmissiveOn'), 0);
+    gl.uniform3f(gl.getUniformLocation(meshProg, 'uFlatColor'), 0.15, 0.95, 0.75);
+    gl.bindVertexArray(G.wireVao);
+    gl.drawArrays(gl.LINES, 0, G.wireCount);
+    gl.useProgram(lineProg);
+    gl.uniformMatrix4fv(gl.getUniformLocation(lineProg, 'uViewProj'), false, vp);
+    gl.uniformMatrix4fv(gl.getUniformLocation(lineProg, 'uModel'), false, model);
+  }
+
+  gl.bindVertexArray(G.dynVao);
+  gl.uniform1f(uAlpha, 1);
+
+  if ($('showGrid').checked) {
+    gl.drawArrays(gl.LINES, ov.gridStart, ov.gridCount);
+  }
+  if ($('showNormals').checked && ov.normCount) {
+    gl.drawArrays(gl.LINES, ov.normStart, ov.normCount);
+  }
+
+  const front = $('inFront').checked;
+  if (front) gl.disable(gl.DEPTH_TEST);
+  gl.lineWidth(1);
+  if ($('showBones').checked) {
+    gl.uniform1f(uAlpha, front ? 0.95 : 1);
+    gl.drawArrays(gl.TRIANGLES, ov.boneStart, ov.boneCount);
+  }
+  if ($('showJoints').checked) {
+    gl.uniform1i(uRound, 1);
+    gl.uniform1f(uPS, 7 * devicePixelRatio);
+    gl.drawArrays(gl.POINTS, ov.jointStart, ov.jointCount);
+    gl.uniform1i(uRound, 0);
+  }
+  if (ov.gizmoCount) gl.drawArrays(gl.TRIANGLES, ov.gizmoStart, ov.gizmoCount);
+  if (ov.handleCount) {
+    gl.uniform1i(uRound, 1);
+    gl.uniform1f(uPS, 11 * devicePixelRatio);
+    gl.drawArrays(gl.POINTS, ov.handleStart, ov.handleCount);
+    gl.uniform1i(uRound, 0);
+  }
+  gl.enable(gl.DEPTH_TEST);
+
+  // Held on the current frame when the OS asks for reduced motion; the cycle can still be stepped
+  // by pressing play again, it just does not run on its own.
+  if (S.playing && S.anim && !REDUCED_MOTION.matches) {
+    S.animT = (S.animT + 1 / 60 / S.anim.seconds) % 1;
+  }
+  hud();
+  updateFps(now);
+  requestAnimationFrame(render);
+}
+
+function hud() {
+  const m = S.data.meta;
+  // Counts and timings are for whoever is debugging the generator, not whoever is making a
+  // creature. Off by default; the solver's note stays, because that is feedback on an action the
+  // user just took rather than ambient telemetry.
+  if (!$('showStats').checked) {
+    $('hud').innerHTML = S.solveNote
+      ? `<span style="color:var(--amber)">${S.solveNote}</span>` : '';
+    $('sel').innerHTML = S.selected >= 0 ? `<b>${S.data.bones[S.selected].name}</b>` : '';
+    return;
+  }
+  $('hud').innerHTML =
+    `<b>${m.vertexCount.toLocaleString()}</b> verts · <b>${m.quadCount.toLocaleString()}</b> quads · ` +
+    `<b>${m.boneCount}</b> bones<br>` +
+    `legs <b>${m.legs}</b> · arms <b>${m.arms}</b> · teeth <b>${m.teeth}</b><br>` +
+    `hip <b>${(+m.hipHeight).toFixed(3)}</b> · len <b>${(+m.bodyLength).toFixed(3)}</b> · ` +
+    `minLimb <b>${(+m.minLimbRadius).toFixed(4)}</b><br>` +
+    `bake <b>${S.bakeMs}</b> ms` +
+    (m.crossLimbCount ? ` · <b style="color:#ff5040">${m.crossLimbCount}</b> cross-limb faces` : '') +
+    (S.solveNote ? `<br><span style="color:#e0a33e">${S.solveNote}</span>` : '');
+  if (S.selected >= 0) {
+    const b = S.data.bones[S.selected];
+    $('sel').innerHTML = `selected <b>${b.name}</b> · ${b.feature} · group ${b.blendGroup}` +
+      ` · parent ${b.parent < 0 ? '—' : S.data.bones[b.parent].name}`;
+  } else $('sel').textContent = '';
+}
+
+// ---------------------------------------------------------------- picking
+function pickJoint(mx, my) {
+  const { vp } = viewProj();
+  let best = -1, bestD = 18 * 18;
+  for (let i = 0; i < S.data.bones.length; i++) {
+    const p = M4.transform(vp, boneHead(i));
+    if (p[3] <= 0) continue;
+    const sx = (p[0]/p[3]*0.5+0.5) * canvas.clientWidth;
+    const sy = (1 - (p[1]/p[3]*0.5+0.5)) * canvas.clientHeight;
+    const d = (sx-mx)*(sx-mx) + (sy-my)*(sy-my);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+let toastTimer = null;
+function showToast(msg) {
+  const t = $('toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.style.display = 'none'; }, 2600);
+}
+
+// ---------------------------------------------------------------- interaction
+let drag = null;
+canvas.addEventListener('pointerdown', e => {
+  try { canvas.setPointerCapture(e.pointerId); } catch (ex) {}
+  const r = canvas.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const inRigMode = $('showJoints').checked || $('showHandles').checked;
+
+  if (e.button === 0 && !e.shiftKey && inRigMode) {
+    const h = pickHandle(mx, my);
+    if (h) {
+      if (S.playing) {
+        showToast("Pause animation to edit joints in Rig mode");
+      } else {
+        S.handleDrag = { bone: h.bone, name: h.name, origin: h.pos.slice(), sx: mx, sy: my };
+        S.reachCandidates = null;
+        select(h.bone);
+        return;
+      }
+    }
+    const hit = pickJoint(mx, my);
+    if (hit >= 0) {
+      if (S.playing) showToast("Pause animation to edit joints in Rig mode");
+      select(hit);
+    }
+  }
+  drag = { x: e.clientX, y: e.clientY, pan: e.button === 1 || e.shiftKey };
+});
+canvas.addEventListener('pointermove', e => {
+  const r = canvas.getBoundingClientRect();
+  if (S.handleDrag) { dragHandle(e.clientX - r.left, e.clientY - r.top); return; }
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (drag.pan) {
+    const s = S.cam.dist * 0.0016;
+    const c = S.cam;
+    c.target[0] -= (dx * Math.cos(c.yaw) - dy * Math.sin(c.yaw) * Math.sin(c.pitch)) * s;
+    c.target[1] += dy * s * Math.cos(c.pitch);
+    c.target[2] += (dx * Math.sin(c.yaw) + dy * Math.cos(c.yaw) * Math.sin(c.pitch)) * s;
+  } else {
+    S.cam.yaw -= dx * 0.008;
+    S.cam.pitch = Math.max(-1.5, Math.min(1.5, S.cam.pitch + dy * 0.008));
+  }
+});
+addEventListener('pointerup', () => {
+  drag = null;
+  if (S.handleDrag) { const d = S.handleDrag; S.handleDrag = null; if (d.target) solveReach(d, false); }
+});
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  S.cam.dist = Math.max(0.15, Math.min(40, S.cam.dist * Math.exp(e.deltaY * 0.0012)));
+}, { passive: false });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+/** Total bind-pose length of every bone in a limb — the same sum the server's measure() computes. */
+function limbLength(group) {
+  let t = 0;
+  for (const b of S.data.bones) if (b.emits && b.blendGroup === group) t += +b.length;
+  return t;
+}
+function rootOfGroup(group) {
+  for (let i = 0; i < S.data.bones.length; i++) if (S.data.bones[i].blendGroup === group) return i;
+  return 0;
+}
+function pickHandle(mx, my) {
+  if (!S.handles) return null;
+  const { vp } = viewProj();
+  let best = null, bestD = 22 * 22;
+  for (const h of S.handles) {
+    const p = M4.transform(vp, h.pos);
+    if (p[3] <= 0) continue;
+    const sx = (p[0]/p[3]*0.5+0.5) * canvas.clientWidth;
+    const sy = (1 - (p[1]/p[3]*0.5+0.5)) * canvas.clientHeight;
+    const d = (sx-mx)*(sx-mx) + (sy-my)*(sy-my);
+    if (d < bestD) { bestD = d; best = h; }
+  }
+  return best;
+}
+
+/**
+ * Drags a joint across the camera's own plane.
+ * <p>
+ * Screen-space movement is unprojected along the view basis at the joint's depth, so the joint
+ * follows the cursor in whatever direction the viewport is facing — orbit round and the same drag
+ * moves it along a different world axis. That is what makes "every direction" reachable without a
+ * separate mode per axis.
+ */
+function dragHandle(mx, my) {
+  const d = S.handleDrag;
+  const { eye } = viewProj();
+  const c = S.cam;
+  // View basis: right and up as the camera sees them.
+  const fwd = [c.target[0]-eye[0], c.target[1]-eye[1], c.target[2]-eye[2]];
+  const fl = Math.hypot(fwd[0],fwd[1],fwd[2]) || 1;
+  const f = [fwd[0]/fl, fwd[1]/fl, fwd[2]/fl];
+  // right = normalize(cross(forward, worldUp)); with up = (0,1,0) that is (-f.z, 0, f.x).
+  // The negation of this was here, which is why dragging left moved a joint right.
+  let right = [-f[2], 0, f[0]];
+  const rl = Math.hypot(right[0],right[1],right[2]) || 1;
+  right = [right[0]/rl, right[1]/rl, right[2]/rl];
+  const up = [right[1]*f[2]-right[2]*f[1], right[2]*f[0]-right[0]*f[2], right[0]*f[1]-right[1]*f[0]];
+  // Metres per pixel at the joint's distance, for a 45 degree vertical field of view.
+  const depth = Math.hypot(d.origin[0]-eye[0], d.origin[1]-eye[1], d.origin[2]-eye[2]);
+  const perPixel = 2 * depth * Math.tan(Math.PI / 8) / Math.max(1, canvas.clientHeight);
+  const dx = (mx - d.sx) * perPixel, dy = -(my - d.sy) * perPixel;
+  d.target = [
+    d.origin[0] + right[0]*dx + up[0]*dy,
+    d.origin[1] + right[1]*dx + up[1]*dy,
+    d.origin[2] + right[2]*dx + up[2]*dy];
+  // Solve as the mouse moves, not on release. Waiting until release means the whole drag is
+  // guesswork and the result appears from nowhere, which is what made it feel arbitrary — you
+  // could not tell which way to pull because nothing responded until it was over.
+  solveReach(d, true);
+}
+
+/**
+ * Solves a joint drag and adopts the result.
+ * <p>
+ * One request in flight at a time, with the latest target coalesced onto the end. The solve and the
+ * bake come back together in a single round trip, and the candidate loci found on the first call
+ * are handed back on every later one so the expensive sensitivity sweep runs once per drag rather
+ * than once per mouse move.
+ */
+let reachBusy = false, reachQueued = null;
+async function solveReach(d, live) {
+  if (!d.target) { S.solveNote = ''; return; }
+  if (reachBusy) { reachQueued = d; return; }
+  reachBusy = true;
+  const p = new URLSearchParams({
+    seed: $('seed').value || '1', archetype: $('archetype').value,
+    genes: S.genes.map(v => v.toFixed(5)).join(','),
+    bone: d.name, x: d.target[0].toFixed(5), y: d.target[1].toFixed(5), z: d.target[2].toFixed(5),
+    bake: '1', tier: $('tier').value, voxel: $('voxel').value, smoothing: $('smoothing').value
+  });
+  if (S.reachCandidates) p.set('candidates', S.reachCandidates.join(','));
+  try {
+    const r = await (await fetch('/api/reach?' + p.toString())).json();
+    if (typeof r.error === 'string') throw new Error(r.error);
+    if (r.candidates) S.reachCandidates = r.candidates;
+    adopt(r);
+    S.solveNote = `${d.name} ← ${(S.reachCandidates || []).join(', ')}` +
+      (r.residual > 0.05 ? `  ·  at genome limit, off by ${(+r.residual).toFixed(2)}` : '');
+  } catch (e) {
+    S.solveNote = 'solve failed: ' + e.message;
+  } finally {
+    reachBusy = false;
+    const next = reachQueued; reachQueued = null;
+    if (next) solveReach(next, true);
+  }
+}
+
+function select(i) { S.selected = i; }
+
+addEventListener('keydown', e => {
+  const tag = document.activeElement ? document.activeElement.tagName : '';
+  if (/^(INPUT|SELECT|TEXTAREA|BUTTON|SUMMARY|A)$/.test(tag)) return;
+  const k = e.key.toLowerCase();
+  if (k === 'f') frame();
+  else if (k === ' ') { e.preventDefault(); $('playBtn').click(); }
+  else if (k === 'escape') select(-1);
+});
+
+function frame() {
+  const m = S.data.meta;
+  const lo = m.boundsMin.map(Number), hi = m.boundsMax.map(Number);
+  S.cam.target = [(lo[0]+hi[0])/2, (lo[1]+hi[1])/2, (lo[2]+hi[2])/2];
+  S.cam.dist = Math.max(0.4, Math.hypot(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]) * 1.35);
+}
+
+// ---------------------------------------------------------------- baking
+let bakeTimer = null, inFlight = false, queued = false;
+function requestBake(immediate) {
+  clearTimeout(bakeTimer);
+  bakeTimer = setTimeout(bake, immediate ? 0 : 140);
+}
+async function bake() {
+  if (inFlight) { queued = true; return; }
+  inFlight = true; $('busy').style.display = 'block';
+  const p = new URLSearchParams({
+    seed: $('seed').value || '1',
+    archetype: $('archetype').value,
+    tier: $('tier').value,
+    voxel: $('voxel').value,
+    smoothing: $('smoothing').value
+  });
+  if (S.genes) p.set('genes', S.genes.map(v => v.toFixed(5)).join(','));
+  const t0 = performance.now();
+  try {
+    const res = await fetch('/api/bake?' + p.toString());
+    const d = await res.json();
+    if (d.error) throw new Error(d.error);
+    S.bakeMs = Math.round(performance.now() - t0);
+    adopt(d);
+    $('err').style.display = 'none';
+  } catch (e) {
+    $('err').style.display = 'block';
+    $('err').textContent = String(e && e.message || e);
+  } finally {
+    inFlight = false; $('busy').style.display = 'none';
+    if (queued) { queued = false; requestBake(true); }
+  }
+}
+
+function adopt(d) {
+  const hadData = !!S.data;
+  const sameSkeleton = hadData && S.data.bones.length === d.bones.length;
+  for (const b of d.bones) {
+    b._bindLocal = new Float32Array(b.bindLocal);
+    b._bindInv = new Float32Array(b.bindWorldInverse);
+    b._bindWorld = invert4(b._bindInv);
+  }
+  S.data = d;
+  S.genes = d.genes.slice();
+  if (!sameSkeleton) { S.pose = []; if (S.selected >= d.bones.length) select(-1); }
+  $('code').value = d.code || '';
+  syncGeneSliders();
+  makeMesh(d);
+  if (!hadData) frame();
+}
+
+// ---------------------------------------------------------------- animation
+async function loadAnim() {
+  const p = new URLSearchParams({
+    seed: $('seed').value || '1', archetype: $('archetype').value,
+    speed: $('animSpeed').value, frames: '48', seconds: '2'
+  });
+  if (S.genes) p.set('genes', S.genes.map(v => v.toFixed(5)).join(','));
+  const r = await (await fetch('/api/anim?' + p.toString())).json();
+  if (r.error) throw new Error(r.error);
+  S.anim = { frames: r.frames, bones: r.bones, seconds: +r.seconds, travel: +r.travel,
+             matrices: new Float32Array(r.matrices) };
+}
+function setPlaying(on) {
+  S.playing = on;
+  $('playBtn').textContent = on ? 'Pause' : 'Play walk';
+  $('playBtn').setAttribute('aria-pressed', String(on));
+}
+const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
+$('playBtn').onclick = async () => {
+  if (S.playing) { setPlaying(false); return; }   // toggle, so the same button always stops it
+  try {
+    $('busy').style.display = 'block';
+    if (!S.anim) await loadAnim();
+    setPlaying(true);
+  } catch (e) {
+    $('err').style.display = 'block'; $('err').textContent = 'anim: ' + e.message;
+  } finally { $('busy').style.display = 'none'; }
+};
+$('stopBtn').onclick = () => { setPlaying(false); S.animT = 0; };
+$('animSpeed').addEventListener('input', async e => {
+  if (document.activeElement !== $('animSpeedV')) {
+    $('animSpeedV').value = (+e.target.value).toFixed(1);
+  }
+  if (S.playing) { try { await loadAnim(); } catch (_) {} }
+});
+$('animSpeedV').addEventListener('change', async () => {
+  let v = parseFloat($('animSpeedV').value);
+  if (isNaN(v)) v = 0.8;
+  v = Math.max(0.2, Math.min(6, v));
+  $('animSpeed').value = v;
+  $('animSpeedV').value = v.toFixed(1);
+  if (S.playing) { try { await loadAnim(); } catch (_) {} }
+});
+$('animSpeedV').addEventListener('keydown', e => { if (e.key === 'Enter') $('animSpeedV').blur(); });
+$('animSpeedV').addEventListener('focus', () => $('animSpeedV').select());
+
+// ---------------------------------------------------------------- multi-value box selection (Blender style)
+const selectedValInputs = new Set();
+let lastAnchorValInput = null;
+let isValDragging = false;
+let dragStartValInput = null;
+
+function getVisibleValInputs() {
+  return Array.from(document.querySelectorAll('input.val')).filter(el => {
+    return el.offsetWidth > 0 && el.offsetHeight > 0 && getComputedStyle(el).display !== 'none';
+  });
+}
+
+function clearValSelection() {
+  selectedValInputs.forEach(el => el.classList.remove('selected'));
+  selectedValInputs.clear();
+}
+
+function selectValRange(startEl, endEl) {
+  clearValSelection();
+  const visible = getVisibleValInputs();
+  const idxA = visible.indexOf(startEl);
+  const idxB = visible.indexOf(endEl);
+  if (idxA === -1 || idxB === -1) {
+    if (startEl) {
+      selectedValInputs.add(startEl);
+      startEl.classList.add('selected');
+    }
+    return;
+  }
+  const minIdx = Math.min(idxA, idxB);
+  const maxIdx = Math.max(idxA, idxB);
+  for (let i = minIdx; i <= maxIdx; i++) {
+    selectedValInputs.add(visible[i]);
+    visible[i].classList.add('selected');
+  }
+}
+
+function applyValueToSelected(sourceInput, rawVal) {
+  if (!selectedValInputs.has(sourceInput) || selectedValInputs.size <= 1) {
+    return false;
+  }
+  const floatVal = parseFloat(rawVal);
+  if (isNaN(floatVal)) return false;
+
+  if (!S.genes && S.meta && S.meta.genes) {
+    S.genes = S.meta.genes.map(g => g.defaultVal !== undefined ? g.defaultVal : 0.5);
+  }
+
+  for (const inputEl of selectedValInputs) {
+    let v = floatVal;
+    if (inputEl.dataset.i !== undefined) {
+      const idx = +inputEl.dataset.i;
+      v = Math.max(0, Math.min(1, v));
+      if (S.genes) S.genes[idx] = v;
+      inputEl.value = v.toFixed(2);
+      const row = inputEl.closest('.gene-row');
+      if (row) {
+        const slider = row.querySelector('input[type=range]');
+        if (slider) slider.value = v;
+      }
+    } else if (inputEl.id === 'voxelV') {
+      v = Math.max(0, Math.min(0.25, v));
+      $('voxel').value = v;
+      inputEl.value = v === 0 ? 'off' : v.toFixed(3);
+    } else if (inputEl.id === 'smoothingV') {
+      v = Math.max(0, Math.min(1, v));
+      $('smoothing').value = v;
+      inputEl.value = v.toFixed(2);
+    } else if (inputEl.id === 'animSpeedV') {
+      v = Math.max(0.2, Math.min(6, v));
+      $('animSpeed').value = v;
+      inputEl.value = v.toFixed(1);
+    }
+  }
+  requestBake(false);
+  return true;
+}
+
+window.addEventListener('pointerdown', e => {
+  const input = e.target.closest('input.val');
+  if (input) {
+    if (e.shiftKey && lastAnchorValInput) {
+      e.preventDefault();
+      selectValRange(lastAnchorValInput, input);
+      input.focus();
+      try { input.select(); } catch (ex) {}
+      return;
+    }
+    isValDragging = true;
+    dragStartValInput = input;
+    lastAnchorValInput = input;
+    selectValRange(input, input);
+  } else if (!e.target.closest('#guideTooltip') && !e.target.closest('input[type=range]') && !e.target.closest('button') && !e.target.closest('summary')) {
+    clearValSelection();
+  }
+});
+
+window.addEventListener('pointermove', e => {
+  if (!isValDragging || !dragStartValInput) return;
+  const element = document.elementFromPoint(e.clientX, e.clientY);
+  if (!element) return;
+  const valInput = element.closest('input.val') || (element.closest('.row, .gene-row') ? element.closest('.row, .gene-row').querySelector('input.val') : null);
+  if (valInput) {
+    selectValRange(dragStartValInput, valInput);
+  }
+});
+
+window.addEventListener('pointerup', () => {
+  if (isValDragging) {
+    isValDragging = false;
+    if (selectedValInputs.size > 0 && dragStartValInput) {
+      dragStartValInput.focus();
+      try { dragStartValInput.select(); } catch (ex) {}
+    }
+  }
+});
+
+// ---------------------------------------------------------------- gene UI
+const GROUPS = [
+  ['Body',   /^(SIZE|TORSO|SPINE_SEG|SPINE_ARCH|BLEND|BODY_SEG|ABDOMEN)/],
+  ['Head',   /^(NECK|HEAD|JAW|CRANIUM|EYE|SNOUT|TUSK|BEAK)/],
+  ['Limbs',  /^(LEG|LIMB|DIGIT|FOOT|ARM|GAIT|HAND|CLAWS)/],
+  ['Tail',   /^TAIL/],
+  ['Ornament', /^(HORN|EAR|FRILL|DORSAL|SPINE_STYLE|FUR|ARMOR|BIOLUM|GLOW)/],
+  ['Colour', /^(HUE|SATURATION|BRIGHTNESS|PATTERN|COUNTERSHADING)/],
+  ['Behaviour', /.*/]
+];
+function buildGeneUI() {
+  const host = $('genes');
+  host.innerHTML = '';
+  const names = S.meta.genes.map(g => g.name);
+  const used = new Set();
+  for (const [title, re] of GROUPS) {
+    const mine = names.filter((n, i) => !used.has(i) && re.test(n) && (used.add(names.indexOf(n)), true));
+    if (!mine.length) continue;
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'gene-group';
+    const h = document.createElement('div');
+    h.className = 'group-head';
+    h.textContent = title;
+    groupDiv.appendChild(h);
+    for (const name of mine) {
+      const idx = names.indexOf(name);
+      const row = document.createElement('div');
+      row.className = 'gene-row';
+      row.dataset.name = name.toLowerCase();
+      row.innerHTML = `<span class="name" title="${name}">${name}</span>` +
+        `<input type="range" min="0" max="1" step="0.001" value="0.5" data-i="${idx}" aria-label="${name}">` +
+        `<input type="text" class="val" value="0.50" data-i="${idx}" aria-label="${name} value">`;
+
+      const slider = row.querySelector('input[type=range]');
+      const valInput = row.querySelector('input.val');
+
+      slider.addEventListener('input', () => {
+        if (selectedValInputs.has(valInput) && selectedValInputs.size > 1) {
+          applyValueToSelected(valInput, slider.value);
+        } else {
+          S.genes[idx] = +slider.value;
+          valInput.value = (+slider.value).toFixed(2);
+          requestBake(false);
+        }
+      });
+
+      const commitVal = () => {
+        if (selectedValInputs.has(valInput) && selectedValInputs.size > 1) {
+          applyValueToSelected(valInput, valInput.value);
+        } else {
+          let v = parseFloat(valInput.value);
+          if (isNaN(v)) v = S.genes ? S.genes[idx] : 0.5;
+          v = Math.max(0, Math.min(1, v));
+          S.genes[idx] = v;
+          slider.value = v;
+          valInput.value = v.toFixed(2);
+          requestBake(false);
+        }
+      };
+
+      valInput.addEventListener('change', commitVal);
+      valInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { commitVal(); valInput.blur(); }
+      });
+      valInput.addEventListener('focus', () => valInput.select());
+
+      groupDiv.appendChild(row);
+    }
+    host.appendChild(groupDiv);
+  }
+}
+function syncGeneSliders() {
+  for (const row of document.querySelectorAll('.gene-row')) {
+    const s = row.querySelector('input[type=range]');
+    const valInput = row.querySelector('input.val');
+    const v = S.genes[+s.dataset.i];
+    s.value = v;
+    if (document.activeElement !== valInput) {
+      valInput.value = v.toFixed(2);
+    }
+  }
+}
+$('geneFilter').addEventListener('input', e => {
+  const q = e.target.value.trim().toLowerCase();
+  for (const row of document.querySelectorAll('.gene-row')) {
+    const show = !q || row.dataset.name.includes(q);
+    for (const child of row.children) {
+      child.style.display = show ? '' : 'none';
+    }
+  }
+});
+
+function selectAllGenes() {
+  clearValSelection();
+  const visibleGeneInputs = Array.from(document.querySelectorAll('.gene-row input.val')).filter(el => {
+    return el.offsetWidth > 0 && el.offsetHeight > 0 && getComputedStyle(el).display !== 'none';
+  });
+  visibleGeneInputs.forEach(el => {
+    selectedValInputs.add(el);
+    el.classList.add('selected');
+  });
+  if (visibleGeneInputs.length > 0) {
+    visibleGeneInputs[0].focus();
+    try { visibleGeneInputs[0].select(); } catch (ex) {}
+  }
+}
+
+function setMaxGenes() {
+  if (!S.genes && S.meta && S.meta.genes) {
+    S.genes = S.meta.genes.map(g => g.defaultVal !== undefined ? g.defaultVal : 0.5);
+  }
+  const targetInputs = selectedValInputs.size > 0 ? Array.from(selectedValInputs) : Array.from(document.querySelectorAll('.gene-row input.val'));
+  if (!targetInputs.length) return;
+  for (const inputEl of targetInputs) {
+    if (inputEl.dataset.i !== undefined) {
+      const idx = +inputEl.dataset.i;
+      if (S.genes) S.genes[idx] = 1.0;
+      inputEl.value = '1.00';
+      const row = inputEl.closest('.gene-row');
+      if (row) {
+        const slider = row.querySelector('input[type=range]');
+        if (slider) slider.value = 1.0;
+      }
+    }
+  }
+  requestBake(false);
+}
+
+$('selectAllGenes').onclick = () => selectAllGenes();
+$('maxGenes').onclick = () => setMaxGenes();
+
+window.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+    const active = document.activeElement;
+    if (active && (active.closest('.gene-row') || active.id === 'geneFilter' || active.closest('details.group'))) {
+      e.preventDefault();
+      selectAllGenes();
+    }
+  }
+});
+
+// ---------------------------------------------------------------- sidebar resize
+const SIDE_MIN = 180, SIDE_MAX = 900;
+function setSideWidth(px) {
+  const maxW = Math.min(SIDE_MAX, Math.max(SIDE_MIN, window.innerWidth - 100));
+  const w = Math.max(SIDE_MIN, Math.min(maxW, Math.round(px)));
+  document.documentElement.style.setProperty('--side-w', w + 'px');
+  try { localStorage.setItem('primordia.sideWidth', String(w)); } catch (e) { /* private mode */ }
+  return w;
+}
+(function initResizer() {
+  const bar = $('resizer');
+  try {
+    const saved = parseInt(localStorage.getItem('primordia.sideWidth'), 10);
+    if (saved) setSideWidth(saved);
+  } catch (e) { /* ignore */ }
+
+  bar.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    bar.classList.add('dragging');
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    try { bar.setPointerCapture(e.pointerId); } catch (ex) {}
+
+    const move = ev => setSideWidth(ev.clientX);
+    const up = ev => {
+      bar.classList.remove('dragging');
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      try { bar.releasePointerCapture(e.pointerId); } catch (ex) {}
+    };
+
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  });
+
+  // Keyboard: a separator that can only be dragged is unreachable without a mouse.
+  bar.addEventListener('keydown', e => {
+    const step = e.shiftKey ? 40 : 10;
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); setSideWidth($('side').offsetWidth - step); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); setSideWidth($('side').offsetWidth + step); }
+  });
+  bar.addEventListener('dblclick', () => setSideWidth(320));
+})();
+
+// ---------------------------------------------------------------- view presets
+// Three named views instead of twelve independent toggles. The toggles still exist under Advanced
+// and still drive the renderer — a preset just sets them — so nothing is taken away, but the
+// default path to "show me the creature" is one button rather than a puzzle.
+const VIEWS = {
+  viewModel: {
+    hint: "The creature exactly as the game draws it.",
+    set: { showMesh:1, showBones:0, showJoints:0, showHandles:0, showWire:0,
+           showCross:0, showNormals:0, showGrid:1, emissive:1, sharpShade:1, flatFaceCol:1 },
+    colorBy: 'vertex'
+  },
+  viewRig: {
+    hint: "Skeleton over the body. Click a joint to select, drag a pink handle to reshape it.",
+    set: { showMesh:1, showBones:1, showJoints:1, showHandles:1, showWire:0,
+           showCross:0, showNormals:0, showGrid:1, emissive:1, sharpShade:1, flatFaceCol:1 },
+    colorBy: 'vertex'
+  },
+  viewDebug: {
+    hint: "Mesh topology and the faces that weld two limbs together, in red.",
+    set: { showMesh:1, showBones:1, showJoints:1, showHandles:0, showWire:1,
+           showCross:1, showNormals:0, showGrid:1, emissive:0, sharpShade:1, flatFaceCol:0 },
+    colorBy: 'blend'
+  }
+};
+function applyView(id) {
+  const v = VIEWS[id];
+  for (const [key, on] of Object.entries(v.set)) $(key).checked = !!on;
+  $('colorBy').value = v.colorBy;
+  $('viewHint').textContent = v.hint;
+  for (const k of Object.keys(VIEWS)) $(k).setAttribute('aria-pressed', String(k === id));
+}
+for (const k of Object.keys(VIEWS)) $(k).addEventListener('click', () => applyView(k));
+
+// ---------------------------------------------------------------- wiring
+$('voxel').addEventListener('input', e => {
+  if (document.activeElement !== $('voxelV')) {
+    $('voxelV').value = +e.target.value === 0 ? 'off' : (+e.target.value).toFixed(3);
+  }
+  requestBake(false);
+});
+$('voxelV').addEventListener('change', () => {
+  let v = parseFloat($('voxelV').value);
+  if (isNaN(v)) v = 0.0625;
+  v = Math.max(0, Math.min(0.25, v));
+  $('voxel').value = v;
+  $('voxelV').value = v === 0 ? 'off' : v.toFixed(3);
+  requestBake(false);
+});
+$('voxelV').addEventListener('keydown', e => { if (e.key === 'Enter') $('voxelV').blur(); });
+$('voxelV').addEventListener('focus', () => $('voxelV').select());
+
+$('smoothing').addEventListener('input', e => {
+  if (document.activeElement !== $('smoothingV')) {
+    $('smoothingV').value = (+e.target.value).toFixed(2);
+  }
+  requestBake(false);
+});
+$('smoothingV').addEventListener('change', () => {
+  let v = parseFloat($('smoothingV').value);
+  if (isNaN(v)) v = 0.75;
+  v = Math.max(0, Math.min(1, v));
+  $('smoothing').value = v;
+  $('smoothingV').value = v.toFixed(2);
+  requestBake(false);
+});
+$('smoothingV').addEventListener('keydown', e => { if (e.key === 'Enter') $('smoothingV').blur(); });
+$('smoothingV').addEventListener('focus', () => $('smoothingV').select());
+$('tier').addEventListener('change', () => requestBake(true));
+$('archetype').addEventListener('change', () => { S.genes = null; requestBake(true); });
+$('seed').addEventListener('change', () => { S.genes = null; requestBake(true); });
+// Re-roll means a different creature. It used to clear the gene edits but leave the seed alone,
+// so the server re-derived the same animal from the same seed and nothing appeared to happen.
+$('reroll').onclick = () => {
+  $('seed').value = Math.floor(Math.random() * 1e9);
+  S.genes = null;
+  requestBake(true);
+};
+$('resetGenes').onclick = () => { S.genes = null; requestBake(true); };
+for (const id of ['showMesh','showWire','showBones','showJoints','inFront','showGrid','showNormals',
+                  'emissive','colorBy']) {
+  $(id).addEventListener('change', () => {});
+}
+
+$('copyCode').onclick = () => {
+  $('code').select();
+  navigator.clipboard.writeText($('code').value).catch(() => document.execCommand('copy'));
+};
+
+// A new creature invalidates a cached gait; drop it rather than playing one body's walk on another.
+const _adopt = adopt;
+adopt = function(d) {
+  // The cached cycle belongs to the previous body, so it is always dropped. If the walk was
+  // running, fetch the new creature's own cycle and carry straight on — stopping dead on every
+  // re-roll made comparing two creatures' gaits a four-click job instead of one.
+  const wasPlaying = S.playing;
+  S.anim = null;
+  setPlaying(false);
+  _adopt(d);
+  if (wasPlaying) loadAnim().then(() => setPlaying(true)).catch(() => {});
+};
+
+
+// ---------------------------------------------------------------- interactive guide
+const GUIDE_STEPS = [
+  {
+    target: '#gl',
+    title: '3D Viewport',
+    text: 'Drag to orbit around the creature, shift-drag to pan, and scroll to zoom. Press F to frame the creature and Space to toggle walk animation.',
+    position: 'center'
+  },
+  {
+    target: '#archetype',
+    title: 'Archetype & Seed',
+    text: 'Select an archetype body plan (e.g. CHAOS, BIPED, INSECTOID) and enter a seed to generate unique creature variations.',
+    position: 'right'
+  },
+  {
+    target: '#reroll',
+    title: 'Re-roll Seed',
+    text: 'Click Re-roll to generate a new random seed and instantly bake a fresh creature variant for the selected archetype in one click.',
+    position: 'right'
+  },
+  {
+    target: '#playBtn',
+    title: 'Animation Controls',
+    text: 'Toggle the procedural walk cycle on or off and adjust walk speed. The creature starts walking automatically on load.',
+    position: 'right'
+  },
+  {
+    target: '#viewRig',
+    title: 'Rig Mode & Joint Posing',
+    text: 'Switch to Rig mode to display bone skeletons and joint handles. Click joint spheres to select them, or drag handle points to pose limbs. Note: animation playback must be paused to edit joints!',
+    position: 'right',
+    action: () => {
+      applyView('viewRig');
+    }
+  },
+  {
+    target: '#genes',
+    title: 'Gene Editing',
+    text: 'Tweak individual genes for body, limbs, tail, horns, and bioluminescence. Drag sliders or click any value box on the right to type numbers.',
+    position: 'right',
+    action: () => {
+      applyView('viewModel');
+      const g = document.querySelector('#genes')?.closest('details');
+      if (g) g.open = true;
+    }
+  },
+  {
+    target: '#code',
+    title: 'Genome Code Export',
+    text: 'Copy the encoded genome string to paste into Minecraft using `/primordia spawn code <genome>`. Have fun creating creatures!',
+    position: 'right',
+    action: () => {
+      applyView('viewModel');
+      const g = document.querySelector('#genes')?.closest('details');
+      if (g) g.open = false;
+      const c = document.querySelector('#code')?.closest('details');
+      if (c) c.open = true;
+    }
+  }
+];
+
+let currentGuideStep = 0;
+
+function updateHighlightPosition() {
+  if ($('guideHighlight').style.display === 'none') return;
+  const step = GUIDE_STEPS[currentGuideStep];
+  if (!step) return;
+  const targetEl = document.querySelector(step.target);
+  if (!targetEl) return;
+
+  const rect = targetEl.getBoundingClientRect();
+  const pad = 4;
+  const margin = 4;
+  const hLeft = Math.max(margin, rect.left - pad);
+  const hTop = Math.max(margin, rect.top - pad);
+  const hRight = Math.min(window.innerWidth - margin, rect.right + pad);
+  const hBottom = Math.min(window.innerHeight - margin, rect.bottom + pad);
+
+  const highlight = $('guideHighlight');
+  const tooltip = $('guideTooltip');
+
+  highlight.style.left = hLeft + 'px';
+  highlight.style.top = hTop + 'px';
+  highlight.style.width = Math.max(10, hRight - hLeft) + 'px';
+  highlight.style.height = Math.max(10, hBottom - hTop) + 'px';
+
+  const ttWidth = 320;
+  let ttLeft = rect.right + 16;
+  let ttTop = Math.max(10, Math.min(window.innerHeight - 220, rect.top));
+
+  if (step.position === 'center') {
+    ttLeft = Math.max(10, (window.innerWidth - ttWidth) / 2);
+    ttTop = Math.max(10, (window.innerHeight - 200) / 2);
+  } else {
+    if (ttLeft + ttWidth > window.innerWidth - 10) {
+      ttLeft = Math.max(10, rect.left - ttWidth - 16);
+    }
+  }
+
+  tooltip.style.left = ttLeft + 'px';
+  tooltip.style.top = ttTop + 'px';
+}
+
+function showGuideStep(idx) {
+  if (idx < 0 || idx >= GUIDE_STEPS.length) {
+    finishGuide();
+    return;
+  }
+  currentGuideStep = idx;
+  const step = GUIDE_STEPS[idx];
+  if (step.action) step.action();
+
+  const overlay = $('guideOverlay');
+  const highlight = $('guideHighlight');
+  const tooltip = $('guideTooltip');
+
+  overlay.style.display = 'block';
+  highlight.style.display = 'block';
+  tooltip.style.display = 'block';
+
+  $('guideTitle').textContent = step.title;
+  $('guideText').textContent = step.text;
+  $('guideStepNum').textContent = `Step ${idx + 1} of ${GUIDE_STEPS.length}`;
+  $('guidePrev').style.display = idx === 0 ? 'none' : 'inline-block';
+  $('guideNext').textContent = idx === GUIDE_STEPS.length - 1 ? 'Finish' : 'Next';
+
+  const targetEl = document.querySelector(step.target);
+  if (!targetEl) return;
+
+  targetEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+
+  updateHighlightPosition();
+  setTimeout(updateHighlightPosition, 60);
+  setTimeout(updateHighlightPosition, 200);
+  setTimeout(updateHighlightPosition, 400);
+}
+
+function finishGuide() {
+  $('guideOverlay').style.display = 'none';
+  $('guideHighlight').style.display = 'none';
+  $('guideTooltip').style.display = 'none';
+  applyView('viewModel');
+  document.querySelectorAll('details.group').forEach(d => d.open = false);
+  try { localStorage.setItem('primordia.guideCompleted', '1'); } catch (e) {}
+}
+
+function startGuide() {
+  showGuideStep(0);
+}
+
+$('helpBtn').onclick = () => startGuide();
+$('guideNext').onclick = () => showGuideStep(currentGuideStep + 1);
+$('guidePrev').onclick = () => showGuideStep(currentGuideStep - 1);
+$('guideSkip').onclick = () => finishGuide();
+$('side').addEventListener('scroll', updateHighlightPosition);
+window.addEventListener('scroll', updateHighlightPosition);
+window.addEventListener('resize', updateHighlightPosition);
+
+function saveSettings() {
+  try {
+    const settings = {
+      archetype: $('archetype') ? $('archetype').value : 'CHAOS',
+      seed: $('seed') ? $('seed').value : '1',
+      viewMode: S.viewMode || 'viewModel',
+      voxel: $('voxel') ? $('voxel').value : '0.0625',
+      animSpeed: $('animSpeed') ? $('animSpeed').value : '0.8',
+      tier: $('tier') ? $('tier').value : '0',
+      colorBy: $('colorBy') ? $('colorBy').value : 'vertex',
+      smoothing: $('smoothing') ? $('smoothing').value : '0.75',
+      showStats: $('showStats') ? $('showStats').checked : false,
+      showFps: $('showFps') ? $('showFps').checked : false,
+      showMesh: $('showMesh') ? $('showMesh').checked : true,
+      showBones: $('showBones') ? $('showBones').checked : false,
+      showJoints: $('showJoints') ? $('showJoints').checked : false,
+      showHandles: $('showHandles') ? $('showHandles').checked : false,
+      inFront: $('inFront') ? $('inFront').checked : true,
+      showWire: $('showWire') ? $('showWire').checked : false,
+      showCross: $('showCross') ? $('showCross').checked : false,
+      showNormals: $('showNormals') ? $('showNormals').checked : false,
+      showGrid: $('showGrid') ? $('showGrid').checked : true,
+      emissive: $('emissive') ? $('emissive').checked : true,
+      sharpShade: $('sharpShade') ? $('sharpShade').checked : true,
+      flatFaceCol: $('flatFaceCol') ? $('flatFaceCol').checked : true,
+      genes: S.genes ? Array.from(S.genes) : null
+    };
+    localStorage.setItem('primordia.settings', JSON.stringify(settings));
+  } catch (e) {}
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem('primordia.settings');
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    if (s.archetype && $('archetype').querySelector(`option[value="${s.archetype}"]`)) {
+      $('archetype').value = s.archetype;
+    }
+    if (s.seed) $('seed').value = s.seed;
+    if (s.voxel !== undefined) { $('voxel').value = s.voxel; $('voxelV').value = s.voxel === 0 ? 'off' : (+s.voxel).toFixed(3); }
+    if (s.animSpeed !== undefined) { $('animSpeed').value = s.animSpeed; $('animSpeedV').value = (+s.animSpeed).toFixed(1); }
+    if (s.tier !== undefined) $('tier').value = s.tier;
+    if (s.colorBy !== undefined) $('colorBy').value = s.colorBy;
+    if (s.smoothing !== undefined) { $('smoothing').value = s.smoothing; $('smoothingV').value = (+s.smoothing).toFixed(2); }
+
+    const bools = ['showStats', 'showFps', 'showMesh', 'showBones', 'showJoints', 'showHandles', 'inFront', 'showWire', 'showCross', 'showNormals', 'showGrid', 'emissive', 'sharpShade', 'flatFaceCol'];
+    bools.forEach(k => {
+      if (s[k] !== undefined && $(k)) $(k).checked = !!s[k];
+    });
+
+    if (s.viewMode) applyView(s.viewMode);
+    if (Array.isArray(s.genes)) S.genes = s.genes.slice();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+(async function init() {
+  S.meta = await (await fetch('/api/meta')).json();
+  const sel = $('archetype');
+  for (const a of S.meta.archetypes) {
+    const o = document.createElement('option');
+    o.value = a; o.textContent = a;
+    sel.appendChild(o);
+  }
+
+  const restored = loadSettings();
+  if (!restored) {
+    $('seed').value = Math.floor(Math.random() * 1e9);
+    sel.value = 'CHAOS';
+    applyView('viewModel');
+  }
+
+  buildGeneUI();
+  await bake();
+  render();
+
+  const autoSaveInputs = ['archetype', 'seed', 'voxel', 'animSpeed', 'tier', 'colorBy', 'smoothing', 'showStats', 'showFps', 'showMesh', 'showBones', 'showJoints', 'showHandles', 'inFront', 'showWire', 'showCross', 'showNormals', 'showGrid', 'emissive', 'sharpShade', 'flatFaceCol'];
+  autoSaveInputs.forEach(id => {
+    const el = $(id);
+    if (el) {
+      el.addEventListener('change', saveSettings);
+      el.addEventListener('input', saveSettings);
+    }
+  });
+
+  // Auto-start walking on boot
+  if (!REDUCED_MOTION.matches) {
+    loadAnim().then(() => setPlaying(true)).catch(() => {});
+  }
+
+  // Auto-trigger guide on first visit
+  try {
+    if (!localStorage.getItem('primordia.guideCompleted')) {
+      setTimeout(() => startGuide(), 400);
+    }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>

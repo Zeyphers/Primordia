@@ -67,6 +67,12 @@ public final class PrimordiaCommands {
 						.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
 						.then(Commands.literal("spawn")
 								.executes(ctx -> spawn(ctx, 1, null, null))
+								// A genome straight from the editor. Greedy, because the encoded form is
+								// base64 and can carry characters a word argument would stop at.
+								.then(Commands.literal("code")
+										.then(Commands.argument("genome", StringArgumentType.greedyString())
+												.executes(ctx -> spawnCoded(ctx,
+														StringArgumentType.getString(ctx, "genome"), 1))))
 								.then(Commands.argument("count", IntegerArgumentType.integer(1, 64))
 										.executes(ctx -> spawn(ctx, IntegerArgumentType.getInteger(ctx, "count"), null, null))
 										.then(Commands.argument("archetype", StringArgumentType.word())
@@ -174,6 +180,56 @@ public final class PrimordiaCommands {
 				+ newSpecies + " new bloodline(s) · "
 				+ data.speciesCount() + " on file").withStyle(ChatFormatting.GREEN), false);
 		return filed;
+	}
+
+	/**
+	 * Spawns an exact genome, as produced by the editor's <b>Genome code</b> box.
+	 * <p>
+	 * The creature is an ordinary member of the population once placed — it eats, breeds and passes
+	 * its genes on like anything born in the world. That is the point of routing a designed animal
+	 * through {@link Genome#decode} rather than through a bespoke spawn path: whatever comes out of
+	 * the editor has to be the same kind of thing the ecology already knows how to simulate, or it
+	 * could not interbreed with the wild population at all.
+	 */
+	private static int spawnCoded(CommandContext<CommandSourceStack> ctx, String code, int count) {
+		CommandSourceStack source = ctx.getSource();
+		ServerLevel world = source.getLevel();
+		Vec3 pos = source.getPosition();
+
+		Genome genome;
+		try {
+			genome = Genome.decode(code.trim());
+		} catch (Exception e) {
+			source.sendFailure(Component.literal("Could not read that genome code: " + e.getMessage()));
+			return 0;
+		}
+		if (genome == null) {
+			source.sendFailure(Component.literal("Could not read that genome code."));
+			return 0;
+		}
+
+		Random random = new Random();
+		int spawned = 0;
+		for (int i = 0; i < count; i++) {
+			CreatureEntity creature = PrimordiaEntities.CREATURE.create(world,
+					net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+			if (creature == null) continue;
+			double spread = count == 1 ? 0.0 : 1.5 + count * 0.15;
+			creature.snapTo(
+					pos.x + (random.nextDouble() - 0.5) * spread,
+					pos.y,
+					pos.z + (random.nextDouble() - 0.5) * spread,
+					random.nextFloat() * 360f, 0f);
+			creature.setGenome(genome);
+			world.addFreshEntity(creature);
+			spawned++;
+		}
+
+		int finalSpawned = spawned;
+		Genome reported = genome;
+		source.sendSuccess(() -> Component.literal("Spawned " + finalSpawned + " designed creature(s) — "
+				+ describe(reported)).withStyle(ChatFormatting.GREEN), false);
+		return spawned;
 	}
 
 	private static int spawn(CommandContext<CommandSourceStack> ctx, int count, String archetypeName, Long seed) {

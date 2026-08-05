@@ -11,7 +11,9 @@ import dev.jsz.primordia.lab.SampleData;
 import dev.jsz.primordia.registry.PrimordiaEntities;
 import dev.jsz.primordia.registry.PrimordiaItems;
 import dev.jsz.primordia.registry.PrimordiaScreenHandlers;
+import dev.jsz.primordia.editor.EditorServer;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.item.v1.ItemTooltipCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
@@ -36,6 +38,12 @@ public class PrimordiaClient implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
+		// The editor's HTTP listener runs on a thread the JDK creates itself and does not mark as a
+		// daemon, so anything left listening keeps the JVM alive after the window closes and the
+		// shutdown watchdog eventually files a crash report. This is the hook that actually matters
+		// on a client: it fires on quitting, not on leaving a world.
+		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> EditorServer.stop());
+
 		net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(
 				dev.jsz.primordia.lab.GuideDataSyncPayload.TYPE,
 				(payload, context) -> context.client().execute(() -> {

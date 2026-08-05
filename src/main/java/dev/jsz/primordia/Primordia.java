@@ -1,5 +1,7 @@
 package dev.jsz.primordia;
 
+import dev.jsz.primordia.editor.EditorServer;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import dev.jsz.primordia.command.PrimordiaCommands;
 import dev.jsz.primordia.ecology.VanillaInteractions;
 import dev.jsz.primordia.ecology.region.EcologyTicker;
@@ -26,6 +28,16 @@ public class Primordia implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		// The editor's HTTP listener runs on a non-daemon thread of the JDK's own making, which
+		// setExecutor does not reach. Left running it holds the JVM open after Minecraft has closed,
+		// and the shutdown watchdog eventually kills the process and files a crash report. Stopping
+		// it here is what lets the game exit; the command can always start it again.
+		// Dedicated servers only. On a client this event also fires on leaving a world for the main
+		// menu, which would shut the editor out from under someone still using it; the client has its
+		// own hook on actually quitting (see PrimordiaClient).
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			if (server.isDedicatedServer()) EditorServer.stop();
+		});
 		PrimordiaEntities.register();
 		// Blocks before block entities: the entity types name the blocks they are valid for, and
 		// the blocks reach their type back through a supplier so neither can be first by accident.

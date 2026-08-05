@@ -315,7 +315,16 @@ public final class RegionMaterialiser {
 		int minChunkZ = pos.minBlockZ() >> 4;
 		for (int cx = minChunkX; cx < minChunkX + RegionPos.CHUNKS; cx++) {
 			for (int cz = minChunkZ; cz < minChunkZ + RegionPos.CHUNKS; cz++) {
-				if (world.hasChunkAt(cx, cz)) {
+				// hasChunk takes chunk coordinates. hasChunkAt takes *block* coordinates and shifts
+				// them down itself, so passing chunk coordinates to it shifted them a second time
+				// and probed chunk (x >> 8) instead of (x >> 4).
+				//
+				// The two agree at the origin and diverge linearly with distance, which is why this
+				// only showed up far from spawn: past a few hundred blocks the probe lands on a
+				// chunk nowhere near the player, hasChunk says no for all sixty-four, loadedChunks
+				// comes back empty and the region materialises nothing at all. Reported as
+				// creatures simply not being there after flying out a long way.
+				if (world.hasChunk(cx, cz)) {
 					loadedChunks.add(new net.minecraft.world.level.ChunkPos(cx, cz));
 				}
 			}

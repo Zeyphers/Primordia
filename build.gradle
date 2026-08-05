@@ -134,12 +134,12 @@ jar {
 }
 
 // primordia-editor-task
-// Development-only viewer for the creature pipeline; see EditorServer's class comment. Uses the
-// test runtime classpath because that is what already carries main plus Minecraft, and because
-// keeping the tool out of the main source set is what keeps it out of the shipped jar.
+// Runs the creature editor without launching Minecraft — the fast path while working on the
+// generator, since a bake needs none of the game. In game the same server is started by
+// /primordia editor instead.
 tasks.register('editor', JavaExec) {
 	group = 'primordia'
 	description = 'Serves the creature editor on http://127.0.0.1:8090/'
-	classpath = sourceSets.test.runtimeClasspath
+	classpath = sourceSets.main.runtimeClasspath
 	mainClass = 'dev.jsz.primordia.editor.EditorServer'
 }

@@ -3,6 +3,8 @@ package dev.jsz.primordia.entity;
 import dev.jsz.primordia.anim.CreatureAnimator;
 import dev.jsz.primordia.body.AttackStyle;
 import dev.jsz.primordia.body.BodyPlan;
+import dev.jsz.primordia.body.BoneDef;
+import dev.jsz.primordia.skeleton.Skeleton;
 import dev.jsz.primordia.body.BodyPlanCache;
 import dev.jsz.primordia.body.DietGroup;
 import dev.jsz.primordia.body.LimbChain;
@@ -1932,6 +1934,87 @@ public class CreatureEntity extends PathfinderMob {
 		getLookControl().setLookAt(x, y + (getEyeY() - getHeadY()), z);
 	}
 
+	/**
+	 * An extra box on the middle of the spine that exists <b>only to register hits</b>.
+	 * <p>
+	 * Minecraft gives an entity one bounding box and uses it for everything at once — collision,
+	 * pushing, suffocation, pathfinding and hit detection. That forces a compromise on a creature
+	 * whose body is nothing like a box: {@code getDefaultDimensions} caps the height at twice the
+	 * hip so long-necked animals do not suffocate under trees, and keeps the footprint modest so
+	 * they still fit through terrain. The cost is that the box does not always sit where the body
+	 * looks like it is, and a swing that visibly connects can land on nothing.
+	 * <p>
+	 * This box is not the bounding box and never becomes one. It is returned to the hit-scan and to
+	 * nothing else, so it cannot push a mob, cannot be pushed, does not collide with terrain and
+	 * happily overlaps anything — it adds hittable volume and changes no physics.
+	 *
+	 * @return the box in world space, or null when the body plan is not available yet
+	 */
+	public AABB getSpineHitbox() {
+		BodyPlan plan = getBodyPlan();
+		if (plan == null) return null;
+
+		// The live posed skeleton when there is one, the bind pose when there is not.
+		//
+		// This is what makes the box follow the animal rather than sit in the middle of its bounding
+		// box looking decorative. The animator applies the body bob, the lean into a turn, the roll,
+		// and the root drop that carries the whole torso — so a creature's core is somewhere
+		// different every frame, and bind-pose bone positions describe where it would be if it were
+		// standing perfectly still, which it never is.
+		//
+		// The animator is driven by the renderer, so a posed skeleton exists on the client and not on
+		// the server. That asymmetry is fine here and nowhere else: the client is what aims, and the
+		// server only checks that the player was close enough to the entity. Creating an animator
+		// here would be worse than useless on a server — one per creature, updated by nothing, for
+		// numbers identical to the bind pose it already has.
+		Skeleton posed = animator != null ? animator.skeleton() : null;
+		if (posed != null && posed.plan != plan) posed = null;
+
+		float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
+		float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+		int counted = 0;
+		Vector3f head = new Vector3f();
+		Vector3f tail = new Vector3f();
+		for (int i = 0; i < plan.bones.length; i++) {
+			BoneDef bone = plan.bones[i];
+			if (!bone.emitsGeometry || !bone.name.startsWith("spine")) continue;
+			if (posed != null) {
+				posed.boneHead(i, head);
+				posed.boneTail(i, tail);
+			} else {
+				head.set(bone.head);
+				tail.set(bone.tail);
+			}
+			float r = bone.maxRadius();
+			minX = Math.min(minX, Math.min(head.x, tail.x) - r);
+			minY = Math.min(minY, Math.min(head.y, tail.y) - r);
+			minZ = Math.min(minZ, Math.min(head.z, tail.z) - r);
+			maxX = Math.max(maxX, Math.max(head.x, tail.x) + r);
+			maxY = Math.max(maxY, Math.max(head.y, tail.y) + r);
+			maxZ = Math.max(maxZ, Math.max(head.z, tail.z) + r);
+			counted++;
+		}
+		if (counted == 0) return null;
+
+		double cx = (minX + maxX) * 0.5, cy = (minY + maxY) * 0.5, cz = (minZ + maxZ) * 0.5;
+		double halfX = (maxX - minX) * 0.5, halfY = (maxY - minY) * 0.5, halfZ = (maxZ - minZ) * 0.5;
+
+		// The torso runs along the body axis, so it turns with the creature. A world-space AABB
+		// cannot itself be rotated, so the horizontal half-extents are those of the box enclosing the
+		// turned torso — correct at every yaw, and tightest at the diagonals.
+		float yawRad = (float) Math.toRadians(-getYRot());
+		double cos = Math.cos(yawRad), sin = Math.sin(yawRad);
+		double growth = getGrowth();
+		double wx = getX() + (cx * cos - cz * sin) * growth;
+		double wz = getZ() + (cx * sin + cz * cos) * growth;
+		double wy = getY() + cy * growth;
+
+		double rx = Math.max(0.25, (Math.abs(halfX * cos) + Math.abs(halfZ * sin)) * growth);
+		double rz = Math.max(0.25, (Math.abs(halfX * sin) + Math.abs(halfZ * cos)) * growth);
+		double ry = Math.max(0.25, halfY * growth);
+		return new AABB(wx - rx, wy - ry, wz - rz, wx + rx, wy + ry, wz + rz);
+	}
+
 	public List<AABB> getLegSubHitboxes() {
 		BodyPlan plan = getBodyPlan();
 		if (plan == null) return List.of();
@@ -1970,9 +2053,21 @@ public class CreatureEntity extends PathfinderMob {
 		float width = Math.max(0.50f, Math.max(
 				Math.max(legSpanX * 2.0f * 1.05f, plan.width() * 0.9f),
 				Math.min(plan.bodyLength * 0.40f, 1.8f)));
-		float height = Math.max(0.50f, Math.max(
-				plan.hipHeight * 1.25f,
-				Math.min(plan.height() * 0.92f, plan.hipHeight * 2.0f)));
+		// Sized to the silhouette rather than to a multiple of the hip.
+		//
+		// The old floor of 0.50 was taller than several archetypes are: a cave crawler stands 0.40
+		// and was given a box 25% taller than itself, an insectoid 23%, and seven of the eleven
+		// archetypes had a box overhanging the animal inside it. Short-legged creatures came off
+		// worst, because a floor expressed in absolute blocks is largest relative to whatever is
+		// smallest.
+		//
+		// Shortening is safe in both directions that matter. Suffocation gets better, not worse —
+		// Minecraft puts the eye at 85% of the box, so a lower box holds the eye further from the
+		// block above it. And nothing becomes harder to hit, because the spine hitbox now covers
+		// the torso independently of this box (see getSpineHitbox).
+		float height = Math.max(0.35f, Math.max(
+				plan.hipHeight * 1.05f,
+				Math.min(plan.height() * 0.85f, plan.hipHeight * 1.7f)));
 
 		float growth = getGrowth();
 		if (getAttribute(Attributes.STEP_HEIGHT) != null) {

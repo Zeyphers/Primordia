@@ -45,11 +45,12 @@ import java.util.concurrent.Executors;
  * until the day either side changed. Anything the page cannot obtain from this server it is not
  * allowed to invent.
  * <p>
- * Lives in {@code src/test} deliberately. It is a development tool, not a feature, so it must never
- * reach the shipped jar — and the test source set already carries the whole main classpath, which
- * is all it needs. Run it with:
+ * Ships in the jar so {@code /primordia editor} can start it, but it is <b>inert until asked for</b>:
+ * nothing binds a port until the command is run, and the listener is bound to {@code 127.0.0.1} so it
+ * is unreachable from anywhere but the machine running the game.
  * <pre>
- * JAVA_HOME=/opt/homebrew/opt/openjdk@25 ~/dev/tools/gradle-9.6.1/bin/gradle editor
+ * /primordia editor                                   # from in game
+ * ~/dev/tools/gradle-9.6.1/bin/gradle editor          # standalone, no Minecraft
  * </pre>
  *
  * <h2>Endpoints</h2>
@@ -76,7 +77,17 @@ public final class EditorServer {
 	private EditorServer() {
 	}
 
+	/** The running instance, or null. One per process; the command starts it on demand. */
+	private static volatile HttpServer running;
+
+	/** Standalone entry point for the Gradle {@code editor} task. */
 	public static void main(String[] args) throws IOException {
+		start();
+	}
+
+	/** @return the URL to open, whether this call started the server or found it already up. */
+	public static synchronized String start() throws IOException {
+		if (running != null) return url();
 		HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", PORT), 0);
 		server.createContext("/api/meta", EditorServer::handleMeta);
 		server.createContext("/api/bake", EditorServer::handleBake);
@@ -89,22 +100,57 @@ public final class EditorServer {
 		// rapid slider drags predictable rather than letting a stale bake land after a fresh one.
 		server.setExecutor(Executors.newSingleThreadExecutor(r -> {
 			Thread t = new Thread(r, "primordia-editor");
-			t.setDaemon(false);
+			// Daemon: inside the game this thread must never be the reason the JVM refuses to exit.
+			t.setDaemon(true);
 			return t;
 		}));
 		server.start();
-		System.out.println("Primordia editor on http://127.0.0.1:" + PORT + "/");
+		running = server;
+		System.out.println("Primordia editor on " + url());
+		return url();
+	}
+
+	public static synchronized void stop() {
+		if (running == null) return;
+		running.stop(0);
+		running = null;
+	}
+
+	public static boolean isRunning() {
+		return running != null;
+	}
+
+	public static String url() {
+		return "http://127.0.0.1:" + PORT + "/";
 	}
 
 	// ------------------------------------------------------------------ routes
 
 	private static void handlePage(HttpExchange ex) throws IOException {
-		Path path = Path.of("src/test/resources/editor/index.html");
-		if (!Files.exists(path)) {
-			send(ex, 404, "text/plain", ("missing " + path.toAbsolutePath()).getBytes(StandardCharsets.UTF_8));
+		byte[] page = resource("index.html");
+		if (page == null) {
+			send(ex, 404, "text/plain", "editor page missing".getBytes(StandardCharsets.UTF_8));
 			return;
 		}
-		send(ex, 200, "text/html; charset=utf-8", Files.readAllBytes(path));
+		send(ex, 200, "text/html; charset=utf-8", page);
+	}
+
+	/**
+	 * Reads an editor file, preferring the working copy on disk and falling back to the one baked
+	 * into the jar.
+	 * <p>
+	 * The disk path is what makes the tool worth using while developing it: edit the HTML, hit
+	 * reload, no rebuild and no restart. It only exists when the game is being run out of the
+	 * project directory, which is exactly when that matters. Everywhere else — a real install, where
+	 * there is no {@code src/} — the classpath copy is the only one and is used silently.
+	 */
+	private static byte[] resource(String name) throws IOException {
+		Path onDisk = Path.of("src/main/resources/editor", name);
+		if (Files.isRegularFile(onDisk)) return Files.readAllBytes(onDisk);
+		try (java.io.InputStream in =
+				     EditorServer.class.getResourceAsStream("/editor/" + name)) {
+			return in == null ? null : in.readAllBytes();
+		}
 	}
 
 	/**
@@ -118,8 +164,8 @@ public final class EditorServer {
 			send(ex, 400, "text/plain", "bad asset".getBytes(StandardCharsets.UTF_8));
 			return;
 		}
-		Path path = Path.of("src/test/resources/editor/assets", name);
-		if (!Files.exists(path)) {
+		byte[] body = resource("assets/" + name);
+		if (body == null) {
 			send(ex, 404, "text/plain", ("missing " + name).getBytes(StandardCharsets.UTF_8));
 			return;
 		}
@@ -128,7 +174,6 @@ public final class EditorServer {
 				: "application/octet-stream";
 		ex.getResponseHeaders().add("Content-Type", type);
 		ex.getResponseHeaders().add("Cache-Control", "max-age=86400");
-		byte[] body = Files.readAllBytes(path);
 		ex.sendResponseHeaders(200, body.length);
 		try (OutputStream out = ex.getResponseBody()) {
 			out.write(body);

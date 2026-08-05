@@ -120,10 +120,50 @@ public final class PrimordiaCommands {
 						.then(Commands.literal("mutate")
 								.executes(PrimordiaCommands::mutate))
 						.then(Commands.literal("stats")
-								.executes(PrimordiaCommands::stats))));
+								.executes(PrimordiaCommands::stats))
+						.then(Commands.literal("editor")
+								.executes(PrimordiaCommands::editor))));
 	}
 
 	// ------------------------------------------------------------------ actions
+
+	/**
+	 * Starts the creature editor and hands back a clickable link.
+	 * <p>
+	 * The link is sent rather than a browser being launched directly. A command runs on the server,
+	 * and on a dedicated server "open a browser" would mean opening it on the host's machine, not
+	 * the player's — so the player's own client is asked to do it, through the same confirmation
+	 * screen Minecraft puts in front of every external link.
+	 * <p>
+	 * Idempotent: running it again with the server already up just returns the link.
+	 */
+	private static int editor(CommandContext<CommandSourceStack> ctx) {
+		CommandSourceStack source = ctx.getSource();
+		String url;
+		try {
+			url = dev.jsz.primordia.editor.EditorServer.start();
+		} catch (java.io.IOException e) {
+			source.sendFailure(Component.literal(
+					"Could not start the editor: " + e.getMessage()
+					+ " (is something already using that port?)"));
+			return 0;
+		}
+
+		source.sendSuccess(() -> Component.literal("Creature editor running at ")
+				.withStyle(ChatFormatting.GREEN)
+				.append(Component.literal(url)
+						.withStyle(style -> style
+								.withColor(ChatFormatting.AQUA)
+								.withUnderlined(true)
+								.withClickEvent(new net.minecraft.network.chat.ClickEvent.OpenUrl(
+										java.net.URI.create(url)))
+								.withHoverEvent(new net.minecraft.network.chat.HoverEvent.ShowText(
+										Component.literal("Open in your browser"))))), false);
+		source.sendSuccess(() -> Component.literal(
+				"Design a creature, copy its genome code, then /primordia spawn code <genome>")
+				.withStyle(ChatFormatting.GRAY), false);
+		return 1;
+	}
 
 	/**
 	 * Files every nearby creature straight into the player's field guide.

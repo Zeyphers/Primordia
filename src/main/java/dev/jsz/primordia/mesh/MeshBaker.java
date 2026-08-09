@@ -66,8 +66,12 @@ public final class MeshBaker {
 		// their legs are routinely finer than a single pixel-sized voxel, and came out as broken
 		// dotted lines of blocks rather than legs.
 		sdf.setInflate(voxelSize > 0f ? limbInflation(plan, cells) : 0f);
+		// The gap is passed through so the extractor knows whether it still has to separate limbs
+		// by hand. What is left of it after inflation is what the grid will actually see.
+		float visibleGap = plan.minLimbGap == Float.MAX_VALUE ? 0f
+				: Math.max(0f, plan.minLimbGap - 2f * (voxelSize > 0f ? limbInflation(plan, cells) : 0f));
 		SurfaceNets.Result net = SurfaceNets.extract(sdf, plan.boundsMin, plan.boundsMax,
-				cells, voxelSize);
+				cells, voxelSize, visibleGap);
 		// Cleared before anything else reads the field. Colouring asks featureAt which part of the
 		// body a vertex belongs to, and the teeth are placed against the jaw's true surface; both
 		// want the real shape, not the thickened one.
@@ -86,6 +90,7 @@ public final class MeshBaker {
 
 		Noise noise = new Noise(plan.genome.seed());
 		Vector3f rgb = new Vector3f();
+		int[] vertexGroup = new int[vertexCount];
 		float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
 		float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
 
@@ -93,6 +98,11 @@ public final class MeshBaker {
 			int p = v * 3;
 			float x = positions[p], y = positions[p + 1], z = positions[p + 2];
 			Feature feature = sdf.featureAt(x, y, z);
+			// The blend group the surface here actually belongs to. Taken from the field rather
+			// than inferred from the nearest bone, because ornament is made of blobs and a blob
+			// carries the group of the bone it hangs off — which is the only thing that knows a
+			// frill belongs to the body and not to the leg it happens to be dangling beside.
+			vertexGroup[v] = sdf.groupAt(x, y, z);
 			emissive[v] = Pattern.colorAt(x, y, z, normals[p], normals[p + 1], normals[p + 2],
 					feature, plan.palette, noise, rgb);
 			colors[p] = rgb.x;
@@ -109,7 +119,7 @@ public final class MeshBaker {
 
 		int[] boneIndices = new int[vertexCount * SkinBinder.MAX_INFLUENCES];
 		float[] boneWeights = new float[vertexCount * SkinBinder.MAX_INFLUENCES];
-		SkinBinder.bind(plan, positions, vertexCount, boneIndices, boneWeights);
+		SkinBinder.bind(plan, positions, vertexCount, vertexGroup, boneIndices, boneWeights);
 
 		// Accumulate area-weighted face normals across the quads sharing each vertex, then blend
 		// them with the SDF gradient.
@@ -342,8 +352,23 @@ public final class MeshBaker {
 		float span = Math.max(plan.boundsMax.x - plan.boundsMin.x,
 				Math.max(plan.boundsMax.y - plan.boundsMin.y, plan.boundsMax.z - plan.boundsMin.z));
 		float cell = SurfaceNets.voxelCell(span, cells, voxelSize);
-		float wanted = cell * 0.75f - plan.minLimbRadius;
-		return Math.max(0f, Math.min(wanted, cell * 0.75f));
+		float wanted = Math.min(cell * 0.75f - plan.minLimbRadius, cell * 0.75f);
+
+		// Never enough to close the daylight between two limbs.
+		//
+		// Inflation grows every surface, so a gap of g is eaten from both sides and closes at g/2.
+		// Rescuing thin limbs and welding them together are the same operation at different
+		// magnitudes, and nothing used to stand between them: a creature's feet were routinely
+		// fused into a single sheet in the course of saving its legs from disappearing. Measured
+		// across the whole population, 86% of small creatures and a third of mid-sized ones came
+		// out with their feet closer than one cell — which is to say joined.
+		//
+		// A third of the gap rather than a half, so the two surfaces stop short of touching rather
+		// than arriving exactly at it.
+		if (plan.minLimbGap != Float.MAX_VALUE) {
+			wanted = Math.min(wanted, plan.minLimbGap / 3f);
+		}
+		return Math.max(0f, wanted);
 	}
 
 	private static int resolutionFor(BodyPlan plan, int requested) {
@@ -352,6 +377,21 @@ public final class MeshBaker {
 		if (plan.minLimbRadius <= 1e-5f || span <= 1e-5f) return requested;
 
 		int needed = (int) Math.ceil(span / (plan.minLimbRadius * 0.9f));
+
+		// Resolve the space between the limbs as well as the limbs themselves.
+		//
+		// Sampling fine enough to see a leg says nothing about being able to see <i>past</i> it. Two
+		// feet a third of a cell apart sit inside neighbouring samples with nothing between them, so
+		// Surface Nets has no evidence there is a gap at all and lays a sheet of vertices straight
+		// across — the webbing between toes that no amount of blend-group separation could fix,
+		// because the field was right and the sampling of it was not.
+		//
+		// Half the gap, so at least one sample lands in the daylight. The tier ceiling below still
+		// applies: a small creature's feet can be closer than any affordable resolution could
+		// resolve, and those are left welded rather than allowed to cost an unbounded bake.
+		if (plan.minLimbGap != Float.MAX_VALUE && plan.minLimbGap > 1e-5f) {
+			needed = Math.max(needed, (int) Math.ceil(span / (plan.minLimbGap * 0.5f)));
+		}
 		// Never below the tier's own resolution, never far above it, never past the ceiling.
 		int ceiling = Math.min(Math.round(requested * 1.8f), LodTier.maxResolution());
 		return Math.max(requested, Math.min(needed, ceiling));

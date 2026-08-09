@@ -34,6 +34,29 @@ Two rules worth respecting:
 
 ---
 
+## `sample_cooler.png` — the cooler's screen
+
+**256×256. The screen uses the top-left 176×148.**
+
+Cut from vanilla's shulker box panel and rebuilt: the title bar and two rows of eight recesses,
+then the player's inventory. It is a whole panel, not a patch over a vanilla one, so repaint it
+however you like — frost the metal, ice the recesses, put a temperature gauge in the space beside
+the grid.
+
+| Region | Where | Note |
+|---|---|---|
+| Panel | `0,0` → `176,148` | anything past this is not drawn |
+| Title | `8,6` | "Sample Cooler" is drawn over this |
+| Cooler slots | `16,18`, 8 × 2 of 18px | recesses centred; slot squares are 16×16 |
+| "Inventory" label | `8,54` | drawn in code |
+| Player inventory | `8,66`, 9 × 3 | vanilla spacing |
+| Hotbar | `8,124`, 9 wide | — |
+
+**The slot positions are duplicated in `SampleCoolerScreenHandler`.** Move a recess in the paint
+and the clickable square stays where it was — say where you want them and both get moved together.
+
+---
+
 ## `art.png` + `layout.png` — the Gene Lab's screen
 
 `art.png` is the picture. `layout.png` says where the interactive parts are: seven coloured blocks

@@ -55,6 +55,24 @@ public final class PrimordiaConfig {
 	public boolean emissiveGlow = true;
 
 	/**
+	 * Whether creatures use the procedural voice synthesiser.
+	 * <p>
+	 * Off silences them entirely rather than falling back to vanilla mob sounds. There is nothing to
+	 * fall back to — a creature's voice is derived from its genome the same way its body is, and no
+	 * recorded animal is a sensible stand-in for a shape the game invented this morning.
+	 */
+	public boolean creatureVoices = true;
+
+	/**
+	 * Creature voice loudness as a percentage, applied on top of the game's own sound sliders.
+	 * <p>
+	 * A separate control because these calls are not on any vanilla category a player can single
+	 * out: they ride the Friendly Creatures slider along with every cow and pig in the world, and
+	 * somebody who wants their own animals quieter without silencing the rest needs this.
+	 */
+	public int creatureVoiceVolume = 100;
+
+	/**
 	 * Snaps the mesh to a world-aligned voxel grid instead of following the field smoothly.
 	 * <p>
 	 * Surface Nets places each dual vertex at the average of the cell's edge crossings, which is

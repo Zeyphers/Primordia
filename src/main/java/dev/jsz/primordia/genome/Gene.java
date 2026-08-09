@@ -13,20 +13,20 @@ package dev.jsz.primordia.genome;
 public enum Gene {
 	// ---- gross morphology -------------------------------------------------
 	SIZE(0.35f),
-	TORSO_LENGTH(0.45f),
-	TORSO_GIRTH(0.5f),
+	TORSO_LENGTH(0.45f, false, true),
+	TORSO_GIRTH(0.5f, false, true),
 	TORSO_TAPER(0.6f),
 	SPINE_SEGMENTS(0.25f),
 	SPINE_ARCH(0.6f),
-	BLEND_SMOOTHNESS(0.5f),
+	BLEND_SMOOTHNESS(0.5f, false, true),
 
 	// ---- neck & head ------------------------------------------------------
-	NECK_LENGTH(0.5f),
+	NECK_LENGTH(0.5f, false, true),
 	NECK_SEGMENTS(0.25f),
 	NECK_THICKNESS(0.5f),
-	HEAD_SIZE(0.4f),
+	HEAD_SIZE(0.4f, false, true),
 	HEAD_ELONGATION(0.6f),
-	JAW_SIZE(0.7f),
+	JAW_SIZE(0.7f, false, true),
 	CRANIUM_BULGE(0.6f),
 	EYE_SIZE(0.7f),
 	EYE_COUNT(0.15f),
@@ -40,9 +40,9 @@ public enum Gene {
 	// ---- legs -------------------------------------------------------------
 	LEG_PAIRS(0.12f),
 	LEG_SEGMENTS(0.2f),
-	LEG_LENGTH(0.5f),
-	LEG_THICKNESS(0.55f),
-	LEG_SPLAY(0.6f),
+	LEG_LENGTH(0.5f, false, true),
+	LEG_THICKNESS(0.55f, false, true),
+	LEG_SPLAY(0.6f, false, true),
 	LIMB_RATIO(0.5f),
 	DIGITIGRADE(0.5f),
 	FOOT_SIZE(0.6f),
@@ -51,7 +51,7 @@ public enum Gene {
 	// ---- arms / manipulators ---------------------------------------------
 	ARM_PAIRS(0.1f),
 	ARM_LENGTH(0.5f),
-	ARM_THICKNESS(0.55f),
+	ARM_THICKNESS(0.55f, false, true),
 
 	// ---- ornament ---------------------------------------------------------
 	DORSAL_SPINES(0.5f),
@@ -68,8 +68,8 @@ public enum Gene {
 	CURIOSITY(0.5f),
 	TERRITORIALITY(0.45f),
 	NOCTURNALITY(0.4f),
-	TEMP_PREFERENCE(0.3f),
-	HUMIDITY_PREFERENCE(0.3f),
+	TEMP_PREFERENCE(0.3f, false, true),
+	HUMIDITY_PREFERENCE(0.3f, false, true),
 	ARMOR(0.4f),
 	FECUNDITY(0.35f),
 	MATURATION_RATE(0.35f),
@@ -86,39 +86,39 @@ public enum Gene {
 	HUE_SECONDARY(0.8f),
 	SATURATION(0.7f),
 	BRIGHTNESS(0.7f),
-	PATTERN_TYPE(0.9f),
+	PATTERN_TYPE(0.9f, true),
 	PATTERN_SCALE(0.8f),
 	PATTERN_CONTRAST(0.8f),
 	COUNTERSHADING(0.6f),
 
 	// ---- detailed anatomical options --------------------------------------
 	CLAWS(0.5f),
-	HAND_STYLE(0.5f),
-	FOOT_TYPE(0.5f),
-	SPINE_STYLE(0.5f),
+	HAND_STYLE(0.5f, true),
+	FOOT_TYPE(0.5f, true),
+	SPINE_STYLE(0.5f, true),
 	FUR_CREST(0.5f),
 	ARMOR_COVERAGE(0.5f),
-	EYE_STYLE(0.5f),
+	EYE_STYLE(0.5f, true),
 
 	// ---- cranial ornament -------------------------------------------------
 	// Horn type is structural (a lineage keeps its horns); horn size is a display trait and
 	// drifts fast, which is what lets sexual selection run away with it over generations.
-	HORN_TYPE(0.30f),
+	HORN_TYPE(0.30f, true),
 	HORN_SIZE(0.65f),
 	HORN_PAIRS(0.18f),
-	EAR_TYPE(0.40f),
+	EAR_TYPE(0.40f, true),
 	EAR_SIZE(0.6f),
 	FRILL(0.45f),
-	SNOUT_TYPE(0.35f),
+	SNOUT_TYPE(0.35f, true),
 	TUSKS(0.4f),
 
 	// ---- tail shape -------------------------------------------------------
-	TAIL_SHAPE(0.30f),
+	TAIL_SHAPE(0.30f, true),
 	TAIL_FIN_DEPTH(0.55f),
 
 	// ---- bioluminescence --------------------------------------------------
-	BIOLUMINESCENCE(0.45f),
-	GLOW_REGION(0.55f),
+	BIOLUMINESCENCE(0.45f, false, true),
+	GLOW_REGION(0.55f, true),
 	GLOW_HUE(0.85f),
 
 	// ---- body architecture ------------------------------------------------
@@ -128,7 +128,7 @@ public enum Gene {
 	/** 0 = legs spread evenly along the spine, 1 = all pairs packed onto the front segment. */
 	LEG_CLUSTERING(0.18f),
 	/** How far the mid joint rides above the hip. High values give the arachnid stance. */
-	LEG_ARCH(0.25f),
+	LEG_ARCH(0.25f, false, true),
 
 	/** Broad crushing jaw against a narrow snatching one. */
 	JAW_WIDTH(0.5f),
@@ -153,7 +153,51 @@ public enum Gene {
 	/** Relative drift magnitude per mutation event, in [0,1]. */
 	public final float plasticity;
 
+	/**
+	 * Whether this locus selects a kind rather than an amount.
+	 * <p>
+	 * A magnitude has a sensible middle — a medium-length neck is a real neck, and drawing founders
+	 * toward the middle keeps them plausible animals. A <i>category</i> has no middle: the centre of
+	 * {@link dev.jsz.primordia.body.HornType} is not a compromise between a spike and a crest, it is
+	 * simply option three. Drawing a categorical locus toward 0.5 therefore does not make founders
+	 * moderate, it makes them all pick the same option — which is exactly what happened, and why
+	 * antlers turned up on 2.6% of creatures and casques on 0.4% while nothing at all had a plain
+	 * pair of eyes.
+	 * <p>
+	 * Founders draw these uniformly. Mutation is unaffected: drifting <i>between</i> neighbouring
+	 * kinds is still governed by {@link #plasticity}, so a lineage keeps its horns.
+	 */
+	public final boolean categorical;
+
+	/**
+	 * Whether this locus has a viability window rather than merely a look.
+	 * <p>
+	 * {@link #plasticity} conflates two things that usually travel together and sometimes do not:
+	 * how fast a locus drifts under mutation, and how safe it is to draw a founder anywhere along
+	 * it. {@code LEG_THICKNESS} is volatile — limb proportions really do drift quickly — but a
+	 * founder drawn at the bottom of it is a wireframe, not an animal. {@code TEMP_PREFERENCE} is
+	 * volatile and a founder drawn at the wrong end simply does not belong where it was born.
+	 * <p>
+	 * Widening the founder draw by plasticity alone broke six regression tests at once, every one
+	 * of them on a locus of this kind: limbs at a 50:1 slenderness ratio, a blend radius wider than
+	 * the limb it was blending, knees above the hip on ordinary quadrupeds, skin weights bleeding
+	 * across skeleton branches, glow on 15% of a plains population, and desert lineages that
+	 * preferred the cold. Marking them keeps them on the old clustered draw, so founders start
+	 * inside the window and mutation is still free to walk a lineage out of it later.
+	 */
+	public final boolean constrained;
+
 	Gene(float plasticity) {
+		this(plasticity, false, false);
+	}
+
+	Gene(float plasticity, boolean categorical) {
+		this(plasticity, categorical, false);
+	}
+
+	Gene(float plasticity, boolean categorical, boolean constrained) {
 		this.plasticity = plasticity;
+		this.categorical = categorical;
+		this.constrained = constrained;
 	}
 }

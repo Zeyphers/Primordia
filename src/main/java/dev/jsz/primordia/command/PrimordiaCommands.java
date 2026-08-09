@@ -11,6 +11,7 @@ import dev.jsz.primordia.registry.PrimordiaItems;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
+import dev.jsz.primordia.Primordia;
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BodyPlanCache;
 import dev.jsz.primordia.body.BoneDef;
@@ -89,6 +90,20 @@ public final class PrimordiaCommands {
 																IntegerArgumentType.getInteger(ctx, "count"),
 																StringArgumentType.getString(ctx, "archetype"),
 																LongArgumentType.getLong(ctx, "seed")))))))
+						// Everything that exists to test the mod rather than to play it lives under
+						// one node, gated on one constant. See Primordia.DEBUG_TOOLS.
+						.then(Commands.literal("debug")
+								.requires(source -> Primordia.DEBUG_TOOLS)
+								.then(Commands.literal("decay")
+										.executes(ctx -> decay(ctx, 0))
+										.then(Commands.argument("ticks", IntegerArgumentType.integer(1))
+												.executes(ctx -> decay(ctx,
+														IntegerArgumentType.getInteger(ctx, "ticks")))))
+								.then(Commands.literal("skeleton")
+										.executes(ctx -> spawnSkeleton(ctx, 1))
+										.then(Commands.argument("count", IntegerArgumentType.integer(1, 64))
+												.executes(ctx -> spawnSkeleton(ctx,
+														IntegerArgumentType.getInteger(ctx, "count"))))))
 						.then(Commands.literal("test")
 								.executes(ctx -> spawnTestGrid(ctx, null, false))
 								.then(Commands.literal("reload")
@@ -315,6 +330,84 @@ public final class PrimordiaCommands {
 		Genome reported = last;
 		source.sendSuccess(() -> Component.literal("Spawned " + finalSpawned + " creature(s)"
 				+ (reported == null ? "" : " — last: " + describe(reported))).withStyle(ChatFormatting.GREEN), false);
+		return spawned;
+	}
+
+	/**
+	 * Winds every nearby body's clock forward, so the stages of decay can be watched in the order
+	 * they happen rather than waited out.
+	 * <p>
+	 * With no argument each body is carried to the far side of its next milestone and no further,
+	 * which is what makes it usable as a step button: run it once for the rotten flesh and bone, once
+	 * more for the skeleton, once more to see the bones go. Time is added to the bodies rather than
+	 * to the world, so nothing else in the level ages along with them.
+	 *
+	 * @param ticks how far to wind, or 0 for "to the next stage"
+	 */
+	private static int decay(CommandContext<CommandSourceStack> ctx, int ticks) {
+		CommandSourceStack source = ctx.getSource();
+		ServerLevel world = source.getLevel();
+		Vec3 pos = source.getPosition();
+		AABB box = new AABB(pos, pos).inflate(DECAY_RADIUS);
+
+		List<CreatureEntity> bodies = world.getEntitiesOfClass(CreatureEntity.class, box,
+				CreatureEntity::isCarcass);
+		if (bodies.isEmpty()) {
+			source.sendFailure(Component.literal(
+					"No bodies within " + (int) DECAY_RADIUS + " blocks. Kill something with "
+							+ "/kill — a creature you kill yourself drops loot and leaves none."));
+			return 0;
+		}
+
+		for (CreatureEntity body : bodies) {
+			// One past the boundary, so the milestone is actually crossed on the next tick rather
+			// than landed on exactly and left for the tick after.
+			body.ageCarcass(ticks > 0 ? ticks : body.ticksUntilNextStage() + 1);
+		}
+
+		int count = bodies.size();
+		long skeletons = bodies.stream().filter(CreatureEntity::isSkeleton).count();
+		source.sendSuccess(() -> Component.literal("Aged " + count + " bod"
+				+ (count == 1 ? "y" : "ies") + (skeletons > 0 ? " (" + skeletons + " already bone)" : "")
+				+ " — nothing drops on its own, punch one to see what it yields now")
+				.withStyle(ChatFormatting.GREEN), false);
+		return count;
+	}
+
+	/** How far {@code decay} reaches for bodies. */
+	private static final double DECAY_RADIUS = 32.0;
+
+	/**
+	 * Spawns remains directly, skipping the two in-game days of rotting it normally takes to see
+	 * any. What lands is exactly what a body decays into — the same entity in its last stage — so
+	 * anything true of these is true of the ones the world produces on its own.
+	 */
+	private static int spawnSkeleton(CommandContext<CommandSourceStack> ctx, int count) {
+		CommandSourceStack source = ctx.getSource();
+		ServerLevel world = source.getLevel();
+		Vec3 pos = source.getPosition();
+		Random random = new Random();
+
+		int spawned = 0;
+		for (int i = 0; i < count; i++) {
+			CreatureEntity creature = PrimordiaEntities.CREATURE.create(
+					world, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+			if (creature == null) continue;
+			double spread = count == 1 ? 0.0 : 1.5 + count * 0.15;
+			creature.snapTo(
+					pos.x + (random.nextDouble() - 0.5) * spread,
+					pos.y,
+					pos.z + (random.nextDouble() - 0.5) * spread,
+					random.nextFloat() * 360f, 0f);
+			creature.setGenome(Archetype.randomStructured(random).create(random));
+			creature.skeletonise();
+			world.addFreshEntity(creature);
+			spawned++;
+		}
+
+		int finalSpawned = spawned;
+		source.sendSuccess(() -> Component.literal("Spawned " + finalSpawned + " skeleton(s)")
+				.withStyle(ChatFormatting.GREEN), false);
 		return spawned;
 	}
 

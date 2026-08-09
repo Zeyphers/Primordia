@@ -45,7 +45,8 @@ public class PrimordiaConfigScreen extends Screen {
 	private enum Tab {
 		POPULATION("Population", "How many creatures are drawn, and how far out."),
 		DETAIL("Detail", "How finely each creature is built, and how many builds are kept."),
-		APPEARANCE("Appearance", "How the creatures are shaded and shaped.");
+		APPEARANCE("Appearance", "How the creatures are shaded and shaped."),
+		AUDIO("Audio", "How the creatures sound. Every voice is synthesised from its genome.");
 
 		final String label;
 		final String blurb;
@@ -152,6 +153,23 @@ public class PrimordiaConfigScreen extends Screen {
 									+ "faceted look use Sharp shading above.");
 				}
 				addGlowButton(left, top, i++);
+			}
+			case AUDIO -> {
+				addAudioToggle(left, top, i++, "Creature voices",
+						() -> config.creatureVoices, () -> {
+							config.creatureVoices = !config.creatureVoices;
+							// The volume slider is meaningless while they are silent.
+							rebuildWidgets();
+						},
+						"Creature calls are synthesised from the genome — pitch from body mass, "
+								+ "timbre from head and neck length, growl from aggression. Off "
+								+ "silences them; there is no recorded animal to fall back to.");
+				if (config.creatureVoices) {
+					addAudioSlider(left, top, i++, "Voice volume", 0, 200,
+							() -> config.creatureVoiceVolume, v -> config.creatureVoiceVolume = v,
+							"Percent, on top of the game's own Friendly Creatures slider. Lets you "
+									+ "quieten your own animals without quietening every cow.");
+				}
 			}
 		}
 
@@ -281,6 +299,48 @@ public class PrimordiaConfigScreen extends Screen {
 		}).bounds(columnX(left, index), rowY(top, index), WIDGET_WIDTH, WIDGET_HEIGHT).build();
 		if (tooltip != null) button.setTooltip(Tooltip.create(Component.literal(tooltip)));
 		addRenderableWidget(button);
+	}
+
+	/**
+	 * The audio settings' own toggle and slider.
+	 * <p>
+	 * Deliberately not the shared helpers above. Those call {@code markCustom()} and {@code apply()},
+	 * which would relabel the quality preset as Custom and flush every baked mesh — an absurd price
+	 * for turning the volume down, and a visible stutter each time the slider moved. Nothing on this
+	 * tab touches rendering, so nothing on it needs either.
+	 */
+	private void addAudioToggle(int left, int top, int index, String label,
+	                            BooleanSupplier getter, Runnable onToggle, String tooltip) {
+		Button button = Button.builder(toggleLabel(label, getter.getAsBoolean()), b -> {
+			onToggle.run();
+			b.setMessage(toggleLabel(label, getter.getAsBoolean()));
+		}).bounds(columnX(left, index), rowY(top, index), WIDGET_WIDTH, WIDGET_HEIGHT).build();
+		if (tooltip != null) button.setTooltip(Tooltip.create(Component.literal(tooltip)));
+		addRenderableWidget(button);
+	}
+
+	private void addAudioSlider(int left, int top, int index, String label, int min, int max,
+	                            IntSupplier getter, IntConsumer setter, String tooltip) {
+		AbstractSliderButton slider = new AbstractSliderButton(
+				columnX(left, index), rowY(top, index), WIDGET_WIDTH, WIDGET_HEIGHT,
+				Component.literal(label + ": " + getter.getAsInt() + "%"),
+				(getter.getAsInt() - min) / (double) (max - min)) {
+			@Override
+			protected void updateMessage() {
+				setMessage(Component.literal(label + ": " + current() + "%"));
+			}
+
+			@Override
+			protected void applyValue() {
+				setter.accept(current());
+			}
+
+			private int current() {
+				return (int) Math.round(min + value * (max - min));
+			}
+		};
+		if (tooltip != null) slider.setTooltip(Tooltip.create(Component.literal(tooltip)));
+		addRenderableWidget(slider);
 	}
 
 	private static Component toggleLabel(String label, boolean on) {

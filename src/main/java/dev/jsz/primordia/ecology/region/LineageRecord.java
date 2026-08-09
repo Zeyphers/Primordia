@@ -181,16 +181,48 @@ public final class LineageRecord {
 	}
 
 	/**
+	 * How much wider the ornament genes vary between siblings than plasticity alone would give.
+	 * <p>
+	 * Scaling the jitter by plasticity was right in kind and too timid in degree. Structural loci
+	 * sit at a plasticity of 0.12 and display loci at 0.9, so against a founder variance of 0.04 a
+	 * whole lineage came out with limb counts identical — correct — and horns, ears and markings
+	 * that varied by three hundredths of their range, which is to say identically as well. Every
+	 * animal in a herd was the same animal.
+	 */
+	private static final float ORNAMENT_SPREAD = 2.4f;
+
+	/**
+	 * How much of the jitter a locus that names a <i>kind</i> keeps.
+	 * <p>
+	 * A lineage keeps its horns. Siblings may carry those horns at wildly different sizes, but the
+	 * one with antlers and the one with a casque are not the same animal, and letting a categorical
+	 * locus drift freely inside a population would dissolve the thing the field guide is trying to
+	 * name.
+	 */
+	private static final float KIND_SPREAD = 0.5f;
+
+	/**
 	 * Draws an individual out of the population: the mean, jittered by the variance.
 	 * <p>
 	 * Per-gene plasticity scales the jitter, for the same reason it scales mutation — a lineage
 	 * whose colour varies widely but whose limb count does not is what a real clade looks like, and
 	 * sampling uniformly would produce siblings with different numbers of legs.
+	 * <p>
+	 * The jitter is <b>superlinear</b> in plasticity rather than proportional to it, which pulls the
+	 * two ends of that range apart instead of merely ordering them: raising a plasticity of 0.12 to
+	 * the power 1.6 leaves structural loci quieter than before — a herd's limb counts are, if
+	 * anything, more uniform — while display loci open up by more than double. That is the shape of
+	 * real intraspecific variation, where individuals of a species differ in the size of their
+	 * ornament and never in how many legs they have.
 	 */
 	public Genome sample(RandomGenerator random) {
 		float[] values = new float[Gene.COUNT];
 		for (int i = 0; i < Gene.COUNT; i++) {
-			float jitter = (float) random.nextGaussian() * variance * Gene.VALUES[i].plasticity;
+			Gene gene = Gene.VALUES[i];
+			float scale = gene.categorical
+					? gene.plasticity * KIND_SPREAD
+					: ORNAMENT_SPREAD * (float) Math.pow(gene.plasticity, 1.6);
+			float jitter = (float) random.nextGaussian() * variance * scale;
 			values[i] = MathX.clamp01(mean[i] + jitter);
 		}
 		return new Genome(values, random.nextLong(), id, generation);

@@ -13,5 +13,16 @@
 	"key.primordia.settings": "Open settings",
 	"block.primordia.basic_gene_lab": "Basic Gene Lab",
 	"container.primordia.basic_gene_lab": "Basic Gene Lab",
-	"item.primordia.field_guide": "Primordia Field Guide"
+	"item.primordia.field_guide": "Primordia Field Guide",
+	"block.primordia.sample_cooler": "Sample Cooler",
+	"container.primordia.sample_cooler": "Sample Cooler",
+	"subtitles.primordia.sample_cooler.open": "Sample Cooler opens",
+	"subtitles.primordia.sample_cooler.close": "Sample Cooler closes",
+	"subtitles.primordia.creature.ambient": "Creature calls",
+	"subtitles.primordia.creature.threat": "Creature snarls",
+	"subtitles.primordia.creature.hurt": "Creature cries out",
+	"subtitles.primordia.creature.death": "Creature dies",
+	"subtitles.primordia.creature.mating": "Creature bellows",
+	"subtitles.primordia.creature.chirp": "Creature chirps",
+	"subtitles.primordia.creature.sleep": "Creature breathes"
 }

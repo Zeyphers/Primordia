@@ -116,7 +116,7 @@ public final class CreaturePreview {
 		Vector3f tint = new Vector3f();
 
 		for (int i = 0; i < quads.length; i += 4) {
-			if (sharp) FaceNormal.compute(positions, quads, i, face);
+			if (sharp) FaceNormal.compute(positions, normals, quads, i, face);
 			if (flatColour) FaceColour.average(colors, quads, i, tint);
 			for (int k = 0; k < 4; k++) {
 				int v = quads[i + k];

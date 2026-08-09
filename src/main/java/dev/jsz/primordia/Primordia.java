@@ -13,6 +13,7 @@ import dev.jsz.primordia.registry.PrimordiaEntities;
 import dev.jsz.primordia.registry.PrimordiaItemGroup;
 import dev.jsz.primordia.registry.PrimordiaItems;
 import dev.jsz.primordia.registry.PrimordiaScreenHandlers;
+import dev.jsz.primordia.registry.PrimordiaSounds;
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
@@ -20,6 +21,20 @@ import org.slf4j.LoggerFactory;
 
 public class Primordia implements ModInitializer {
 	public static final String MOD_ID = "primordia";
+
+	/**
+	 * Whether the developer tools are available — everything under {@code /primordia debug}.
+	 * <p>
+	 * <b>Set this to false before a public release.</b> It is one constant on purpose: anything that
+	 * exists to test the mod rather than to play it goes behind this subcommand, so switching the
+	 * whole lot off is a one-line change and never a hunt through the command tree. When it is off
+	 * the node is not registered at all, so it does not appear in tab completion either.
+	 * <p>
+	 * Overridable at launch with {@code -Dprimordia.debug=false}, which is there so both states can
+	 * be checked without a rebuild.
+	 */
+	public static final boolean DEBUG_TOOLS =
+			Boolean.parseBoolean(System.getProperty("primordia.debug", "true"));
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
 	public static Identifier id(String path) {
@@ -39,6 +54,7 @@ public class Primordia implements ModInitializer {
 			if (server.isDedicatedServer()) EditorServer.stop();
 		});
 		PrimordiaEntities.register();
+		PrimordiaSounds.register();
 		// Blocks before block entities: the entity types name the blocks they are valid for, and
 		// the blocks reach their type back through a supplier so neither can be first by accident.
 		PrimordiaBlocks.register();
@@ -51,6 +67,7 @@ public class Primordia implements ModInitializer {
 		NameLineagePayload.register();
 		SpawnSpeciesPayload.register();
 		dev.jsz.primordia.lab.GuideDataSyncPayload.register();
+		dev.jsz.primordia.sound.CreatureVoicePayload.register();
 		EcologyTicker.register();
 		VanillaInteractions.register();
 

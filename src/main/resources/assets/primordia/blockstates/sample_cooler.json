@@ -1,0 +1,8 @@
+{
+	"variants": {
+		"facing=east": { "model": "primordia:block/sample_cooler" },
+		"facing=south": { "model": "primordia:block/sample_cooler", "y": 90 },
+		"facing=west": { "model": "primordia:block/sample_cooler", "y": 180 },
+		"facing=north": { "model": "primordia:block/sample_cooler", "y": 270 }
+	}
+}

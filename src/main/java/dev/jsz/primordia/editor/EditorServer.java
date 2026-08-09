@@ -6,6 +6,7 @@ import dev.jsz.primordia.anim.AnimationContext;
 import dev.jsz.primordia.anim.CreatureAnimator;
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BodyPlanBuilder;
+import dev.jsz.primordia.body.SkeletonPlan;
 import dev.jsz.primordia.body.BoneDef;
 import dev.jsz.primordia.body.LimbChain;
 import dev.jsz.primordia.genome.Archetype;
@@ -205,6 +206,7 @@ public final class EditorServer {
 			int tier = clamp(parseInt(q.get("tier"), LodTier.NEAR), 0, LodTier.COUNT - 1);
 			float voxel = parseFloat(q.get("voxel"), 0f);
 			float smoothing = clamp(parseFloat(q.get("smoothing"), 0.75f), 0f, 1f);
+			boolean skeleton = "1".equals(q.get("skeleton"));
 
 			Genome genome = resolveGenome(q, seed);
 
@@ -219,6 +221,11 @@ public final class EditorServer {
 					MeshBaker.setVoxelSize(voxel);
 					MeshBaker.setGradientWeight(smoothing);
 					plan = BodyPlanBuilder.build(genome);
+					// The remains of this exact animal, through the exact pipeline the game uses.
+					// Everything the page then draws — mesh, bones, joints, blend groups — is read
+					// off the plan that was baked, so the bones on screen are the ones that would
+					// be lying in the world rather than an illustration of them.
+					if (skeleton) plan = SkeletonPlan.of(plan);
 					// Deliberately not GenomeMeshCache: it keys on the genome alone, so it would
 					// hand back a mesh baked at whatever resolution and voxel size some earlier
 					// request happened to use, and the settings sliders would appear to do nothing.

@@ -13,6 +13,7 @@ import dev.jsz.primordia.ecology.FoodSurvey;
 import dev.jsz.primordia.ecology.SurvivalDrops;
 import dev.jsz.primordia.ecology.WorldImpact;
 import dev.jsz.primordia.ecology.region.RegionMaterialiser;
+import dev.jsz.primordia.util.MathX;
 // import dev.jsz.primordia.entity.goal.ClimbWallGoal; // DISABLED: wall climbing commented out
 import dev.jsz.primordia.entity.goal.CreatureAttackGoal;
 import dev.jsz.primordia.entity.goal.CreatureTemptGoal;
@@ -28,6 +29,9 @@ import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.genome.Mutation;
 import dev.jsz.primordia.registry.PrimordiaEntities;
+import dev.jsz.primordia.sound.CallType;
+import dev.jsz.primordia.sound.CreatureVoicePayload;
+import dev.jsz.primordia.sound.VoiceProfile;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.world.phys.AABB;
@@ -54,6 +58,7 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.tags.DamageTypeTags;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
@@ -141,6 +146,20 @@ public class CreatureEntity extends PathfinderMob {
 	private static final EntityDataAccessor<Boolean> POSE_WALKING =
 			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
 	/** Dead and lying where it fell, waiting to be eaten. Tracked because the renderer poses it. */
+	/**
+	 * Whether the flesh is gone. Synced rather than derived from the tick count because the client
+	 * picks a different mesh for it, and a client that has to guess the stage will show the wrong
+	 * one for as long as it takes the next update to arrive.
+	 */
+	private static final EntityDataAccessor<Boolean> SKELETON =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
+	/**
+	 * How far through {@link #SKELETON_LIFETIME} this skeleton is, 0 to 1. Synced because the
+	 * renderer uses it to darken the bones from the ground up, and that has to match on every
+	 * client watching rather than be guessed from an unsynced local clock.
+	 */
+	private static final EntityDataAccessor<Float> SKELETON_AGE =
+			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.FLOAT);
 	private static final EntityDataAccessor<Boolean> CARCASS =
 			SynchedEntityData.defineId(CreatureEntity.class, EntityDataSerializers.BOOLEAN);
 	/** Resting through the inactive half of its cycle. Tracked for the same reason. */
@@ -175,8 +194,25 @@ public class CreatureEntity extends PathfinderMob {
 	 * that a trail is the record of many crossings rather than of one.
 	 */
 	private static final float TRAIL_CHANCE_PER_TICK = 0.0006f;
-	/** Ticks a carcass lasts before it rots away, if nothing eats it first. One in-game day (24,000 ticks). */
-	public static final int CARCASS_LIFETIME = 24000;
+	/**
+	 * Ticks before a carcass's meat spoils. One in-game day.
+	 * <p>
+	 * Nothing falls to the ground at this mark — it changes what butchering the body yields, from
+	 * meat to rotten flesh, and nothing else. See {@link #hurtServer} for where the drop actually
+	 * happens; it only ever happens because a hand made it.
+	 */
+	public static final int CARCASS_ROT_TICKS = 24000;
+	/** Ticks a carcass keeps its flesh before it is stripped to a skeleton. Two in-game days. */
+	public static final int CARCASS_LIFETIME = 48000;
+	/**
+	 * Ticks a skeleton lies where it fell, on top of {@link #CARCASS_LIFETIME}. Ten in-game days.
+	 * <p>
+	 * Long on purpose. Bones are the only lasting mark that something lived and died in a place, and
+	 * a landmark that expires in a session is not a landmark — at ten days a kill site is still there
+	 * when a player comes back through, and the ecology can be read off the ground rather than
+	 * inferred from what happens to be alive at the moment.
+	 */
+	public static final int SKELETON_LIFETIME = 240000;
 	/** Ticks a carcass remains fresh (5 in-game hours = 5,000 ticks). After this, butchering yields rotten flesh. */
 	public static final int FRESH_CARCASS_TICKS = 5000;
 	/**
@@ -212,7 +248,7 @@ public class CreatureEntity extends PathfinderMob {
 	private AttackStyle attackStyle;
 	private Temperament temperament;
 	private int loveTimer;
-	private VocalProfile vocalProfile;
+	private VoiceProfile voiceProfile;
 
 	/**
 	 * How fed this creature is, in [0,1]. The gate on hunting, foraging and breeding, and the thing
@@ -232,8 +268,31 @@ public class CreatureEntity extends PathfinderMob {
 	private static final float CLIMB_BLEND_RATE = 0.18f;
 	/** Remaining food in this carcass, in the absolute units {@code EnergyBudget} works in. */
 	private float carcassNutrition;
-	/** Ticks this carcass has lain here. */
-	private int carcassTicks;
+	/** Ticks this creature has spent inside a block. Reset the moment it is clear again. */
+	private int entombedTicks;
+	/** Ticks of being stuck before it is moved out bodily. Three seconds of trying first. */
+	public static final int ENTOMBED_RELOCATE_TICKS = 60;
+	/** How far to look for somewhere this body fits, in blocks. */
+	public static final double ENTOMBED_SEARCH_RADIUS = 4.0;
+	/** Per-tick shove toward open air. Enough to slide a body out, short of launching it. */
+	public static final double ENTOMBED_SHOVE = 0.055;
+	/** It runs, rather than strolls, out of a wall. */
+	public static final double ENTOMBED_SPEED = 1.35;
+
+	/**
+	 * The overworld clock reading when this body was made, which is what its age is measured
+	 * against.
+	 * <p>
+	 * Day time rather than game time, and an anchor rather than a counter, for two reasons that both
+	 * come from what a carcass is. A counter only advances while the body is being ticked, so a
+	 * carcass in an unloaded chunk was frozen — walk away for a week and come back to a corpse as
+	 * fresh as the day it died. And a counter is deaf to the clock: {@code /time add 24000} moves the
+	 * world on a day and left every body in it untouched, which made decay impossible to test and
+	 * inconsistent with everything else that ages.
+	 */
+	private long carcassBornAt;
+	/** Whether the rotten meat and loose bone have already fallen off it. */
+	private boolean carcassRotted;
 	/**
 	 * Set at death when this animal is to leave a body, cleared when the body is spawned.
 	 * <p>
@@ -243,53 +302,91 @@ public class CreatureEntity extends PathfinderMob {
 	 */
 	private boolean carcassOwed;
 
-	public VocalProfile getVocalProfile() {
-		if (vocalProfile == null && getGenome() != null) {
-			vocalProfile = VocalProfile.create(getGenome(), getBodyPlan());
+	/**
+	 * This creature's vocal apparatus, derived once from its genome and body and cached.
+	 * <p>
+	 * Derived on both sides. The server never renders audio, but it does not need to: the client has
+	 * the genome already and reaches the same profile, which is what lets a call cross the wire as
+	 * three bytes. See {@link CreatureVoicePayload}.
+	 */
+	public VoiceProfile getVoiceProfile() {
+		if (voiceProfile == null && getGenome() != null) {
+			voiceProfile = VoiceProfile.of(getGenome(), getBodyPlan());
 		}
-		return vocalProfile;
+		return voiceProfile;
 	}
+
+	/**
+	 * Every vocalisation, sent to whoever can see this animal.
+	 * <p>
+	 * Server-side only, and deliberately not routed through {@code playSound}. A vanilla sound packet
+	 * names a registered event, and these creatures have no registered events — their voices are
+	 * synthesised per genome on the client that hears them.
+	 */
+	public void vocalise(CallType call) {
+		if (level().isClientSide()) return;
+		CreatureVoicePayload.broadcast(this, call);
+	}
+
+	// Vanilla's three sound hooks are silenced rather than pointed anywhere. Returning null is the
+	// supported way to say "this mob has no such sound" — LivingEntity and Mob both null-check
+	// before playing — and it stops the engine from emitting a sound packet that would race the
+	// synthesised call and arrive as an echo. What replaces each of them is directly below.
 
 	@Override
 	protected SoundEvent getAmbientSound() {
-		return dev.jsz.primordia.sound.CreatureSoundEngine.getAmbientSound(this);
+		return null;
 	}
 
 	@Override
 	protected SoundEvent getHurtSound(DamageSource source) {
-		return dev.jsz.primordia.sound.CreatureSoundEngine.getHurtSound(this, source);
+		return null;
 	}
 
 	@Override
 	protected SoundEvent getDeathSound() {
-		return dev.jsz.primordia.sound.CreatureSoundEngine.getDeathSound(this);
+		return null;
+	}
+
+	@Override
+	public void playAmbientSound() {
+		vocalise(isBaby() ? CallType.CHIRP : CallType.AMBIENT);
+	}
+
+	@Override
+	protected void playHurtSound(DamageSource source) {
+		vocalise(CallType.HURT);
+	}
+
+	/**
+	 * Loudness of the non-vocal sounds vanilla still plays for this creature — footfalls in water,
+	 * landing from a fall. The voice does not go through here; it carries its own volume, taken from
+	 * the same body mass this is.
+	 */
+	@Override
+	public float getSoundVolume() {
+		BodyPlan plan = getBodyPlan();
+		return plan == null ? 1.0f : Mth.clamp(0.4f + plan.mass * 0.6f, 0.4f, 1.6f);
 	}
 
 	@Override
 	public float getVoicePitch() {
-		return dev.jsz.primordia.sound.CreatureSoundEngine.getPitch(this);
-	}
-
-	@Override
-	public float getSoundVolume() {
-		return dev.jsz.primordia.sound.CreatureSoundEngine.getVolume(this);
+		BodyPlan plan = getBodyPlan();
+		return plan == null ? 1.0f : Mth.clamp(1.5f - (plan.mass * 0.90f), 0.40f, 1.85f);
 	}
 
 	public void playAttackGrowl() {
-		VocalProfile vp = getVocalProfile();
-		if (vp != null && vp.attackGrowl() != null && !level().isClientSide()) {
-			playSound(vp.attackGrowl(), getSoundVolume() * 1.1f, getVoicePitch());
-		}
+		vocalise(CallType.THREAT);
 	}
 
 	/**
 	 * Tearing at a body.
 	 * <p>
-	 * A vocalisation would be wrong here — this is the sound of the meal, not of the animal — so it
-	 * comes from the fox rather than from the creature's {@link VocalProfile}: a wet, crunching noise
-	 * that reads as flesh instead of the polite chewing of {@code GENERIC_EAT}. Pitch still tracks the
-	 * body, so something enormous tears at a lower register than something small, and the volume sits
-	 * under a call so a pack at a kill is audible without drowning the area out.
+	 * The one creature sound that is still a vanilla sample, and the one that should be: this is the
+	 * noise of the meal, not of the animal. It has no vocal tract behind it, so there is nothing for
+	 * the synthesiser to derive it from — a fox's wet crunch reads as flesh where the polite chewing
+	 * of {@code GENERIC_EAT} does not. Pitch still tracks the body, so something enormous tears at a
+	 * lower register, and the volume sits under a call so a pack at a kill does not drown the area.
 	 */
 	public void playFeedingSound() {
 		if (level().isClientSide()) return;
@@ -298,10 +395,7 @@ public class CreatureEntity extends PathfinderMob {
 	}
 
 	public void playMatingCall() {
-		VocalProfile vp = getVocalProfile();
-		if (vp != null && vp.matingCall() != null && !level().isClientSide()) {
-			playSound(vp.matingCall(), getSoundVolume() * 0.9f, getVoicePitch() * 1.05f);
-		}
+		vocalise(CallType.MATING);
 	}
 
 	@Override
@@ -922,6 +1016,8 @@ public class CreatureEntity extends PathfinderMob {
 		builder.define(CLIMBING, false);
 		builder.define(CLIMB_FACING, (byte) -1);
 		builder.define(CARCASS, false);
+		builder.define(SKELETON, false);
+		builder.define(SKELETON_AGE, 0f);
 		builder.define(ASLEEP, false);
 		// Full size by default: only something actually born starts smaller. See juvenileTicks.
 		builder.define(GROWTH, 1f);
@@ -1048,6 +1144,16 @@ public class CreatureEntity extends PathfinderMob {
 		return entityData.get(CARCASS);
 	}
 
+	/** Stripped to bone: the last stage a body goes through, and the longest. */
+	public boolean isSkeleton() {
+		return entityData.get(SKELETON);
+	}
+
+	/** 0 for a fresh skeleton, 1 the moment it is due to crumble away. */
+	public float getSkeletonAge() {
+		return entityData.get(SKELETON_AGE);
+	}
+
 	public float getCarcassNutrition() {
 		return carcassNutrition;
 	}
@@ -1078,7 +1184,8 @@ public class CreatureEntity extends PathfinderMob {
 		entityData.set(CARCASS, true);
 		entityData.set(ACTIVITY, (byte) CreatureActivity.CARCASS.ordinal());
 		carcassNutrition = nutrition;
-		carcassTicks = 0;
+		carcassBornAt = level() == null ? 0L : level().getOverworldClockTime();
+		carcassRotted = false;
 		setNoAi(true);
 		setSilent(true);
 		setPersistenceRequired();
@@ -1095,26 +1202,185 @@ public class CreatureEntity extends PathfinderMob {
 	}
 
 	public int getCarcassTicks() {
-		return carcassTicks;
+		return carcassAge();
+	}
+
+	/**
+	 * How long this body has lain here, in ticks of the day cycle.
+	 * <p>
+	 * Clamped at zero because the clock can be wound backwards — {@code /time set morning} on an
+	 * evening — and a body younger than new is a body whose stages run in reverse.
+	 */
+	private int carcassAge() {
+		if (level() == null) return 0;
+		long age = level().getOverworldClockTime() - carcassBornAt;
+		return (int) Math.max(0L, Math.min(age, Integer.MAX_VALUE));
 	}
 
 	public boolean isFreshCarcass() {
-		return !isCarcass() || carcassTicks <= FRESH_CARCASS_TICKS;
+		return !isCarcass() || carcassAge() <= FRESH_CARCASS_TICKS;
 	}
 
+	/**
+	 * The three stages a body goes through, in order: it lies there, its meat spoils, it is stripped
+	 * to bone, and only then does it go.
+	 * <p>
+	 * Nothing here spawns an item on its own. Rotting and stripping are changes to the body a player
+	 * can see and, once spoiled, butcher for rotten flesh instead of meat — but the world never puts
+	 * loot on the ground without a hand doing it, which is {@link #hurtServer}'s job. A creature that
+	 * scavenges the nutrition down to zero skips straight to the skeleton, silently, for the same
+	 * reason: nothing hit it, so nothing drops.
+	 */
 	private void tickCarcass() {
-		carcassTicks++;
+		int age = carcassAge();
 		yBodyRot = yBodyRotO;
 		setYRot(yBodyRotO);
 		yHeadRot = yBodyRotO;
-		if (carcassNutrition <= 0.001f) {
-			discard();
+
+		if (isSkeleton()) {
+			int skeletonAge = age - CARCASS_LIFETIME;
+			if (skeletonAge >= SKELETON_LIFETIME) {
+				discard();
+				return;
+			}
+			// Every tick rather than on an interval: SynchedEntityData already only sends a value
+			// that actually changed, so the throttling is free and does not need doing twice.
+			entityData.set(SKELETON_AGE, MathX.clamp01((float) skeletonAge / SKELETON_LIFETIME));
 			return;
 		}
-		if (carcassTicks >= CARCASS_LIFETIME) {
-			SurvivalDrops.dropSkeletalRemains(this);
-			discard();
+		if (carcassNutrition <= 0.001f) {
+			becomeSkeleton();
+			return;
 		}
+		if (!carcassRotted && age >= CARCASS_ROT_TICKS) {
+			carcassRotted = true;
+		}
+		if (age >= CARCASS_LIFETIME) {
+			becomeSkeleton();
+		}
+	}
+
+	/**
+	 * Gets out of a wall, rather than standing in it until it dies.
+	 * <p>
+	 * Minecraft's answer to an entity inside a block is a point of suffocation damage every tick and
+	 * nothing else — the animal is not told it is dying and its goals go on grazing. Terrain shifts,
+	 * a body grows into a burrow it fitted through as a juvenile, a spawn lands a fraction inside a
+	 * ledge, and what a player sees is a creature calmly standing still while its health drains.
+	 * <p>
+	 * Three responses, in order of how stuck it is. A shove toward the nearest open air handles the
+	 * common case of a body half inside a block, which is out in a tick or two. Pathing to that same
+	 * opening handles the case where it has room to walk but no reason to. Relocating handles being
+	 * properly entombed — no path exists, so no amount of running would ever have helped, and the
+	 * choice is between putting it in the open and watching it die in stone.
+	 */
+	private void tickEntombed() {
+		if (!isInWall()) {
+			entombedTicks = 0;
+			return;
+		}
+		entombedTicks++;
+		// Nothing sleeps through being buried.
+		if (isAsleep()) setAsleep(false);
+
+		Vec3 out = nearestOpening();
+		if (out == null) return;
+
+		Vec3 push = out.normalize().scale(ENTOMBED_SHOVE);
+		setDeltaMovement(getDeltaMovement().add(push.x, Math.max(0.0, push.y), push.z));
+
+		// Re-issued rather than set once: the path is short and the creature is being shoved along
+		// it, so the destination it was given a second ago is often already behind it.
+		if (entombedTicks % 10 == 1) {
+			getNavigation().moveTo(getX() + out.x, getY() + out.y, getZ() + out.z, ENTOMBED_SPEED);
+		}
+
+		if (entombedTicks >= ENTOMBED_RELOCATE_TICKS) {
+			snapTo(getX() + out.x, getY() + out.y, getZ() + out.z, getYRot(), getXRot());
+			getNavigation().stop();
+			entombedTicks = 0;
+		}
+	}
+
+	/**
+	 * Offset to the nearest place this body would fit, or null if there is none within reach.
+	 * <p>
+	 * Searched outward so the answer is the shortest way out, and sideways before upward: a creature
+	 * that shoves itself up through a ceiling has swapped one block for the one above it, while the
+	 * ground it walked in from is almost always still open.
+	 */
+	private Vec3 nearestOpening() {
+		for (double radius = 0.5; radius <= ENTOMBED_SEARCH_RADIUS; radius += 0.5) {
+			Vec3 best = null;
+			double bestDistance = Double.MAX_VALUE;
+			for (int i = 0; i < 12; i++) {
+				double angle = i * Math.PI / 6.0;
+				double dx = Math.cos(angle) * radius;
+				double dz = Math.sin(angle) * radius;
+				for (double dy : new double[]{0.0, 0.5, -0.5, 1.0}) {
+					if (!isFree(dx, dy, dz)) continue;
+					double distance = dx * dx + dy * dy * 2.0 + dz * dz;
+					if (distance < bestDistance) {
+						bestDistance = distance;
+						best = new Vec3(dx, dy, dz);
+					}
+				}
+			}
+			if (best != null) return best;
+		}
+		return null;
+	}
+
+	/**
+	 * Winds a body's clock forward, for testing decay without sitting through it.
+	 * <p>
+	 * Only the clock is moved. The transitions themselves are left to the next {@link #tickCarcass},
+	 * so what a test sees is the same code path a body reaches on its own — a shortcut that skipped
+	 * ahead by setting the stage directly would be testing the shortcut.
+	 */
+	public void ageCarcass(int ticks) {
+		if (!isCarcass()) return;
+		carcassBornAt -= ticks;
+	}
+
+	/** How much longer this body has in its current stage, in ticks. */
+	public int ticksUntilNextStage() {
+		if (!isCarcass()) return -1;
+		int age = carcassAge();
+		if (isSkeleton()) return CARCASS_LIFETIME + SKELETON_LIFETIME - age;
+		if (!carcassRotted) return CARCASS_ROT_TICKS - age;
+		return CARCASS_LIFETIME - age;
+	}
+
+	/**
+	 * Strips a creature to bone immediately, for testing what remains look like without waiting two
+	 * in-game days for one. Drops nothing: the meat is treated as already gone.
+	 */
+	public void skeletonise() {
+		if (!isCarcass()) becomeCarcass(0f);
+		carcassRotted = true;
+		becomeSkeleton();
+	}
+
+	/**
+	 * Strips the body to its skeleton in place.
+	 * <p>
+	 * The same entity rather than a fresh one: it already holds the genome the bones are shaped
+	 * from, and swapping entities at the moment of transition would drop the remains a tick out of
+	 * step with the body — visibly a different object appearing where one vanished.
+	 */
+	private void becomeSkeleton() {
+		if (isSkeleton()) return;
+		carcassRotted = true;
+		entityData.set(SKELETON, true);
+		carcassNutrition = 0f;
+		// Anchored so the ten days of bone start now, whatever brought it to this stage — a body
+		// eaten clean in an afternoon should not lie there as a skeleton for a day less than one
+		// that rotted down on its own.
+		if (carcassAge() < CARCASS_LIFETIME) {
+			carcassBornAt = level().getOverworldClockTime() - CARCASS_LIFETIME;
+		}
+		setPersistenceRequired();
 	}
 
 	public boolean isTamed() {
@@ -1471,6 +1737,7 @@ public class CreatureEntity extends PathfinderMob {
 			dietGroup = null;
 			attackStyle = null;
 			temperament = null;
+			voiceProfile = null;
 			animator = null;
 			refreshDimensions();
 		}
@@ -1499,6 +1766,11 @@ public class CreatureEntity extends PathfinderMob {
 	public void die(DamageSource damageSource) {
 		super.die(damageSource);
 		if (level().isClientSide() || isCarcass()) return;
+
+		// Where the death call goes, now that getDeathSound() is silent. Here rather than in that
+		// method because a carcass must not scream: it is already dead, and dies() runs again when
+		// one is destroyed.
+		vocalise(CallType.DEATH);
 
 		// Goals stop being ticked the moment the creature dies, so nothing else will clear this, and a
 		// climber still flagged as on a wall drifts down through its whole death animation instead of
@@ -1631,6 +1903,8 @@ public class CreatureEntity extends PathfinderMob {
 			return;
 		}
 
+		tickEntombed();
+
 		lifeTicks++;
 		if (juvenileTicks >= 0) {
 			juvenileTicks++;
@@ -1653,10 +1927,10 @@ public class CreatureEntity extends PathfinderMob {
 			if (getActivity() != CreatureActivity.SLEEP) {
 				entityData.set(ACTIVITY, (byte) CreatureActivity.SLEEP.ordinal());
 			}
-			// Snoring: a periodic breathing sound, pitched by body size.
-			if (!level().isClientSide() && (tickCount + getId()) % 80 == 0) {
-				playSound(SoundEvents.FOX_SLEEP, getSoundVolume() * 0.4f,
-						getVoicePitch() * (0.9f + random.nextFloat() * 0.2f));
+			// Snoring: the creature's own tract, barely voiced. Mostly air, which is what makes it
+			// read as breathing rather than as a quiet call.
+			if ((tickCount + getId()) % 80 == 0) {
+				vocalise(CallType.SLEEP);
 			}
 			return;
 		}
@@ -1846,6 +2120,7 @@ public class CreatureEntity extends PathfinderMob {
 		this.dietGroup = null;
 		this.attackStyle = null;
 		this.temperament = null;
+		this.voiceProfile = null;
 		entityData.set(GENOME_CODE, genomeCodeCache);
 		applyGenomeAttributes(genome);
 		refreshDimensions();
@@ -2077,6 +2352,46 @@ public class CreatureEntity extends PathfinderMob {
 		return EntityDimensions.scalable(width * growth, height * growth);
 	}
 
+	/**
+	 * How deep the water has to be before this creature stops walking and starts swimming.
+	 * <p>
+	 * Vanilla returns a flat {@code 0.4} blocks for every mob alive, from a chicken to a ravager,
+	 * and {@link net.minecraft.world.entity.ai.goal.FloatGoal} compares the water depth against it
+	 * to decide whether to start pushing the animal toward the surface. That constant is the whole
+	 * bug: a two-block-tall creature stepping into an ankle-deep stream cleared 0.4 immediately and
+	 * began treading water with its feet on dry gravel.
+	 * <p>
+	 * Measuring against the creature's own eye height instead makes the rule the one a player
+	 * already expects — <b>if its head is above the surface, it can walk</b> — and it scales itself,
+	 * so a cave crawler still swims in water a saurian wades through, and a juvenile starts swimming
+	 * sooner than the adult it will become.
+	 * <p>
+	 * Returned bare, with no lower bound, and that matters. Vanilla's own version reads
+	 * {@code getEyeHeight() < 0.4 ? 0.0 : 0.4}, and the zero is not a special case for tiddlers — it
+	 * is there because {@link #getFluidHeight} only measures the water <i>inside the entity's own
+	 * bounding box</i>, so a creature shorter than the threshold can never reach it however deep it
+	 * sinks. Clamping this to a 0.4 floor therefore does not make small creatures cautious, it makes
+	 * them unable to swim at all: an earlier draft of this method did exactly that and left every
+	 * insectoid, crustacean and cave crawler — a quarter of all creatures — walking along the bottom
+	 * of lakes until they drowned. Eye height is always 85% of the box, so it is always reachable.
+	 */
+	@Override
+	public double getFluidJumpThreshold() {
+		return getEyeHeight();
+	}
+
+	/**
+	 * Whether this creature is out of its depth, as against merely standing in water.
+	 * <p>
+	 * The single definition of "swimming" for everything that needs to know — the swim animation,
+	 * and whether the animal should be trying to get out. Deliberately the same comparison vanilla's
+	 * float goal makes against {@link #getFluidJumpThreshold()}, so an animal cannot be paddling for
+	 * the surface while it is drawn wading, or drawn swimming while it walks along the bottom.
+	 */
+	public boolean isSwimmingDepth() {
+		return isInWater() && getFluidHeight(FluidTags.WATER) > getFluidJumpThreshold();
+	}
+
 	@Override
 	public boolean isPushable() {
 		if (isCarcass()) return false;
@@ -2136,7 +2451,9 @@ public class CreatureEntity extends PathfinderMob {
 		if (isCarcass()) {
 			nbt.putBoolean("Carcass", true);
 			nbt.putFloat("CarcassNutrition", carcassNutrition);
-			nbt.putInt("CarcassTicks", carcassTicks);
+			nbt.putLong("CarcassBornAt", carcassBornAt);
+			nbt.putBoolean("CarcassRotted", carcassRotted);
+			nbt.putBoolean("Skeleton", isSkeleton());
 		}
 		String owner = entityData.get(OWNER);
 		if (!owner.isEmpty()) {
@@ -2172,7 +2489,12 @@ public class CreatureEntity extends PathfinderMob {
 		entityData.set(ASLEEP, nbt.getBooleanOr("Asleep", false));
 		if (nbt.getBooleanOr("Carcass", false)) {
 			becomeCarcass(nbt.getFloatOr("CarcassNutrition", 0f));
-			carcassTicks = nbt.getIntOr("CarcassTicks", 0);
+			// Bodies saved before decay followed the clock carry an elapsed count instead of an
+			// anchor. Reading it as "this many ticks ago" puts them at the same age they were.
+			carcassBornAt = nbt.getLongOr("CarcassBornAt",
+					(level() == null ? 0L : level().getOverworldClockTime()) - nbt.getIntOr("CarcassTicks", 0));
+			carcassRotted = nbt.getBooleanOr("CarcassRotted", carcassAge() >= CARCASS_ROT_TICKS);
+			entityData.set(SKELETON, nbt.getBooleanOr("Skeleton", false));
 		}
 		entityData.set(OWNER, nbt.getStringOr("Owner", ""));
 	}

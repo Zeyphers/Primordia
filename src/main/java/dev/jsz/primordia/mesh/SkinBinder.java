@@ -75,7 +75,7 @@ public final class SkinBinder {
 	 * @param outWeights 4 floats per vertex, normalised to sum to 1
 	 */
 	public static void bind(BodyPlan plan, float[] positions, int vertexCount,
-	                        int[] outIndices, float[] outWeights) {
+	                        int[] vertexGroup, int[] outIndices, float[] outWeights) {
 		BoneDef[] bones = plan.bones;
 		int[][] hops = hopDistances(bones);
 
@@ -92,9 +92,21 @@ public final class SkinBinder {
 			// vertex's owning bone, and the anchor the hop filter measures every candidate against.
 			int owner = -1;
 			float ownerDist = Float.MAX_VALUE;
-			// The nearest limb, tracked separately from the nearest bone: the one limb this vertex
-			// is allowed to be influenced by. See the loop below.
-			int limbGroup = BoneDef.AXIAL;
+			// The one limb this vertex is allowed to be influenced by.
+			//
+			// Taken from the field where it is known, and only fallen back to "whichever limb is
+			// nearest" where it is not. Nearest-limb is a reasonable guess for flesh and a bad one
+			// for ornament: a frill, a plate or a dorsal spine is a blob hung off a spine bone, and
+			// it can easily dangle closer to a thigh than to anything else. Bound that way it
+			// followed the leg, so a creature's veil rippled every time it took a step — the
+			// ghosting along ornament edges near the legs.
+			//
+			// BodySdf#groupAt answers with the group of the part the surface actually belongs to,
+			// and a blob carries the group of the bone it hangs off, so a body ornament comes back
+			// AXIAL and is excluded from every limb below. Claws and feet still come back on their
+			// own leg and are unaffected, which is the distinction nearest-bone could not draw.
+			int limbGroup = vertexGroup != null ? vertexGroup[v] : BoneDef.AXIAL;
+			boolean groupKnown = vertexGroup != null;
 			float limbDist = Float.MAX_VALUE;
 			for (int b = 0; b < bones.length; b++) {
 				BoneDef bone = bones[b];
@@ -118,11 +130,13 @@ public final class SkinBinder {
 					ownerDist = d;
 					owner = b;
 				}
-				if (bone.blendGroup != BoneDef.AXIAL && d < limbDist) {
+				if (!groupKnown && bone.blendGroup != BoneDef.AXIAL && d < limbDist) {
 					limbDist = d;
 					limbGroup = bone.blendGroup;
 				}
 			}
+
+			int ownerGroup = owner >= 0 ? bones[owner].blendGroup : BoneDef.AXIAL;
 
 			java.util.Arrays.fill(bestWeight, 0f);
 			java.util.Arrays.fill(bestBone, 0);
@@ -140,8 +154,14 @@ public final class SkinBinder {
 					// ways at once and can follow neither — which is the stretched sheet between a
 					// spider's legs. The trunk stays admissible because blending a limb root into
 					// the hip it grows from is the one soft join that is genuinely wanted.
+					// The owning bone's own limb is always admissible. The field group says which
+					// part the surface belongs to and is the right answer for ornament, but it can
+					// disagree with the nearest bone — a toe tucked under a short body reads as
+					// trunk — and a vertex that cannot follow the bone it is sitting on is worse
+					// than one that follows the wrong one: it left a splayed foot's outer toe
+					// welded rigidly to the spine.
 					int group = bones[b].blendGroup;
-					if (group != BoneDef.AXIAL && group != limbGroup) continue;
+					if (group != BoneDef.AXIAL && group != limbGroup && group != ownerGroup) continue;
 
 					float w = 1f / ((dist[b] + SOFTNESS) * (dist[b] + SOFTNESS));
 

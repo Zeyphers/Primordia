@@ -31,6 +31,7 @@ public final class PrimordiaItemGroup {
 			entries.accept(PrimordiaItems.GENOME_SCANNER);
 
 			entries.accept(PrimordiaBlocks.BASIC_GENE_LAB);
+			entries.accept(PrimordiaBlocks.SAMPLE_COOLER);
 
 			entries.accept(PrimordiaItems.TISSUE_SAMPLE);
 			entries.accept(PrimordiaItems.SEQUENCE_DATA);

@@ -30,3 +30,6 @@ build_errors.log
 build_errors_full.txt
 capture_errors.ps1
 check_api*.ps1
+
+# macOS
+.DS_Store

@@ -2,6 +2,7 @@ package dev.jsz.primordia.registry;
 
 import dev.jsz.primordia.Primordia;
 import dev.jsz.primordia.block.GeneLabBlockEntity;
+import dev.jsz.primordia.block.SampleCoolerBlockEntity;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.Block;
@@ -14,6 +15,9 @@ public final class PrimordiaBlockEntities {
 
 	public static final BlockEntityType<GeneLabBlockEntity> BASIC_GENE_LAB =
 			register("basic_gene_lab", GeneLabBlockEntity::new, PrimordiaBlocks.BASIC_GENE_LAB);
+
+	public static final BlockEntityType<SampleCoolerBlockEntity> SAMPLE_COOLER =
+			register("sample_cooler", SampleCoolerBlockEntity::new, PrimordiaBlocks.SAMPLE_COOLER);
 
 	private PrimordiaBlockEntities() {
 	}

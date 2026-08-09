@@ -14,3 +14,22 @@ accessWidener v2 official
 # still has no accessor, and widening both keeps the two reads symmetrical at the call site.
 accessible field net/minecraft/world/entity/Mob goalSelector Lnet/minecraft/world/entity/ai/goal/GoalSelector;
 accessible field net/minecraft/world/entity/Mob targetSelector Lnet/minecraft/world/entity/ai/goal/GoalSelector;
+
+# The sound engine's buffer cache, so synthesised creature voices can be handed to it directly.
+#
+# Creature calls are generated as PCM at runtime (see dev.jsz.primordia.sound), and there is no way
+# to give the game a sound that did not come out of a resource pack — SoundEngine#play resolves an
+# event through sounds.json and then asks SoundBufferLibrary for the decoded ogg. Reaching the cache
+# lets a voice be seeded under the identifier the engine is about to look up, so it finds the samples
+# already there and never goes to disk. Everything downstream of that point is vanilla: the same 3D
+# attenuation, the same category sliders, the same pausing.
+#
+# The alternative was to ship a Vorbis encoder, write oggs into a runtime resource pack and force a
+# resource reload every time a new creature was seen, which is slower, hitches the game, and adds a
+# dependency to avoid three lines.
+#
+# All three are client-only classes. On a dedicated server they are never loaded and these entries
+# simply never apply.
+accessible field net/minecraft/client/sounds/SoundManager soundEngine Lnet/minecraft/client/sounds/SoundEngine;
+accessible field net/minecraft/client/sounds/SoundEngine soundBuffers Lnet/minecraft/client/sounds/SoundBufferLibrary;
+accessible field net/minecraft/client/sounds/SoundBufferLibrary cache Ljava/util/Map;

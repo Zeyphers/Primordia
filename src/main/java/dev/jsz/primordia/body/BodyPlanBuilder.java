@@ -89,6 +89,36 @@ public final class BodyPlanBuilder {
 	/** Most of the torso length the hips may be spread over, before legs are thinned instead. */
 	private static final float MAX_LEG_SPAN = 0.45f;
 
+	/**
+	 * Tallest a creature may stand, in blocks. Anything past it is scaled down whole.
+	 * <p>
+	 * A ceiling is necessary — an unbounded body plan eventually produces something that cannot
+	 * path, cannot be hit and cannot be looked at — but it was set at 2.5 and that turned out to be
+	 * inside the range the generator actually reaches. Roughly one creature in six was hitting it,
+	 * which meant the three archetypes built to be enormous — saurian, apex, and the giant arachnid
+	 * roll — all arrived at the <i>same</i> rendered height, distinguishable only by their outline.
+	 * Size is the first thing anyone notices about an animal and the top of that axis was flat.
+	 * <p>
+	 * Four blocks leaves the tall archetypes room to differ from one another while staying inside
+	 * what the pathfinder and the hitbox can handle: the collision box is capped separately at
+	 * {@code hipHeight * 1.7} in {@code CreatureEntity#getDefaultDimensions}, so a creature this
+	 * tall is a tall <i>silhouette</i> rather than a four-block wall of collision.
+	 */
+	public static final float MAX_HEIGHT = 4.0f;
+
+	/** Spine parameter a single pair of legs attaches at — well back, under the pelvis. */
+	private static final float SOLE_LEG_U = 0.4f;
+	/** Spine parameter the front-most pair of arms attaches at. */
+	private static final float ARM_SHOULDER_U = 0.92f;
+	/**
+	 * Required shoulder-to-shoulder spacing, in multiples of the two limbs' combined radii.
+	 * <p>
+	 * Two capsules of radius a and b touch at {@code a + b}, so this is a 25% clearance margin —
+	 * wider than {@link #LEG_PITCH}'s 15% because an arm swings forward and down rather than
+	 * hanging parallel to its neighbour.
+	 */
+	private static final float ARM_PITCH = 1.25f;
+
 	private BodyPlanBuilder() {
 	}
 
@@ -152,6 +182,10 @@ public final class BodyPlanBuilder {
 		// for by thinning the legs, which is what a real arachnid does: the reason a spider can
 		// carry eight legs on a body that short is that they are wire-thin.
 		int legPairs = g.discrete(Gene.LEG_PAIRS, 1, 4);
+		// Read here rather than down with the rest of the foot geometry: the blend radius and the
+		// sampling resolution are both sized against the thinnest feature on the animal, which is
+		// usually a toe tip, and both are settled before a single foot has been built.
+		FootType footType = FootType.of(g);
 		// Clustering pulls the rearmost pair forward. Without it, every many-legged creature runs
 		// its legs the whole length of the body — a centipede — and packing them onto the front
 		// segment, which is what a spider does, is simply not in the space.
@@ -168,10 +202,34 @@ public final class BodyPlanBuilder {
 				legThickness = Math.max(span / (LEG_PITCH * gaps), hipHeight * 0.05f);
 			}
 		}
+		// ---- arms -------------------------------------------------------------
+		// Only a biped gets arms. An animal walking on four or more legs has no forelimbs free to
+		// be anything else — which is true of every quadruped alive, and it is also what keeps arms
+		// out of the one place they cannot fit. The front-most hip of a multi-legged creature sits
+		// at FOREMOST_LEG_U = 0.88 and the shoulder wants 0.92: four hundredths of a torso apart no
+		// matter how thick the limbs hanging off them are, with a second arm pair landing at 0.76,
+		// inside the hip span outright. Those two constants were chosen independently and never
+		// checked against one another, so arms grew straight through the legs. Making the two
+		// mutually exclusive removes the conflict rather than negotiating it.
+		//
+		// A single leg pair attaches back at SOLE_LEG_U = 0.4, leaving the whole chest free, so the
+		// case that remains has room by construction.
+		float armRoll = g.raw(Gene.ARM_PAIRS);
+		int armPairs = legPairs > 1 ? 0 : (armRoll < 0.42f ? 0 : (armRoll < 0.85f ? 1 : 2));
+		float firstArmU = ARM_SHOULDER_U;
+
+		// Settled here, before the blend radius is sized, rather than down at the arm-building code
+		// where it would read more naturally: the blend radius is capped against the thinnest limb
+		// on the animal, so an arm dropped or resized after that point leaves a blend wider than the
+		// limb it is blending, which fairs the arm into the body and eats it.
+		//
 		// Must account for the narrowest geometry actually emitted, which is the toe bone's far
 		// radius — the leg's own taper times the foot's additional narrowing. Measuring against the
 		// untapered thickness would leave the blend radius wider than the thinnest real feature.
-		float thinnestLimb = Math.min(legThickness * LIMB_TAPER * FOOT_TAPER, armThickness * LIMB_TAPER);
+		float toeFactor = footType.narrowestFactor(LIMB_TAPER, FOOT_TAPER);
+		float thinnestLimb = armPairs > 0
+				? Math.min(legThickness * toeFactor, armThickness * LIMB_TAPER)
+				: legThickness * toeFactor;
 
 		// Cap the smooth-union radius against the thinnest limb. A blend wider than the limb it is
 		// blending fairs the whole leg into the torso and eats it.
@@ -411,9 +469,21 @@ public final class BodyPlanBuilder {
 		float fanReach = legPairs == 1 ? 0f
 				: Math.max(hipHeight * 0.35f, LEG_PITCH * 0.55f * legThickness * (legPairs - 1));
 
+		// How far a toe may reach forward before it arrives inside the leg in front of it.
+		//
+		// Feet used to be one short stub and the question never came up; a taloned foot reaches
+		// half again as far. This is a guard rather than a fix for an observed fault — measured
+		// across eight thousand creatures, interpenetrating limb tips run at 0.09% and the rate is
+		// flat across foot types, so the fanned kinds are not causing it. It is kept because a toe
+		// reaching past the next hip is wrong whether or not the current numbers happen to produce
+		// one. The room available is the hip pitch plus whatever the fan has already bought.
+		float footRoom = legPairs == 1 ? Float.MAX_VALUE
+				: 0.6f * ((FOREMOST_LEG_U - rearmostU) * torsoLength / (legPairs - 1)
+						+ fanReach * 2f / legPairs);
+
 		for (int pair = 0; pair < legPairs; pair++) {
 			// u = 1 at the shoulder, decreasing toward the pelvis.
-			float u = legPairs == 1 ? 0.4f
+			float u = legPairs == 1 ? SOLE_LEG_U
 					: MathX.lerp(FOREMOST_LEG_U, rearmostU, (float) pair / (legPairs - 1));
 			// +1 for the front-most pair through to -1 for the rear-most.
 			float fanBias = legPairs == 1 ? 0f : 1f - 2f * ((float) pair / (legPairs - 1));
@@ -460,26 +530,35 @@ public final class BodyPlanBuilder {
 						1f + 2.4f * legArch);
 				legs.add(chain);
 
-				// Toe geometry: a short forward-pointing bone parented to the last leg bone.
-				// Kept close to the ankle's own thickness so the foot reads as a foot, not a pin.
+				// Toes, parented to the last leg bone. Kept close to the ankle's own thickness so
+				// the foot reads as a foot rather than a pin. See FootType.
 				int ankleBone = chain.bones[chain.bones.length - 1];
-				Vector3f toe = new Vector3f(foot).add(0f, 0f, footSize);
-				bones.add(new BoneDef("foot" + pair + (s > 0 ? "R" : "L"), ankleBone,
-						new Vector3f(foot), toe,
-						legThickness * LIMB_TAPER * 1.05f, legThickness * LIMB_TAPER * FOOT_TAPER,
-						Feature.FOOT, true, group));
+				growFoot(bones, footType, "foot" + pair + (s > 0 ? "R" : "L"), ankleBone,
+						foot, footSize, legThickness, hipHeight, footRoom, group);
 			}
 		}
 
 		// ---- arms -------------------------------------------------------------
-		// Arms are now common enough to actually see. They drive the claw attack style, so keeping
-		// them rare meant most creatures defaulted to biting regardless of what they had grown.
-		float armRoll = g.raw(Gene.ARM_PAIRS);
-		int armPairs = armRoll < 0.42f ? 0 : (armRoll < 0.85f ? 1 : 2);
+		// Bipeds only; see the note where armPairs is decided. They drive the claw attack style, so
+		// keeping them rare meant most creatures defaulted to biting regardless of what they grew.
 		if (armPairs > 0) {
 			float armLength = size * g.range(Gene.ARM_LENGTH, 0.15f, 0.8f);
+
+			// A shoulder only has so much room beneath it. The hand hangs 0.8 of the arm's length
+			// below the shoulder, so an arm drawn at full length on a short-legged creature swung
+			// down through the legs and out of the bottom of the animal entirely.
+			float shoulderY = sampleSpine(spinePts, firstArmU).y
+					+ torsoRadius(girth, taper, firstArmU) * 0.15f;
+			float headroom = Math.max(0f, shoulderY - armThickness * 1.5f);
+			armLength = Math.min(armLength, headroom / 0.8f);
+			if (armLength < armThickness * 2f) armPairs = 0;
+
+			// A second pair stacks behind the first by its own width, so the two shoulders clear
+			// each other rather than being spaced by a constant that knows nothing about them.
+			float armPitchU = armThickness * 2f * ARM_PITCH / torsoLength;
+
 			for (int pair = 0; pair < armPairs; pair++) {
-				float u = 0.92f - pair * 0.16f;
+				float u = firstArmU - pair * armPitchU;
 				int attach = MathX.clamp((int) (u * spineSegments), 0, spineSegments - 1);
 				Vector3f spineAt = sampleSpine(spinePts, u);
 				float rAt = torsoRadius(girth, taper, u);
@@ -614,16 +693,35 @@ public final class BodyPlanBuilder {
 			minLimbRadius = Math.min(minLimbRadius, Math.min(b.radiusHead, b.radiusTail));
 		}
 
-		// Enforce maximum height cap of 2.5 meters tall
+		// Settle the blend radius against the thinnest feature that was actually built, rather than
+		// against the estimate made before anything was.
+		//
+		// The estimate above has to be made early — the sampling grid is sized from it — but it can
+		// only guess at the parts that do not exist yet, and it has been wrong twice now in the same
+		// way: it assumed a fixed foot taper that a blunt hoof then exceeded, and it never accounted
+		// for a tail tip at all, which the comment above cheerfully notes is frequently the narrowest
+		// thing on the whole animal. Either way the result is a blend wider than the limb it is
+		// blending, which fairs that limb into the body and eats it. Measuring first and clamping
+		// after closes the whole class rather than the two instances of it.
+		if (minLimbRadius < Float.MAX_VALUE) {
+			blendRadius = Math.min(blendRadius, minLimbRadius * 1.1f);
+		}
+
+		// Narrowest daylight between two separate limbs. See BodyPlan#minLimbGap: the mesher grows
+		// the whole surface in voxel mode to keep thin limbs from falling between samples, and
+		// without knowing this it grew them into each other.
+		float minLimbGap = limbGap(boneArray, legs, arms);
+
 		float rawHeight = max.y - Math.min(0f, min.y);
-		if (rawHeight > 2.5f) {
-			float scale = 2.5f / rawHeight;
+		if (rawHeight > MAX_HEIGHT) {
+			float scale = MAX_HEIGHT / rawHeight;
 			hipHeight *= scale;
 			min.mul(scale);
 			max.mul(scale);
 			bodyLength *= scale;
 			mass *= (scale * scale * scale);
 			minLimbRadius *= scale;
+			if (minLimbGap != Float.MAX_VALUE) minLimbGap *= scale;
 			blendRadius *= scale;
 
 			for (int i = 0; i < boneArray.length; i++) {
@@ -661,10 +759,121 @@ public final class BodyPlanBuilder {
 				new BodyPalette(g), blendRadius, rootBone, headBone, jawBone,
 				(float) Math.atan(JAW_BIND_OPEN) * 0.88f, hipHeight, min, max,
 				teeth.toArray(new ToothDef[0]),
-				bodyLength, mass, minLimbRadius);
+				bodyLength, mass, minLimbRadius, minLimbGap);
 	}
 
 	// ------------------------------------------------------------------ helpers
+
+	/**
+	 * Narrowest surface-to-surface gap between any two separate limbs.
+	 * <p>
+	 * Sampled along each capsule and projected onto the other, which is coarse but is measuring a
+	 * quantity that only has to be right to within a fraction of a voxel. Cost is bounded by the
+	 * fact that a creature has at most ten limbs of three bones each, and a body plan is built once
+	 * and cached.
+	 * <p>
+	 * Bones within one limb are skipped: a knee is <i>meant</i> to touch the thigh above it, and
+	 * counting that would report zero on every creature alive.
+	 * <p>
+	 * <b>Only the distal bones count</b> — the ankle and the toe. Limbs converge on the body at the
+	 * hip and are supposed to: {@link #LEG_PITCH} spaces adjacent hips at 2.3 times the leg radius,
+	 * which leaves three tenths of a radius of daylight between the thighs, and the trunk fills that
+	 * space anyway so nothing is visible there. Measuring the whole limb therefore reports the hip
+	 * on every creature, which is both true and useless — it pinned the inflation this feeds to
+	 * nearly zero and put the thin-limb rescue back where it started. The tips are where two limbs
+	 * stand alone in open air, and where a bridge between them is the thing you actually see.
+	 */
+	private static float limbGap(BoneDef[] bones, List<LimbChain> legs, List<LimbChain> arms) {
+		List<LimbChain> limbs = new ArrayList<>(legs);
+		limbs.addAll(arms);
+
+		float best = Float.MAX_VALUE;
+		for (int i = 0; i < limbs.size(); i++) {
+			for (int j = i + 1; j < limbs.size(); j++) {
+				for (int bi : tipBones(bones, limbs.get(i))) {
+					for (int bj : tipBones(bones, limbs.get(j))) {
+						best = Math.min(best, capsuleGap(bones[bi], bones[bj]));
+					}
+				}
+			}
+		}
+		return best;
+	}
+
+	/**
+	 * Grows a foot on the end of a leg.
+	 * <p>
+	 * Every toe is parented to the ankle and shares the leg's blend group, so the toes of one foot
+	 * fair into each other and into the ankle above them while staying strictly separate from the
+	 * next leg along — the same rule that keeps limbs from webbing, applied one joint further down.
+	 */
+	private static void growFoot(List<BoneDef> bones, FootType type, String name, int ankle,
+	                             Vector3f foot, float footSize, float legThickness,
+	                             float hipHeight, float maxReach, int group) {
+		float reach = Math.min(footSize * type.reach, maxReach);
+		float thickness = legThickness * LIMB_TAPER * type.girth;
+		// Bluntness is the far radius as a share of the near one: a hoof keeps its width to the
+		// ground, a talon comes to a point.
+		float tipRadius = Math.max(thickness * FOOT_TAPER, thickness * type.bluntness);
+		// Floored against the leg it hangs off, on the same slenderness rule the legs are held to
+		// — a toe past about fifty to one stops reading as a toe and reads as a bristle. Without
+		// this the narrow types put the thinnest feature on the animal at the very tip, which is
+		// exactly where it is least likely to survive the mesher.
+		tipRadius = Math.max(tipRadius, hipHeight * 0.025f);
+		float spread = type.spread();
+
+		for (int t = 0; t < type.toes; t++) {
+			// Fanned about straight ahead: one toe points forward, three splay evenly.
+			float angle = type.toes <= 1 ? 0f
+					: spread * (t / (float) (type.toes - 1) * 2f - 1f);
+			Vector3f tip = new Vector3f(foot).add(
+					(float) Math.sin(angle) * reach, 0f, (float) Math.cos(angle) * reach);
+			bones.add(new BoneDef(name + (type.toes > 1 ? "_" + t : ""), ankle,
+					new Vector3f(foot), tip,
+					thickness * 1.05f, tipRadius,
+					Feature.FOOT, true, group));
+		}
+	}
+
+	/** A limb's last bone plus the toes hanging off it — the far end, where limbs stand in the open. */
+	private static int[] tipBones(BoneDef[] bones, LimbChain limb) {
+		int ankle = limb.bones[limb.bones.length - 1];
+		// Every toe, not the first one found: a splayed foot fans three of them, and the outermost
+		// is the one that reaches nearest the next leg along.
+		List<Integer> tips = new ArrayList<>();
+		tips.add(ankle);
+		for (int i = 0; i < bones.length; i++) {
+			if (bones[i].parent == ankle && bones[i].feature == Feature.FOOT) tips.add(i);
+		}
+		int[] out = new int[tips.size()];
+		for (int i = 0; i < out.length; i++) out[i] = tips.get(i);
+		return out;
+	}
+
+	private static float capsuleGap(BoneDef x, BoneDef y) {
+		float best = Float.MAX_VALUE;
+		for (int i = 0; i <= GAP_SAMPLES; i++) {
+			float t = i / (float) GAP_SAMPLES;
+			float px = x.head.x + (x.tail.x - x.head.x) * t;
+			float py = x.head.y + (x.tail.y - x.head.y) * t;
+			float pz = x.head.z + (x.tail.z - x.head.z) * t;
+			float rx = x.radiusHead + (x.radiusTail - x.radiusHead) * t;
+
+			float u = MathX.projectOntoSegment(px, py, pz,
+					y.head.x, y.head.y, y.head.z, y.tail.x, y.tail.y, y.tail.z);
+			float qx = y.head.x + (y.tail.x - y.head.x) * u;
+			float qy = y.head.y + (y.tail.y - y.head.y) * u;
+			float qz = y.head.z + (y.tail.z - y.head.z) * u;
+			float ry = y.radiusHead + (y.radiusTail - y.radiusHead) * u;
+
+			float dx = px - qx, dy = py - qy, dz = pz - qz;
+			best = Math.min(best, (float) Math.sqrt(dx * dx + dy * dy + dz * dz) - rx - ry);
+		}
+		return best;
+	}
+
+	/** Points sampled along each capsule when measuring limb clearance. */
+	private static final int GAP_SAMPLES = 6;
 
 	private static float torsoRadius(float girth, float taper, float u) {
 		// Lerp handles front-vs-rear bulk; the sine term keeps the ends from being as thick as the barrel.

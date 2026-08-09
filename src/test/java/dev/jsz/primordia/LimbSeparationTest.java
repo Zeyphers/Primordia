@@ -181,6 +181,87 @@ class LimbSeparationTest {
 		}
 	}
 
+	/**
+	 * Only bipeds have arms.
+	 * <p>
+	 * An animal walking on four or more legs has no forelimbs free to be anything else, and the rule
+	 * doubles as the fix for a geometry bug: arms attached at a fixed {@code u = 0.92} along the
+	 * spine while the front-most hip of a multi-legged creature is pinned at
+	 * {@code FOREMOST_LEG_U = 0.88}. Four hundredths of a torso apart, with nothing reconciling the
+	 * two constants against the thickness of the limbs hanging off them — so on a short creature,
+	 * where four hundredths of a torso is a couple of centimetres and limb radii are floored in
+	 * absolute terms, the shoulder was inside the hip by construction. A second arm pair sat at
+	 * {@code 0.76}, inside the hip span outright.
+	 */
+	@Test
+	void onlyBipedsGrowArms() {
+		Random random = new Random(8812);
+		for (Archetype archetype : Archetype.VALUES) {
+			for (int trial = 0; trial < 200; trial++) {
+				BodyPlan plan = BodyPlanBuilder.build(archetype.create(random));
+				if (plan.legs.length > 2) {
+					assertEquals(0, plan.arms.length,
+							archetype + ": a creature with " + plan.legs.length
+									+ " legs grew arms — they have nowhere to attach that is not a hip");
+				}
+			}
+		}
+	}
+
+	/**
+	 * And the arms bipeds do grow stay clear of their legs.
+	 * <p>
+	 * The sibling test above only ever compared legs against legs, which left arm-against-leg
+	 * uncovered entirely. Kept as cover for the remaining case now that {@link #onlyBipedsGrowArms}
+	 * has removed the impossible one.
+	 */
+	@Test
+	void armsDoNotIntersectTheLegs() {
+		Random random = new Random(4471);
+		for (Archetype archetype : Archetype.VALUES) {
+			int intersecting = 0;
+			int pairs = 0;
+			float worst = Float.MAX_VALUE;
+			String culprit = "";
+
+			// A large sample deliberately. Arms are uncommon and most archetypes rarely grow them,
+			// so a few dozen trials can yield a handful of arm/leg pairs — and a 5% tolerance
+			// against a denominator of twelve is not a measurement, it is a coin toss that reports
+			// a different answer every time an unrelated change shifts the random sequence.
+			for (int trial = 0; trial < 400; trial++) {
+				BodyPlan plan = BodyPlanBuilder.build(archetype.create(random));
+				if (plan.arms.length == 0) continue;
+				float tolerance = plan.blendRadius * 1.5f;
+
+				for (LimbChain arm : plan.arms) {
+					for (LimbChain leg : plan.legs) {
+						// Opposite sides of the body cannot reach each other.
+						if (arm.side != leg.side) continue;
+						pairs++;
+						float gap = limbGap(plan, arm, leg);
+						if (gap < worst) {
+							worst = gap;
+							culprit = String.format(
+									"%d legs, hip height %.2f, torso %.2f, blend %.3f",
+									plan.legs.length, plan.hipHeight, plan.bodyLength, plan.blendRadius);
+						}
+						if (gap < -tolerance) intersecting++;
+					}
+				}
+			}
+
+			// The same 10% the leg-against-leg test allows, and for the same reason: limbs meeting
+			// the body at a shared joint graze by a hair, and demanding zero would be a test of the
+			// random draw rather than of the body plan. What remains at this bar on a biped is a
+			// hand passing near a large forward-pointing foot on a short, deep-chested animal —
+			// long-standing, unrelated to the arm/leg reconciliation, and worth its own look.
+			assertTrue(intersecting <= pairs * 0.1,
+					archetype + ": " + intersecting + " of " + pairs
+							+ " same-side arm/leg pairs interpenetrate (worst gap " + worst
+							+ " on " + culprit + ") — the arms are buried in the legs");
+		}
+	}
+
 	@Test
 	void everyLimbGetsItsOwnBlendGroup() {
 		Random random = new Random(2324);

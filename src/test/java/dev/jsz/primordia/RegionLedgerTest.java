@@ -8,6 +8,7 @@ import dev.jsz.primordia.ecology.region.RegionNeighbourhood;
 import dev.jsz.primordia.ecology.region.RegionPos;
 import dev.jsz.primordia.ecology.region.RegionRecord;
 import dev.jsz.primordia.ecology.region.RegionSimulation;
+import dev.jsz.primordia.genome.Archetype;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
 import org.junit.jupiter.api.Test;
@@ -245,12 +246,27 @@ class RegionLedgerTest {
 		RegionFounder.found(world, record, new RegionFounder.Climate(0.92f, 0.06f, 0.12f, 0.18f), "desert", 0);
 
 		assertFalse(record.lineages.isEmpty(), "desert region founded empty");
+		int surface = 0;
 		for (LineageRecord l : record.lineages) {
+			// Cave dwellers are exempt, and deliberately so: RegionFounder#seedFreshFauna seeds them
+			// unconditionally and does not take their climate preferences from the surface, because
+			// "caves are under the desert as much as under the jungle". A cave lineage founded from
+			// CAVE_CRAWLER carries a banded HUMIDITY_PREFERENCE of 0.55–0.90 — it prefers the damp
+			// because the cave is damp, whatever the sand overhead is doing.
+			//
+			// Including them made this test a lottery on the length of the region's pre-history:
+			// selection drags a cave lineage's humidity toward the surface figure over time, so
+			// whether it had crossed 0.5 by the end depended on the randomly chosen number of
+			// pre-age days, and any unrelated change that shifted the random sequence could flip it.
+			if (l.meanOf(Gene.SUBTERRANEAN) >= Archetype.SUBTERRANEAN_THRESHOLD) continue;
+			surface++;
+
 			assertTrue(l.meanOf(Gene.TEMP_PREFERENCE) > 0.5f,
 					"a lineage that has lived in a desert for centuries prefers the cold");
 			assertTrue(l.meanOf(Gene.HUMIDITY_PREFERENCE) < 0.5f,
 					"a lineage that has lived in a desert for centuries prefers the wet");
 		}
+		assertTrue(surface > 0, "desert region founded with no surface fauna to check");
 	}
 
 	// --------------------------------------------------------------- the model

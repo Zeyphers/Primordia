@@ -3,6 +3,7 @@ package dev.jsz.primordia.mesh;
 import dev.jsz.primordia.Primordia;
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BodyPlanCache;
+import dev.jsz.primordia.body.SkeletonPlan;
 import dev.jsz.primordia.genome.Genome;
 
 import java.util.Map;
@@ -34,7 +35,12 @@ public final class GenomeMeshCache {
 		evictIfNeeded();
 	}
 
-	private record Key(Genome genome, int lod) {
+	/**
+	 * A skeleton is a second mesh for the same genome and tier, so the flag has to be part of the
+	 * key — without it a carcass and its own remains would share one cache entry and whichever
+	 * baked first would be handed to both.
+	 */
+	private record Key(Genome genome, int lod, boolean skeleton) {
 	}
 
 	private static final Map<Key, MeshData> READY = new ConcurrentHashMap<>();
@@ -64,7 +70,14 @@ public final class GenomeMeshCache {
 	 * {@code null}. Safe to call every frame — repeat calls for an in-flight bake are no-ops.
 	 */
 	public static MeshData getIfReady(Genome genome, int lod) {
-		Key key = new Key(genome, lod);
+		return getIfReady(genome, lod, false);
+	}
+
+	/**
+	 * @param skeleton bake the bones rather than the body — see {@link SkeletonPlan}
+	 */
+	public static MeshData getIfReady(Genome genome, int lod, boolean skeleton) {
+		Key key = new Key(genome, lod, skeleton);
 		MeshData ready = READY.get(key);
 		if (ready != null) return ready;
 
@@ -73,13 +86,15 @@ public final class GenomeMeshCache {
 		BAKERS.submit(() -> {
 			try {
 				BodyPlan plan = BodyPlanCache.get(genome);
+				if (skeleton) plan = SkeletonPlan.of(plan);
 				MeshData mesh = MeshBaker.bake(plan, LodTier.resolutionFor(lod));
 				READY.put(key, mesh);
 				ORDER.add(key);
 				evictIfNeeded();
 			} catch (Throwable t) {
 				// A bad genome must degrade to an invisible creature, never to a crashed render thread.
-				Primordia.LOGGER.error("Mesh bake failed for {} at LOD {}", genome, lod, t);
+				Primordia.LOGGER.error("Mesh bake failed for {} at LOD {} (skeleton={})",
+						genome, lod, skeleton, t);
 			} finally {
 				IN_FLIGHT.remove(key);
 			}

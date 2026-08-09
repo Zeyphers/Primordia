@@ -109,14 +109,36 @@ public final class Genome {
 	}
 
 	/**
-	 * A random genome biased toward the middle of every range, so founders are
-	 * "reasonable" animals rather than extreme outliers. Averaging three uniform
-	 * samples gives an approximately normal distribution centred on 0.5.
+	 * A founder genome: moderate where moderation makes a plausible animal, wide open where it only
+	 * makes a forgettable one.
+	 * <p>
+	 * This used to average three uniform samples for every locus alike, which gave a normal
+	 * distribution centred on 0.5 with a standard deviation of 0.167 — and applied it to all
+	 * {@value Gene#COUNT} loci. For the structural genes that was right: a founder ought to be a
+	 * reasonable animal rather than a collection of extremes. For everything else it was the reason
+	 * every creature looked the same. Archetypes band the structural loci and leave the ornament
+	 * ones free, so the ornament ones were precisely what the moderate draw flattened: a measured
+	 * sample of five thousand founders had a mid-length muzzle, a mid-width jaw, mid-sized ears and
+	 * mid-length horns on essentially every animal, with a mean of 0.500 and a deviation of 0.166 on
+	 * <i>every single</i> identity gene. The creatures were combinatorially distinct and
+	 * perceptually identical.
+	 * <p>
+	 * The fix reuses a distinction the enum already draws. {@link Gene#plasticity} says how fast a
+	 * locus drifts under mutation, which is another way of saying how much of a lineage's identity
+	 * it carries: limb counts are conservative, colour and display traits are volatile. So the
+	 * centre-bias is taken straight from it — conservative loci keep the old clustered draw and go
+	 * on producing sane bodies, volatile ones open out past uniform and produce animals with a
+	 * <i>strong</i> muzzle or none, real horns or none.
+	 * <p>
+	 * {@link Gene#categorical} loci ignore the curve entirely and draw flat; see the note there.
 	 */
 	public static Genome randomModerate(net.minecraft.util.RandomSource random) {
 		float[] v = new float[Gene.COUNT];
 		for (int i = 0; i < v.length; i++) {
-			v[i] = (random.nextFloat() + random.nextFloat() + random.nextFloat()) / 3f;
+			Gene gene = Gene.VALUES[i];
+			v[i] = gene.constrained
+					? (random.nextFloat() + random.nextFloat() + random.nextFloat()) / 3f
+					: founderDraw(gene, random.nextFloat());
 		}
 		return new Genome(v, random.nextLong(), random.nextLong(), 0);
 	}
@@ -124,9 +146,58 @@ public final class Genome {
 	public static Genome randomModerate(RandomGenerator random) {
 		float[] v = new float[Gene.COUNT];
 		for (int i = 0; i < v.length; i++) {
-			v[i] = (random.nextFloat() + random.nextFloat() + random.nextFloat()) / 3f;
+			Gene gene = Gene.VALUES[i];
+			v[i] = gene.constrained
+					? (random.nextFloat() + random.nextFloat() + random.nextFloat()) / 3f
+					: founderDraw(gene, random.nextFloat());
 		}
 		return new Genome(v, random.nextLong(), random.nextLong(), 0);
+	}
+
+	/**
+	 * Shapes one uniform sample into this locus's founder distribution.
+	 * <p>
+	 * The curve is {@code 0.5 ± 0.5·|2u-1|^e}, symmetric about the middle and covering the whole
+	 * range whatever {@code e} is — only the density moves. {@code e > 1} pulls samples toward the
+	 * centre, {@code e = 1} is uniform, and {@code e < 1} pushes them out toward both ends. For
+	 * reference, {@code e ≈ 2.75} reproduces the old average-of-three almost exactly, which is where
+	 * the conservative end of the range is pinned so that structural genes are left as they were.
+	 */
+	private static float founderDraw(Gene gene, float u) {
+		if (gene.categorical) return u;
+
+		float t = 2f * u - 1f;
+		float shaped = Math.signum(t) * (float) Math.pow(Math.abs(t), centreBias(gene.plasticity));
+		return MathX.clamp01(0.5f + 0.5f * shaped);
+	}
+
+	/**
+	 * The exponent whose spread matches the old average-of-three draw.
+	 * <p>
+	 * Mean absolute deviation from the centre is {@code 0.5/(e+1)}, and the average of three
+	 * uniforms sits at 0.133, so {@code e = 2.76}.
+	 * <p>
+	 * <b>Only the spread matches — the tails do not,</b> which is why constrained loci draw the real
+	 * average-of-three above rather than being routed through this curve. Averaging three uniforms
+	 * gives a bell with almost no density at the extremes, where a power curve keeps reaching them:
+	 * {@code P(v > 0.9)} is 0.45% for the average and 3.9% here, nearly nine times the mass in the
+	 * top decile. Traits gated on a high threshold live entirely in that tail, so substituting the
+	 * curve doubled the number of grazers standing like spiders while leaving every summary
+	 * statistic looking correct.
+	 */
+	private static final float MODERATE_BIAS = 2.76f;
+
+	/**
+	 * Centre-bias exponent for a locus, from its plasticity.
+	 * <p>
+	 * Plasticity runs from 0.10 (arm pairs, leg pairs, body segmentation — the things that decide
+	 * what kind of animal this is) to 0.9 (pattern, hue — the things that decide which individual it
+	 * is). The bottom of that range keeps the old behaviour; the top opens past uniform, so display
+	 * traits become bimodal rather than uniformly middling, which is what makes two animals read as
+	 * different at a glance rather than merely measure differently.
+	 */
+	private static float centreBias(float plasticity) {
+		return MathX.lerp(MODERATE_BIAS, 0.6f, MathX.clamp01((plasticity - 0.10f) / 0.55f));
 	}
 
 	/**
@@ -140,10 +211,21 @@ public final class Genome {
 	 * saturation by hue on top of this.
 	 */
 	public static Genome createForBiome(net.minecraft.util.RandomSource random, String biomeCategory) {
+		return createForBiome(random, biomeCategory, null);
+	}
+
+	/**
+	 * @param archetype the body plan to found on, or null to roll one. Callers that know what the
+	 *                  animal is <i>for</i> — {@code RegionFounder} knows its trophic slot and its
+	 *                  climate — should choose it themselves via {@link Archetype#pickFor}, because
+	 *                  a shape rolled independently of the job carries no information about it.
+	 */
+	public static Genome createForBiome(net.minecraft.util.RandomSource random, String biomeCategory,
+	                                    Archetype archetype) {
 		java.util.Random jRandom = new java.util.Random(random.nextLong());
 		// Surface archetypes only. A region's cave fauna is seeded separately, by RegionFounder,
 		// because it is not a variation on the fauna above it — it lives somewhere else.
-		Archetype archetype = Archetype.randomSurface(jRandom);
+		if (archetype == null) archetype = Archetype.randomSurface(jRandom);
 		Genome g = archetype.create(jRandom);
 		float[] v = g.copyValues();
 

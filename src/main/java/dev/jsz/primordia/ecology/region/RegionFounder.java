@@ -302,7 +302,12 @@ public final class RegionFounder {
 	                                     float diet, float population) {
 		net.minecraft.util.RandomSource mcRandom =
 				net.minecraft.util.RandomSource.create(mcSource.nextLong());
-		Genome base = Genome.createForBiome(mcRandom, biomeName);
+		// The body plan is chosen for the job and the place, not rolled and then overridden. See
+		// Archetype#pickFor: picking first and forcing the diet afterwards is what allowed a
+		// region's grazer to be built on the apex predator's skeleton.
+		Archetype archetype = Archetype.pickFor(mcSource, diet,
+				record.temperature, record.humidity, record.productivity);
+		Genome base = Genome.createForBiome(mcRandom, biomeName, archetype);
 
 		float[] values = base.copyValues();
 		values[Gene.DIET.ordinal()] = MathX.clamp01(diet);

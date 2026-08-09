@@ -143,3 +143,33 @@ tasks.register('editor', JavaExec) {
 	classpath = sourceSets.main.runtimeClasspath
 	mainClass = 'dev.jsz.primordia.editor.EditorServer'
 }
+
+// The same trick for the voice synthesiser. Tuning a call by rebuilding the mod, launching the
+// game and waiting for an animal to feel like speaking is a minutes-long loop for a one-line
+// change; this makes it a keystroke. It renders through the shipped VoiceSynth, so what it plays
+// is what the game will play.
+//
+// Test source set, not main: unlike the editor it has no in-game counterpart, so there is no
+// reason for any of it to be in the jar.
+tasks.register('voiceLab', JavaExec) {
+	group = 'primordia'
+	description = 'Serves the creature voice lab on http://127.0.0.1:8091/'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.sound.VoiceLabServer'
+}
+
+// Measures how much variety the generator actually produces, by sampling founders through the real
+// Archetype -> Genome -> BodyPlanBuilder path and counting what comes out.
+//
+// Variety is a distribution property and distributions cannot be eyeballed — the generator offers
+// around a thousand ornament combinations, but the number that matters is how many of them come up
+// often enough for a player to ever meet one. Tuning the presence thresholds against this instead
+// of by guesswork is the whole reason it exists.
+//
+// `gradle diversityReport --args="20000"` for a larger sample.
+tasks.register('diversityReport', JavaExec) {
+	group = 'primordia'
+	description = 'Reports creature variety over a sample of founder genomes'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.genome.DiversityReport'
+}

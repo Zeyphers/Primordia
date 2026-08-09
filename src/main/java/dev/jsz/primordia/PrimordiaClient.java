@@ -6,6 +6,7 @@ import dev.jsz.primordia.client.render.CreaturePreviewRenderer;
 import dev.jsz.primordia.client.render.CreatureRenderer;
 import dev.jsz.primordia.client.screen.FieldGuideScreen;
 import dev.jsz.primordia.client.screen.GeneLabScreen;
+import dev.jsz.primordia.client.screen.SampleCoolerScreen;
 import dev.jsz.primordia.item.TissueSampleItem;
 import dev.jsz.primordia.lab.SampleData;
 import dev.jsz.primordia.registry.PrimordiaEntities;
@@ -55,6 +56,10 @@ public class PrimordiaClient implements ClientModInitializer {
 			clientGuideData = dev.jsz.primordia.lab.GuideData.empty();
 		});
 
+		// Creature calls are synthesised on this side from the genome the client already has, so the
+		// receiver has to be up before any creature is in earshot.
+		dev.jsz.primordia.sound.client.CreatureVoices.register();
+
 		EntityRendererRegistry.register(PrimordiaEntities.CREATURE, CreatureRenderer::new);
 		// Guide plates are three-dimensional, so they go through the picture-in-picture path rather
 		// than being painted straight into the panel. See CreaturePreviewRenderer.
@@ -64,6 +69,7 @@ public class PrimordiaClient implements ClientModInitializer {
 		// so LambDynamicLights loads and calls it itself, and naming the class here would drag it in
 		// even when the mod is absent.
 		MenuScreens.register(PrimordiaScreenHandlers.GENE_LAB, GeneLabScreen::new);
+		MenuScreens.register(PrimordiaScreenHandlers.SAMPLE_COOLER, SampleCoolerScreen::new);
 
 		UseItemCallback.EVENT.register((player, world, hand) -> {
 			net.minecraft.world.item.ItemStack stack = player.getItemInHand(hand);

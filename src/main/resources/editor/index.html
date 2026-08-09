@@ -1341,6 +1341,7 @@ async function bake() {
     voxel: $('voxel').value,
     smoothing: $('smoothing').value
   });
+  if (S.skeleton) p.set('skeleton', '1');
   if (S.genes) p.set('genes', S.genes.map(v => v.toFixed(5)).join(','));
   const t0 = performance.now();
   try {
@@ -1762,6 +1763,12 @@ function applyView(id) {
   $('colorBy').value = v.colorBy;
   $('viewHint').textContent = v.hint;
   for (const k of Object.keys(VIEWS)) $(k).setAttribute('aria-pressed', String(k === id));
+  // No view currently re-bakes. `S.skeleton` is still honoured by the bake request below, which is
+  // what /api/bake?skeleton=1 drives — see EditorServer. There is deliberately no button for it:
+  // remains are a thing you find in the world, not a mode of the editor.
+  const wasSkeleton = !!S.skeleton;
+  S.skeleton = !!v.skeleton;
+  if (S.skeleton !== wasSkeleton) requestBake(true);
 }
 for (const k of Object.keys(VIEWS)) $(k).addEventListener('click', () => applyView(k));
 

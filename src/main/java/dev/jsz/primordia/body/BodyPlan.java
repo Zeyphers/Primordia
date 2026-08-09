@@ -71,6 +71,20 @@ public final class BodyPlan {
 	public final float minLimbRadius;
 
 	/**
+	 * Narrowest daylight between the tips of two separate limbs, surface to surface.
+	 * <p>
+	 * The companion to {@link #minLimbRadius}, and the other half of what the mesher has to be able
+	 * to see. That one says how fine the sampling must be for a limb not to vanish; this one says
+	 * how far the surface may be grown before two limbs stop being two limbs. Voxel mode inflates
+	 * the whole body to rescue limbs thinner than a voxel, and inflation eats a gap from both sides
+	 * at once — so without this it cheerfully welded a creature's feet together in the course of
+	 * saving its legs.
+	 * <p>
+	 * {@code Float.MAX_VALUE} when there is nothing to compare, i.e. fewer than two limbs.
+	 */
+	public final float minLimbGap;
+
+	/**
 	 * Teeth, as geometry emitted outside the signed distance field entirely. See {@link ToothDef}.
 	 */
 	public final ToothDef[] teeth;
@@ -79,7 +93,8 @@ public final class BodyPlan {
 	                BodyPalette palette, float blendRadius, int rootBone, int headBone, int jawBone,
 	                float jawRestAngle, float hipHeight, Vector3f boundsMin, Vector3f boundsMax,
 	                ToothDef[] teeth,
-	                float bodyLength, float mass, float minLimbRadius) {
+	                float bodyLength, float mass, float minLimbRadius, float minLimbGap) {
+		this.minLimbGap = minLimbGap;
 		this.teeth = teeth;
 		this.jawBone = jawBone;
 		this.jawRestAngle = jawRestAngle;

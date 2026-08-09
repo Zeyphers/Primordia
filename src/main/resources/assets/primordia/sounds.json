@@ -1,0 +1,14 @@
+{
+	"block.sample_cooler.open": {
+		"subtitle": "subtitles.primordia.sample_cooler.open",
+		"sounds": [
+			"primordia:block/sample_cooler_open"
+		]
+	},
+	"block.sample_cooler.close": {
+		"subtitle": "subtitles.primordia.sample_cooler.close",
+		"sounds": [
+			"primordia:block/sample_cooler_close"
+		]
+	}
+}

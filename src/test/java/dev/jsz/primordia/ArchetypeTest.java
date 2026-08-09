@@ -72,8 +72,16 @@ class ArchetypeTest {
 		for (int i = 0; i < 200; i++) {
 			tallest = Math.max(tallest, build(Archetype.SAURIAN, random).height());
 		}
-		assertTrue(tallest <= 2.5001f, "creatures should not exceed 2.5m tall but was " + tallest);
-		assertTrue(tallest >= 2.0f, "the largest saurian was only " + tallest + " m tall");
+		assertTrue(tallest <= BodyPlanBuilder.MAX_HEIGHT + 1e-3f,
+				"creatures should not exceed " + BodyPlanBuilder.MAX_HEIGHT + "m tall but was " + tallest);
+		// Read from the constant rather than repeated as a literal, so raising the ceiling cannot
+		// leave this test quietly asserting the old one.
+		//
+		// The lower bound is past where the ceiling used to sit, which is the point of the change:
+		// at 2.5 m roughly a creature in six was being scaled down to fit, so saurian, apex and the
+		// giant arachnid all arrived at exactly the same height and the top of the size range was
+		// flat. If this drops back under 2.5 the tall archetypes have stopped being tall.
+		assertTrue(tallest >= 3.0f, "the largest saurian was only " + tallest + " m tall");
 	}
 
 	@Test

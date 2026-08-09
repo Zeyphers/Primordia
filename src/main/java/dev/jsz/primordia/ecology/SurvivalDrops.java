@@ -50,14 +50,6 @@ public final class SurvivalDrops {
 		creature.spawnAtLocation(world, new ItemStack(Items.BONE, boneCount));
 	}
 
-	public static void dropSkeletalRemains(CreatureEntity carcass) {
-		if (!(carcass.level() instanceof ServerLevel world)) return;
-		BodyPlan plan = carcass.getBodyPlan();
-		if (plan == null) return;
-		int boneCount = 1 + (int) Math.min(3, plan.mass * 1.5f);
-		carcass.spawnAtLocation(world, new ItemStack(Items.BONE, boneCount));
-	}
-
 	private static int scale(int full, float share) {
 		return Math.round(full * share);
 	}

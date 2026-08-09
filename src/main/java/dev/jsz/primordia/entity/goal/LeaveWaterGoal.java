@@ -14,6 +14,11 @@ import java.util.EnumSet;
  * but gives them no reason to leave, so without this they tread water indefinitely wherever the
  * wander goal happened to drop them. Priority sits above wandering so a swimming creature commits
  * to getting out rather than continuing to pick random destinations across the lake.
+ * <p>
+ * Gated on {@link CreatureEntity#isSwimmingDepth()} rather than on merely touching water, so that
+ * an animal is only pulled ashore when it is actually out of its depth. Wading is not drowning: a
+ * tall creature crossing a stream has no reason to abandon where it was going, and gating this on
+ * contact made every shallow puddle a wall that turned animals around.
  */
 public class LeaveWaterGoal extends Goal {
 	private static final int SEARCH_RADIUS = 24;
@@ -34,7 +39,7 @@ public class LeaveWaterGoal extends Goal {
 
 	@Override
 	public boolean canUse() {
-		if (!creature.isInWater()) return false;
+		if (!creature.isSwimmingDepth()) return false;
 		if (creature.getControllingPassenger() != null) return false;
 		shore = findShore();
 		return shore != null;
@@ -42,7 +47,7 @@ public class LeaveWaterGoal extends Goal {
 
 	@Override
 	public boolean canContinueToUse() {
-		return creature.isInWater()
+		return creature.isSwimmingDepth()
 				&& shore != null
 				&& creature.getControllingPassenger() == null;
 	}

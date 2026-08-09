@@ -18,25 +18,25 @@ import java.util.random.RandomGenerator;
  */
 public enum Archetype {
 	/** Uniform draw across all of gene space. Chaotic, occasionally wonderful. */
-	CHAOS,
+	CHAOS(0.50f, 0.50f, 0.50f, 0.00f),
 	/** Upright, two long digitigrade legs, heavy tail for balance, small forelimbs. */
-	BIPED,
+	BIPED(0.55f, 0.50f, 0.50f, 0.25f),
 	/** Many splayed legs, low slung, small, armoured, segmented. */
-	INSECTOID,
+	INSECTOID(0.50f, 0.62f, 0.70f, 0.00f),
 	/** Enormous long-necked, long-tailed quadruped browser. */
-	SAURIAN,
+	SAURIAN(0.12f, 0.60f, 0.62f, 0.65f),
 	/** Bulky low-headed quadruped built for cropping vegetation in volume. */
-	GRAZER,
+	GRAZER(0.10f, 0.50f, 0.45f, 0.45f),
 	/** Fast, social, mid-sized carnivore. */
-	PACK_HUNTER,
+	PACK_HUNTER(0.85f, 0.45f, 0.45f, 0.30f),
 	/** Huge bipedal predator: massive jaws, vestigial arms, counterweight tail. */
-	APEX,
+	APEX(0.93f, 0.55f, 0.50f, 0.60f),
 	/** Long-limbed, light-boned, built purely for speed. */
-	SPRINTER,
+	SPRINTER(0.30f, 0.55f, 0.30f, 0.25f),
 	/** Two-part body, four pairs of clustered high-kneed legs, eight eyes. Spider-shaped. */
-	ARACHNID,
+	ARACHNID(0.82f, 0.55f, 0.65f, 0.10f),
 	/** Broad, flat, heavily armoured; stalked eyes, big claws, a paddle tail. */
-	CRUSTACEAN,
+	CRUSTACEAN(0.55f, 0.45f, 0.85f, 0.20f),
 	/**
 	 * Small, pale, many-legged and bioluminescent. Lives in the dark and climbs.
 	 * <p>
@@ -45,7 +45,7 @@ public enum Archetype {
 	 * nothing else down there does, it climbs because a cave has as much wall and ceiling as it has
 	 * floor, and it is pale because colour is worth nothing where there is no light to show it.
 	 */
-	CAVE_CRAWLER;
+	CAVE_CRAWLER(0.62f, 0.42f, 0.72f, 0.00f);
 
 	public static final Archetype[] VALUES = values();
 
@@ -332,6 +332,84 @@ public enum Archetype {
 	/** A random archetype, excluding CHAOS so that mixed spawns stay structured. */
 	public static Archetype randomStructured(RandomGenerator random) {
 		return VALUES[1 + random.nextInt(VALUES.length - 1)];
+	}
+
+	/** Where this body plan sits on the diet axis. The shape and the trophic level agree. */
+	public final float dietCentre;
+	/** The climate this body plan is built for, on the [0,1] scales the region records use. */
+	public final float tempCentre;
+	public final float humidityCentre;
+	/**
+	 * How much standing crop the region needs before this body plan is viable at all.
+	 * <p>
+	 * A four-tonne browser is not a thing a scree slope can produce, however the dice fall.
+	 */
+	public final float productivityNeed;
+
+	Archetype(float dietCentre, float tempCentre, float humidityCentre, float productivityNeed) {
+		this.dietCentre = dietCentre;
+		this.tempCentre = tempCentre;
+		this.humidityCentre = humidityCentre;
+		this.productivityNeed = productivityNeed;
+	}
+
+	/**
+	 * Picks a surface body plan suited to the job it is being founded for and the place it is being
+	 * founded in.
+	 * <p>
+	 * This used to be a flat roll across the nine surface archetypes, after which the founder
+	 * overwrote {@code DIET} and {@code SIZE} to whatever trophic slot it was filling. Two things
+	 * followed from that, and both undercut the premise that an animal can be read.
+	 * <p>
+	 * <b>Shape said nothing about behaviour.</b> A region's grazer could be an {@link #APEX} — the
+	 * body built around massive jaws and vestigial arms — with its diet quietly set to 0.1, and its
+	 * predator could be a {@link #SAURIAN}, whose whole plan is a small head on a long browsing
+	 * neck. The field guide asks the player to learn what a creature is by looking at it, and the
+	 * generator was rolling the shape and the trophic level independently.
+	 * <p>
+	 * <b>And every biome drew from the same bag.</b> Climate reached only as far as hue: a desert
+	 * and a rainforest produced the same distribution of bodies in different colours. Weighting the
+	 * draw by climate is what makes somewhere feel like somewhere — the mechanism is already proven
+	 * by cave richness, which is the one environmental term that was wired to anything.
+	 * <p>
+	 * Weighted rather than deterministic, so a region still holds surprises: an unlikely body plan
+	 * in an unlikely place is uncommon, not impossible, which is the difference between a rule and
+	 * a straitjacket.
+	 */
+	public static Archetype pickFor(RandomGenerator random, float diet,
+	                                float temperature, float humidity, float productivity) {
+		float[] weights = new float[VALUES.length];
+		float total = 0f;
+		for (int i = 0; i < VALUES.length; i++) {
+			Archetype a = VALUES[i];
+			if (a == CHAOS || a == CAVE_CRAWLER) continue;
+
+			// Trophic fit dominates: a body is for getting a kind of food.
+			float w = affinity(diet, a.dietCentre, 0.28f);
+			w *= 0.45f + 0.55f * affinity(temperature, a.tempCentre, 0.45f);
+			w *= 0.45f + 0.55f * affinity(humidity, a.humidityCentre, 0.45f);
+			// A one-sided term: too little standing crop rules a large body plan out, too much
+			// never rules anything out. Deserts have no sauropods; rainforests still have spiders.
+			if (productivity < a.productivityNeed) {
+				float shortfall = (a.productivityNeed - productivity) / Math.max(0.05f, a.productivityNeed);
+				w *= Math.max(0.04f, 1f - shortfall * shortfall);
+			}
+			weights[i] = Math.max(1e-4f, w);
+			total += weights[i];
+		}
+
+		float roll = random.nextFloat() * total;
+		for (int i = 0; i < VALUES.length; i++) {
+			roll -= weights[i];
+			if (roll <= 0f && weights[i] > 0f) return VALUES[i];
+		}
+		return randomSurface(random);
+	}
+
+	/** A soft bell: 1 when the value sits on the centre, falling off over {@code width}. */
+	private static float affinity(float value, float centre, float width) {
+		float d = (value - centre) / width;
+		return (float) Math.exp(-d * d);
 	}
 
 	/**

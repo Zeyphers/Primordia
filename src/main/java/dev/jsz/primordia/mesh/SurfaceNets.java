@@ -21,6 +21,17 @@ import org.joml.Vector3f;
 public final class SurfaceNets {
 	/** No limb seen yet; distinct from {@link BoneDef#AXIAL}, which is a real group. */
 	private static final int NO_GROUP = -1;
+
+	/**
+	 * How far apart two limbs' crossings must sit, in cell widths squared, before the cell is split
+	 * into two surfaces.
+	 * <p>
+	 * Half a cell. Below that the two sets of crossings overlap and the cell is looking at one
+	 * continuous piece of body rather than at two limbs with air between them — splitting there
+	 * opens a seam and separates nothing. Above it there really are two surfaces and the seam is
+	 * the point.
+	 */
+	private static final float SPLIT_SEPARATION_SQ = 0.25f;
 	/** Corner offsets, indexed 0..7 as (x, y, z) bit fields: bit0 = x, bit1 = y, bit2 = z. */
 	private static final int[][] CORNER = {
 			{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0},
@@ -84,6 +95,16 @@ public final class SurfaceNets {
 	 */
 	public static Result extract(BodySdf sdf, Vector3f min, Vector3f max, int resolution,
 	                             float voxelSize) {
+		return extract(sdf, min, max, resolution, voxelSize, 0f);
+	}
+
+	/**
+	 * @param limbGap narrowest daylight between two limbs on this body, or zero if unknown. When the
+	 *                grid is already fine enough to see that gap, cells are never split — see
+	 *                {@link #SPLIT_SEPARATION_SQ}.
+	 */
+	public static Result extract(BodySdf sdf, Vector3f min, Vector3f max, int resolution,
+	                             float voxelSize, float limbGap) {
 		float spanX = Math.max(max.x - min.x, 1e-3f);
 		float spanY = Math.max(max.y - min.y, 1e-3f);
 		float spanZ = Math.max(max.z - min.z, 1e-3f);
@@ -92,6 +113,28 @@ public final class SurfaceNets {
 		float cell = voxels
 				? voxelCell(longest, resolution, voxelSize)
 				: longest / Math.max(2, resolution);
+
+		// Whether the mesher has to separate limbs by hand, or whether the grid is already fine
+		// enough to do it by sampling.
+		//
+		// Splitting a cell in two is what stops a pair of limbs meshing into one webbed sheet when
+		// they share a cell — and it costs a seam, because the cell then hands one vertex to some
+		// of its neighbours and a different one to the rest, so the faces around it never pair up.
+		// Every split cell is a small hole, and that was the whole of the tearing around hips:
+		// 27% of four-legged creatures had at least one, with not a single quad being dropped to
+		// cause it.
+		//
+		// It is only ever needed when a cell is wider than the daylight between the limbs, because
+		// that is the case where one averaged vertex would land in the gap and bridge them. Once
+		// the sampling is fine enough to put a sample in that gap — which MeshBaker now arranges
+		// for, by raising the resolution against the same measurement — the field's own hard union
+		// across limb groups keeps them apart and the split has nothing left to do but tear.
+		// Never in voxel mode, where it is incapable of doing anything but harm. Every vertex there
+		// is pinned to the centre of its own cell — that pinning is what makes the surface blocky —
+		// so a split cell places both of its vertices at the same point and separates precisely
+		// nothing, while still handing different vertices to different neighbours and tearing the
+		// surface open. It was costing 26% of creatures a hole in exchange for no separation at all.
+		boolean splitNeeded = !voxels && (limbGap <= 0f || cell > limbGap * 0.9f);
 
 		int nx = Math.max(2, (int) Math.ceil(spanX / cell)) + 1;
 		int ny = Math.max(2, (int) Math.ceil(spanY / cell)) + 1;
@@ -194,7 +237,29 @@ public final class SurfaceNets {
 					// joining two neighbouring cells is an axis-aligned square exactly one cell
 					// across — a voxel surface, arrived at by removing a step rather than adding a
 					// mode.
-					if (limbB == NO_GROUP || countA == 0 || countB == 0) {
+					// Split only when the two limbs are genuinely separate surfaces inside this cell.
+					//
+					// Splitting is what stops two limbs meshing into one webbed sheet, and it costs
+					// a seam: the cell hands out one vertex per limb, so the faces around it come
+					// in referencing different vertices and their edges never pair up. Every split
+					// cell is therefore a small hole, and that is the whole of the tearing seen
+					// around hips — measured at 27% of four-legged creatures, with not one quad
+					// actually being dropped to cause it.
+					//
+					// Two limbs merely clipping the same cell are not two surfaces. When their
+					// crossings sit on top of each other the cell is looking at one continuous
+					// piece of body — a hip, where a leg becomes the trunk — and splitting it buys
+					// nothing while tearing the surface open. Only a cell that can see daylight
+					// between them needs the split.
+					boolean separate = false;
+					if (splitNeeded && limbB != NO_GROUP && countA > 0 && countB > 0) {
+						float dxg = ax2 / countA - bx2 / countB;
+						float dyg = ay2 / countA - by2 / countB;
+						float dzg = az2 / countA - bz2 / countB;
+						separate = dxg * dxg + dyg * dyg + dzg * dzg > SPLIT_SEPARATION_SQ;
+					}
+
+					if (!separate) {
 						float ox = voxels ? 0.5f : sx / crossings;
 						float oy = voxels ? 0.5f : sy / crossings;
 						float oz = voxels ? 0.5f : sz / crossings;
@@ -399,6 +464,18 @@ public final class SurfaceNets {
 		if (cellVertexB[slot] < 0) return cellVertex[slot];
 		if (cellGroup[slot] == group) return cellVertex[slot];
 		if (cellGroupB[slot] == group) return cellVertexB[slot];
+		// A request for the trunk is always answerable, and this is where the holes came from.
+		//
+		// A split cell holds no trunk vertex by construction: the pass that places vertices folds
+		// trunk crossings into whichever limb shares the cell rather than giving them their own,
+		// precisely so a shoulder stays one surface. So when the edge being stitched resolves to
+		// AXIAL — which it does constantly around a hip, where the body is the nearest thing —
+		// every split cell answered -1 and the face was dropped. The faces being dropped were the
+		// ones carrying the body across between the legs, which is why the tears sat at the hips
+		// and got worse the more legs a creature had: 27% of four-legged creatures had at least
+		// one. Handing back the cell's primary vertex closes the surface without reopening what
+		// the -1 is actually for, which is refusing to bridge one limb to a different limb.
+		if (group == BoneDef.AXIAL) return cellVertex[slot];
 		return -1;
 	}
 

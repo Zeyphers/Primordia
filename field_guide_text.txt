@@ -1,0 +1,250 @@
+PRIMORDIA FIELD GUIDE — EDITABLE TEXT
+======================================
+
+Rewritten for flow. What changed structurally, before the prose:
+
+1. The crafting chapter is gone. Recipes arrive through advancements, so a
+   shopping list in the book was telling the reader something they already had.
+   One line about the lab wanting two separate feedings survives, moved into
+   "The first reading" where the reader is actually standing at the machine.
+   That one is operation, not a recipe, and nothing else teaches it.
+
+2. Its slot is now "How this book fills itself", which explains the sealed
+   pages in the writer's own voice. That mechanic previously had no explanation
+   anywhere except the word "Sealed."
+
+3. Tabs now follow the arc of understanding rather than loose topics:
+       Preface       who wrote this and how to read it
+       In the field  the practical craft of getting a sample home
+       Habits        what they do
+       The valley    what happens whether or not you are watching
+       Doubts        what the writer tried to explain and could not
+   "Observations" and "Fieldwork" are gone as tab names. Observations was a
+   bin for whatever did not fit.
+
+4. Within every tab, chapters now unlock in order. Previously the Doubts tab
+   opened with a FORK_SEEN chapter and followed it with a MASTERED one, so a
+   reader could unlock the second page of a tab before the first. Every tab is
+   now monotonic: ALWAYS, then FIRST_SPECIMEN, then THREE_SPECIES, and so on.
+
+5. The old chapter on hunger and sleep did three jobs and is split in two, so
+   the practical warning about where to make camp is not buried under a
+   digression about predators giving up.
+
+Still 5 written tabs plus the 2 generated ones, so REFERENCE_TAB and
+LINEAGE_TAB stay 5 and 6 in the Java. No constant changes needed.
+
+Voice target is Darwin's Voyage of the Beagle, kept tighter than he actually
+wrote because this renders in a book UI with small pages. No em dashes, and no
+chapter is allowed to end on a punchline.
+
+HOW TO EDIT
+-----------
+- Edit freely between the markers. Don't touch the === CHAPTER === / UNLOCK: /
+  TAB: / ICON: lines themselves.
+- A blank line inside a chapter is a paragraph break (each becomes its own
+  string in the Java list). Keep that; it's how the book paginates.
+- TAB order below is the tab order in the book. Chapter order within a tab is
+  reading order. If you reorder chapters, keep unlocks non-decreasing down each
+  tab or a later page can open before an earlier one.
+- ICON lines set the item drawn on the tab. Any item id works.
+- Tell me when you're done and I'll fold it into GuideChapters.java.
+
+Valid UNLOCK values:
+  ALWAYS         - readable from the start
+  FIRST_SPECIMEN - after filing one specimen
+  THREE_SPECIES  - after three species on file
+  STUDIED        - after one species studied past a glance
+  MASTERED       - after one species fully characterised
+  FORK_SEEN      - after witnessing a lineage fork
+
+
+=== TAB 1 ===
+NAME: Preface
+ICON: primordia:field_guide
+
+
+=== CHAPTER 1 ===
+TAB: Preface
+UNLOCK: ALWAYS
+TITLE: A word before you begin
+
+If you are reading this, the book has outlived me, which is as it should be. It was never mine to keep.
+
+I came out expecting animals. I had a naturalist's training and I expected it to be enough: that I should watch a thing for a season, learn the habits of its kind, and afterwards be able to say what that kind did and did not do. That is not how this place works. Two creatures of the same sort will share a build and a temper and still differ in every particular, as though each had been assembled fresh from the same instructions by a hand that was not attending to the work.
+
+So I stopped trusting my eyes. A silhouette will tell you very little and a colour will tell you less than that. Bring the animal back, or a piece of it, and read it properly. Otherwise you have learned nothing except where it happened to be standing.
+
+
+=== CHAPTER 2 ===
+TAB: Preface
+UNLOCK: ALWAYS
+TITLE: How this book fills itself
+
+You will notice that most of it is shut.
+
+That is deliberate, and it is my doing. The pages open as you earn them, and they stay closed until then. I did try the other arrangement. In my first year I kept everything I had written where I could reach it, and I read ahead constantly, and it did me no good whatever: I had nothing yet to hang the words on, so I hung them on my own assumptions and had to take them down again later at some cost.
+
+The rest looks after itself. Whatever the lab prints finds its way in here without my asking, and the drawings at the back are not mine at all. They are yours, and they will be better than mine, because you will have more of them.
+
+What I have written is not instruction. It is a record of the things I got wrong, in roughly the order I got them wrong, which is the only order that turned out to be any use.
+
+
+=== TAB 2 ===
+NAME: In the field
+ICON: primordia:biopsy_kit
+
+
+=== CHAPTER 3 ===
+TAB: In the field
+UNLOCK: ALWAYS
+TITLE: On approaching them
+
+They are not tame, and they are not stupid.
+
+Some will stand and let you walk up to them. Others will not, and in my experience you learn which sort you are dealing with only afterwards. Size is a poor guide to it. I have walked unmolested through a herd of things twice my height, and I have been put flat on my back by an animal no higher than my knee, and I could not have told you beforehand which of the two it would be.
+
+Take your sample quickly and go. It hurts them, and they remember it.
+
+
+=== CHAPTER 4 ===
+TAB: In the field
+UNLOCK: FIRST_SPECIMEN
+TITLE: The first reading
+
+So you have brought one back, put it through the machines, and got almost nothing for your trouble. That is the honest answer, and you should be glad the machines are willing to give it rather than invent something tidier.
+
+One specimen tells you what one animal was. It cannot tell you what its kind is, because a kind is not a thing you can carry home in a bottle. The report will hedge wherever it is able to. There is genuinely nothing yet to hold the creature against.
+
+Go back out and bring another of the same sort. The picture does not sharpen because the second animal is any clearer than the first. It sharpens because two of them, set side by side, begin to show you which of their differences are worth attending to.
+
+One practical matter, since it cost me a fortnight. The machine wants feeding twice over: something that burns, for the reading, and redstone, for the reckoning. Give it only the one and it will work halfway through and then sit there, and you will think you have built it wrong.
+
+
+=== CHAPTER 5 ===
+TAB: In the field
+UNLOCK: STUDIED
+TITLE: A note on the dead
+
+A kill is left where it falls, and it does not stay alone for long.
+
+I once sat out an entire night beside a carcass and counted three separate kinds coming to it that I had never seen within a mile of one another. If you want to know what shares a valley, do not go looking for the living. Find something that died there and wait.
+
+One warning, which I give you because I learned it the expensive way. Fire takes them completely and leaves you nothing to read. I lost a specimen I had carried two days that way, and I would rather you did not repeat the lesson.
+
+
+=== TAB 3 ===
+NAME: Habits
+ICON: minecraft:clock
+
+
+=== CHAPTER 6 ===
+TAB: Habits
+UNLOCK: THREE_SPECIES
+TITLE: Hunger, and the sense to stop
+
+They eat when they are hungry and not otherwise. I have watched a predator walk the whole length of a herd without so much as turning its head, and watched what I believe was the same animal, some days later, take one down inside a minute.
+
+They also give up. A chase that is not going to end well simply ends, and the two of them walk off in opposite directions with no apparent ill feeling on either side.
+
+I find this more disquieting than ferocity would be. Ferocity is stupid, and a stupid thing can be predicted. Something that knows when to stop is doing a sum, and I never learned what it was counting.
+
+
+=== CHAPTER 7 ===
+TAB: Habits
+UNLOCK: STUDIED
+TITLE: Which of them keep the night
+
+They sleep about half of each day. Not all of them keep the same hours, and a good number keep the night instead and are abroad while you are not.
+
+This is worth more of your attention than it sounds. Twice I chose a campsite in daylight on the evidence of an empty meadow, and twice I learned in the small hours what the meadow was for.
+
+Watch a place at both ends of the day before you decide anything about it.
+
+
+=== TAB 4 ===
+NAME: The valley
+ICON: minecraft:grass_block
+
+
+=== CHAPTER 8 ===
+TAB: The valley
+UNLOCK: THREE_SPECIES
+TITLE: The valley keeps its own accounts
+
+This is the observation that unsettled me most, and I want it set down plainly rather than dressed up.
+
+In my second year I mapped a valley thick with grazers. I counted them as carefully as I knew how, and I was pleased with the count. Then I was called away and did not come back for some weeks. When I did, the grazers were thin on the ground, and a long-legged thing I had never seen before had moved through and was itself thin for want of them.
+
+None of it required a witness. The herd did not wait for my return before it declined, and the animal that thinned it did not wait to be observed before it began to starve in its turn. Whatever governs this place does its arithmetic in an empty field and hands you the result when you happen to walk back into it.
+
+
+=== CHAPTER 9 ===
+TAB: The valley
+UNLOCK: FORK_SEEN
+TITLE: Bloodlines
+
+Every one of them carries a mark its parents carried before it. Follow the mark and you follow a line backwards as far as your own records will take you, which is not far, but it is more than nothing.
+
+The line does not hold still. Press a population hard enough, or leave it to itself long enough, and it drifts. At some point what comes out of the valley is far enough from what went into it that the mark itself changes, and the notes you took in good faith no longer describe the animal standing in front of you.
+
+The first time this happened I spent three days hunting for my error. There was no error. The creature had stopped being the thing I was studying, and it had done so while I was studying it.
+
+
+=== TAB 5 ===
+NAME: Doubts
+ICON: minecraft:ender_eye
+
+
+=== CHAPTER 10 ===
+TAB: Doubts
+UNLOCK: THREE_SPECIES
+TITLE: What the colours mean
+
+I spent the better part of a season convinced the colouring was a code, and that if I catalogued enough of it I should be able to read an animal's habits off its hide. I was wrong. Or I was right and never broke it, which from where you are sitting comes to the same thing.
+
+What I can say with any confidence is this. The earthy colours are common and the vivid ones are not. The deep blues and the violets I have only ever seen muted, never blazing, as though whatever paints these creatures can mix a rust or an ochre freely and arrives at a true blue only under protest.
+
+Once, and then a second time, I have seen one that carried its own light through the dark. I have no explanation for it and I will not pretend to one. If you find such a thing, do not let it go unstudied on my account.
+
+
+=== CHAPTER 11 ===
+TAB: Doubts
+UNLOCK: MASTERED
+TITLE: The shape of a thing
+
+By now you will have noticed that no two of them are put together the same way, and that all of them work regardless.
+
+Legs in twos, in fours, in eights. Necks like columns, and necks that are barely a suggestion of a neck. Whatever is doing this is plainly not working from a catalogue of animals. It is working from a catalogue of parts, and the question of how the finished creature is to walk appears to be settled afterwards, by trial, and now and then not settled at all.
+
+I have come to think of the archetypes not as species but as habits: postures the process falls into more often than chance alone would account for. I make it about ten. I was never able to satisfy myself that the list was closed, and I should not be at all surprised to hear you had turned up an eleventh.
+
+
+=== CHAPTER 12 ===
+TAB: Doubts
+UNLOCK: MASTERED
+TITLE: What I never settled
+
+I do not know what is doing this. I want that written in my own hand, because everything else in this book is something I saw, and this is the one place where I have nothing to give you.
+
+It is not random. Random does not produce an animal that can stand up, and stand they do, in every arrangement of legs I have described to you. Nor is it designed, or if it is, the designer is indifferent to whether the work survives its first winter, which is not what I was taught the word to mean.
+
+What I am sure of is that it has not stopped. Whatever process made these creatures was still running on the day I closed this book, and has gone on running since. Everything written here is therefore already somewhat out of date, this sentence included. You will have to go out and find how much.
+
+
+=== END ===
+
+The last two tabs are generated, not written, and are not in this file:
+  "Specimens"  (tab 6) — plates built from the reader's own filed specimens
+  "Bloodlines" (tab 7) — the family tree inferred from the reader's records
+
+Note the name collision: there is now a written chapter called "Bloodlines" in
+the valley tab and a generated tab of the same name. Chapter 9 could become
+"The mark they carry" if that reads badly in play. Say which you prefer.
+
+Sealed-page hints (one per unlock tier, shown in place of a locked chapter):
+  FIRST_SPECIMEN -> "Sealed. Bring something back first."
+  THREE_SPECIES  -> "Sealed. Three kinds at least, or none of this will mean anything."
+  STUDIED        -> "Sealed. One creature properly studied, not merely met."
+  MASTERED       -> "Sealed. Not until you know one of them completely."
+  FORK_SEEN      -> "Sealed. You have not yet watched a bloodline divide."

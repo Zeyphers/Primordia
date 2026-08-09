@@ -36,6 +36,10 @@ public class CreatureRenderState extends EntityRenderState {
 	/** Fraction of adult size, so offspring are drawn as smaller versions of what they will become. */
 	public float growth = 1f;
 	public boolean carcass;
+	/** Stripped to bone: a different mesh, and none of the corpse's colour drain. */
+	public boolean skeleton;
+	/** 0 for a fresh skeleton, 1 the moment it is due to crumble away. Drives the ground-up weathering. */
+	public float skeletonAge;
 
 	/** False when the genome or the baked mesh is not ready; the creature is skipped for a frame. */
 	public boolean ready;

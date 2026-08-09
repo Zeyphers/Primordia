@@ -16,6 +16,7 @@ import dev.jsz.primordia.mesh.GenomeMeshCache;
 import dev.jsz.primordia.mesh.LodTier;
 import dev.jsz.primordia.mesh.MeshData;
 import dev.jsz.primordia.mesh.SkinnedMesh;
+import dev.jsz.primordia.util.MathX;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
@@ -121,7 +122,15 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity, CreatureRen
 		// the quality presets are there to pay it.
 		int tier = entity.isPosing() ? LodTier.NEAR : BUDGET.allocate(state.distanceToCameraSq);
 
-		MeshData mesh = resolveMesh(genome, tier);
+		// Read from the entity rather than from the state, and read it here rather than further
+		// down with the rest of the flags. Render states are pooled and reused between entities, so
+		// the value sitting in one at the top of an extract belongs to whatever was drawn with it
+		// last — asking it which mesh to fetch got the previous creature's answer, which is why
+		// remains kept arriving with their flesh on.
+		state.skeleton = entity.isSkeleton();
+		state.skeletonAge = state.skeleton ? entity.getSkeletonAge() : 0f;
+
+		MeshData mesh = resolveMesh(genome, tier, state.skeleton);
 		if (mesh == null || mesh.quadCount == 0) {
 			// Still baking. Skipping a frame is far better than stalling the render thread.
 			return;
@@ -230,11 +239,11 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity, CreatureRen
 	 * Coarser bakes finish sooner, so a newly-seen species pops in low-detail almost immediately
 	 * and sharpens a frame or two later rather than being invisible while the fine bake runs.
 	 */
-	private MeshData resolveMesh(Genome genome, int tier) {
-		MeshData mesh = GenomeMeshCache.getIfReady(genome, tier);
+	private MeshData resolveMesh(Genome genome, int tier, boolean skeleton) {
+		MeshData mesh = GenomeMeshCache.getIfReady(genome, tier, skeleton);
 		if (mesh != null) return mesh;
 		for (int fallback = tier + 1; fallback < LodTier.COUNT; fallback++) {
-			mesh = GenomeMeshCache.getIfReady(genome, fallback);
+			mesh = GenomeMeshCache.getIfReady(genome, fallback, skeleton);
 			if (mesh != null) return mesh;
 		}
 		return null;
@@ -303,7 +312,9 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity, CreatureRen
 			context.lookYaw = 0f;
 			context.lookPitch = 0f;
 		}
-		context.swimming = entity.isInWater();
+		// Depth, not contact. Touching water is not swimming — a tall creature crossing a stream
+		// keeps its head in the air and should keep walking, legs and all.
+		context.swimming = entity.isSwimmingDepth();
 		// A carcass is fully slack; a sleeping animal is settled but still holding itself together.
 		boolean isDead = entity.isCarcass() || entity.isDeadOrDying() || entity.getHealth() <= 0f;
 		context.collapse = isDead ? 1f : (entity.isAsleep() ? 0.55f : 0f);
@@ -368,6 +379,45 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity, CreatureRen
 	/** Scratch for the current face's normal and colour. Drawing is single-threaded. */
 	private final org.joml.Vector3f faceNormal = new org.joml.Vector3f();
 	private final org.joml.Vector3f faceColour = new org.joml.Vector3f();
+	/** Scratch for the pose-space position used to measure a skeleton vertex's height off the ground. */
+	private final org.joml.Vector3f weatherScratch = new org.joml.Vector3f();
+
+	/**
+	 * Colour old bone weathers toward: damp grey with the faintest cast of green, not moss itself.
+	 * Close in luminance to the ivory it is blended with — this dulls the bone, it does not paint it.
+	 */
+	private static final float WEATHER_R = 0.52f, WEATHER_G = 0.55f, WEATHER_B = 0.50f;
+	/**
+	 * How far up the body's own lying-down height the discolouration can ever reach, at full
+	 * skeleton age. A skeleton is on the ground for ten days, not underwater for ten years — only
+	 * the half of it actually touching the dirt should ever show it.
+	 */
+	private static final float WEATHER_MAX_REACH = 0.5f;
+	/** Strongest the tint ever gets, right at ground contact on the oldest bones. Short of 1 so the
+	 * bone's own mottling still reads through even at the ground. */
+	private static final float WEATHER_MAX_BLEND = 0.55f;
+
+	/**
+	 * Vertical extent of the plan's bind-pose bounding box once the pose — growth, the carcass
+	 * flip, all of it — has been applied to its eight corners. {@code [minY, maxY]}.
+	 * <p>
+	 * Split out from {@link #emit} so the geometry — "where is the ground, given this pose" — can
+	 * be checked on its own, against a hand-built {@link PoseStack.Pose} rather than against a
+	 * running renderer.
+	 */
+	public static float[] poseSpaceHeightRange(BodyPlan plan, PoseStack.Pose pose, org.joml.Vector3f scratch) {
+		org.joml.Vector3f lo = plan.boundsMin, hi = plan.boundsMax;
+		float min = Float.MAX_VALUE, max = -Float.MAX_VALUE;
+		for (int c = 0; c < 8; c++) {
+			float x = (c & 1) == 0 ? lo.x : hi.x;
+			float y = (c & 2) == 0 ? lo.y : hi.y;
+			float z = (c & 4) == 0 ? lo.z : hi.z;
+			pose.pose().transformPosition(x, y, z, scratch);
+			min = Math.min(min, scratch.y);
+			max = Math.max(max, scratch.y);
+		}
+		return new float[]{min, max};
+	}
 
 	private void emit(CreatureRenderState state, PoseStack.Pose pose, VertexConsumer consumer) {
 		MeshData mesh = state.mesh;
@@ -390,12 +440,31 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity, CreatureRen
 		// Colour drains out of a body once it is dead. Hoisted out of the loop because it is one
 		// value for the whole creature, and left at exactly 1 for the living so the arithmetic below
 		// is skipped entirely rather than multiplying every vertex by one.
-		float chroma = state.carcass ? CARCASS_CHROMA : 1f;
+		float chroma = state.carcass && !state.skeleton ? CARCASS_CHROMA : 1f;
+
+		// How far up the pile of bones the ground has crept, measured in the same space the vertex
+		// positions are drawn in. Computed once per creature rather than once per vertex: it needs
+		// the *pose's* notion of "up", not the model's, because a skeleton is drawn lying down —
+		// see the carcass flip in submit() — and only the fully composed pose matrix knows where
+		// that puts the ground. Read off the plan's own bind-pose bounds pushed through that matrix,
+		// which is cheap enough (eight corners) to do every frame without a cache.
+		boolean weathering = state.skeleton && state.skeletonAge > 1e-3f && state.plan != null;
+		float weatherGround = 0f, weatherReach = 0f;
+		if (weathering) {
+			float[] range = poseSpaceHeightRange(state.plan, pose, weatherScratch);
+			float span = Math.max(0.05f, range[1] - range[0]);
+			weatherGround = range[0];
+			// Grows from nothing at a fresh skeleton to half the body's height at ten days, and the
+			// fade is the whole climb from the ground to that point — there is no separate band to
+			// tune, and nothing can ever be blended above the halfway line because nothing past it
+			// is ever inside the [ground, reach] span the remap below draws from.
+			weatherReach = state.skeletonAge * span * WEATHER_MAX_REACH;
+		}
 
 		for (int i = 0; i < quads.length; i += 4) {
 			if (sharp) {
 				// From the skinned positions, so a face turns with the limb it belongs to.
-				FaceNormal.compute(positions, quads, i, faceNormal);
+				FaceNormal.compute(positions, normals, quads, i, faceNormal);
 			}
 			float faceEmissive = 0f;
 			if (flatColour) {
@@ -429,6 +498,24 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity, CreatureRen
 					cr = luma + (cr - luma) * chroma;
 					cg = luma + (cg - luma) * chroma;
 					cb = luma + (cb - luma) * chroma;
+				}
+
+				if (weathering) {
+					// The same transform the vertex is about to be drawn with, so the line this is
+					// measured against and the position it is measured at can never disagree. Faded
+					// across the whole [ground, reach] span rather than around a separate band, so a
+					// vertex above weatherGround + weatherReach is mathematically unreachable — that
+					// is what keeps the effect from ever climbing past the cap.
+					pose.pose().transformPosition(positions[p], positions[p + 1], positions[p + 2],
+							weatherScratch);
+					float grimeT = MathX.remap(weatherScratch.y,
+							weatherGround, weatherGround + weatherReach, 1f, 0f);
+					float blend = MathX.smoothstep(grimeT) * WEATHER_MAX_BLEND;
+					if (blend > 0f) {
+						cr = MathX.lerp(cr, WEATHER_R, blend);
+						cg = MathX.lerp(cg, WEATHER_G, blend);
+						cb = MathX.lerp(cb, WEATHER_B, blend);
+					}
 				}
 
 				consumer.addVertex(pose, positions[p], positions[p + 1], positions[p + 2])

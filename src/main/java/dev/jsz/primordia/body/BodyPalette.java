@@ -76,6 +76,48 @@ public final class BodyPalette {
 		this.glow = hsvToRgb(glowHue(genome.raw(Gene.GLOW_HUE)), 0.7f, 1f, new Vector3f());
 	}
 
+	private BodyPalette(Vector3f primary, Vector3f secondary, Vector3f belly, Vector3f eye,
+	                    PatternType pattern, float patternScale, float patternContrast,
+	                    float countershading, Vector3f glow, float glowStrength,
+	                    GlowRegion glowRegion) {
+		this.primary = primary;
+		this.secondary = secondary;
+		this.belly = belly;
+		this.eye = eye;
+		this.pattern = pattern;
+		this.patternScale = patternScale;
+		this.patternContrast = patternContrast;
+		this.countershading = countershading;
+		this.glow = glow;
+		this.glowStrength = glowStrength;
+		this.glowRegion = glowRegion;
+	}
+
+	/**
+	 * Weathered ivory, for {@link SkeletonPlan}.
+	 * <p>
+	 * Every genome-driven colour is discarded: bone is bone whatever the animal was. What replaces
+	 * it is not flat, though. A single ivory value over a whole skeleton reads as plastic, because
+	 * real bone is blotchy — porous where it was thin, stained where it lay against the ground.
+	 * <p>
+	 * Marble at low contrast is what gives that: a wandering, cloudy variation with no edges to it,
+	 * unlike stripes or spots, which are markings in a hide a skeleton no longer has and would read
+	 * as paint. The contrast is deliberately at the bottom of the usable range — enough to break the
+	 * surface up under Minecraft's flat lighting, not enough to look like a pattern.
+	 */
+	public static BodyPalette bone() {
+		return new BodyPalette(
+				new Vector3f(0.87f, 0.84f, 0.76f),
+				// The stain, not a second colour: a half-shade darker and browner than the ivory.
+				new Vector3f(0.72f, 0.67f, 0.56f),
+				new Vector3f(0.89f, 0.87f, 0.80f),
+				new Vector3f(0.20f, 0.19f, 0.17f),
+				// Scale is in cycles per metre, so this is a blotch a hand's width across — fine
+				// enough to fall inside a single bone rather than banding the whole animal.
+				PatternType.MARBLE, 5.5f, 0.22f, 0.10f,
+				new Vector3f(0f, 0f, 0f), 0f, GlowRegion.VALUES[0]);
+	}
+
 	/**
 	 * Locus value at or above which a creature is bioluminescent at all.
 	 * <p>

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Primordia Voice Lab</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f25; --line: #2c313a;
+    --ink: #d7dbe2; --dim: #838b98; --hot: #d98a3c; --ok: #6fbf73;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  header {
+    padding: 12px 18px; border-bottom: 1px solid var(--line);
+    display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap;
+  }
+  h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .04em; }
+  .hint { color: var(--dim); }
+  main { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(300px, 420px); gap: 0; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  #params { padding: 14px 18px; border-right: 1px solid var(--line); }
+  #side { padding: 14px 18px; position: sticky; top: 0; align-self: start; }
+  fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 14px; padding: 10px 12px 12px; }
+  legend { color: var(--hot); padding: 0 6px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+  .row { display: grid; grid-template-columns: 130px 1fr 68px; gap: 10px; align-items: center; padding: 2px 0; }
+  .row label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+  .row output { text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--hot); }
+  button {
+    background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 5px; padding: 7px 11px; cursor: pointer; font: inherit;
+  }
+  button:hover { border-color: var(--hot); }
+  button.on { background: var(--hot); color: #191b1f; border-color: var(--hot); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  #calls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  canvas { width: 100%; height: 110px; background: #0e1013; border: 1px solid var(--line); border-radius: 6px; display: block; }
+  #status { margin: 10px 0 6px; min-height: 20px; color: var(--ok); }
+  #log { max-height: 300px; overflow-y: auto; border-top: 1px solid var(--line); padding-top: 8px; }
+  #log div { padding: 2px 0; color: var(--dim); border-bottom: 1px solid #22262e; }
+  #log div.playing { color: var(--hot); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>PRIMORDIA VOICE LAB</h1>
+  <span class="hint">Rendered by the shipped VoiceProfile / VoiceSynth. Nothing here is a mock.</span>
+</header>
+
+<main>
+  <div id="params"></div>
+
+  <div id="side">
+    <div id="calls"></div>
+    <div class="bar">
+      <button id="play">▶ Play</button>
+      <button id="random">🎲 Random creature</button>
+    </div>
+    <div class="bar">
+      <button id="testAll">⏩ Test 50 genomes</button>
+      <button id="stop" disabled>■ Stop</button>
+    </div>
+    <canvas id="wave" width="800" height="220"></canvas>
+    <div id="status">ready</div>
+    <div id="log"></div>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let meta = null, profile = null, call = 'AMBIENT', ctx = null, stopping = false, playing = null;
+
+const audio = () => (ctx ??= new (window.AudioContext || window.webkitAudioContext)());
+
+function fmt(v) {
+  const a = Math.abs(v);
+  if (a >= 100) return v.toFixed(0);
+  if (a >= 10) return v.toFixed(1);
+  if (a >= 1) return v.toFixed(2);
+  return v.toFixed(3);
+}
+
+function buildParams() {
+  const groups = {};
+  for (const f of meta.fields) (groups[f.group] ??= []).push(f);
+
+  $('#params').innerHTML = Object.entries(groups).map(([name, fields]) => `
+    <fieldset><legend>${name}</legend>
+      ${fields.map(f => `
+        <div class="row">
+          <label title="${f.name}">${f.name}</label>
+          <input type="range" data-k="${f.name}" min="${f.min}" max="${f.max}"
+                 step="${(f.max - f.min) / 500}" value="${profile[f.name] ?? f.min}">
+          <output data-o="${f.name}">${fmt(profile[f.name] ?? f.min)}</output>
+        </div>`).join('')}
+    </fieldset>`).join('');
+
+  $('#params').addEventListener('input', e => {
+    const k = e.target.dataset.k;
+    if (!k) return;
+    profile[k] = parseFloat(e.target.value);
+    $(`[data-o="${k}"]`).textContent = fmt(profile[k]);
+    schedule();
+  });
+}
+
+function syncSliders() {
+  for (const f of meta.fields) {
+    const el = $(`[data-k="${f.name}"]`), out = $(`[data-o="${f.name}"]`);
+    if (el) { el.value = profile[f.name]; out.textContent = fmt(profile[f.name]); }
+  }
+}
+
+function buildCalls() {
+  $('#calls').innerHTML = meta.calls
+    .map(c => `<button data-c="${c}" class="${c === call ? 'on' : ''}">${c.toLowerCase()}</button>`)
+    .join('');
+  $('#calls').addEventListener('click', e => {
+    const c = e.target.dataset.c;
+    if (!c) return;
+    call = c;
+    document.querySelectorAll('#calls button').forEach(b => b.classList.toggle('on', b.dataset.c === c));
+    play();
+  });
+}
+
+async function render(p, c, variant = 0) {
+  const res = await fetch('/api/render', {
+    method: 'POST',
+    body: JSON.stringify({ profile: p, call: c, variant })
+  });
+  return audio().decodeAudioData(await res.arrayBuffer());
+}
+
+function draw(buf) {
+  const cv = $('#wave'), g = cv.getContext('2d');
+  const d = buf.getChannelData(0), W = cv.width, H = cv.height;
+  g.clearRect(0, 0, W, H);
+  g.strokeStyle = '#2c313a'; g.beginPath(); g.moveTo(0, H / 2); g.lineTo(W, H / 2); g.stroke();
+  g.strokeStyle = '#d98a3c'; g.beginPath();
+  const step = Math.max(1, Math.floor(d.length / W));
+  for (let x = 0; x < W; x++) {
+    let lo = 1, hi = -1;
+    for (let i = x * step; i < (x + 1) * step && i < d.length; i++) {
+      if (d[i] < lo) lo = d[i];
+      if (d[i] > hi) hi = d[i];
+    }
+    g.moveTo(x, (1 - hi) * H / 2);
+    g.lineTo(x, (1 - lo) * H / 2);
+  }
+  g.stroke();
+}
+
+function playBuffer(buf) {
+  const src = audio().createBufferSource();
+  src.buffer = buf;
+  src.connect(audio().destination);
+  src.start();
+  playing = src;
+  return new Promise(r => src.onended = r);
+}
+
+let timer = null;
+function schedule() { clearTimeout(timer); timer = setTimeout(play, 160); }
+
+async function play() {
+  try {
+    const buf = await render(profile, call);
+    draw(buf);
+    $('#status').textContent = `${call.toLowerCase()} · ${buf.duration.toFixed(2)}s`;
+    await playBuffer(buf);
+  } catch (e) { $('#status').textContent = 'error: ' + e.message; }
+}
+
+async function randomCreature() {
+  const [s] = await (await fetch('/api/random?count=1')).json();
+  profile = s.profile;
+  syncSliders();
+  $('#status').textContent = s.label;
+  play();
+}
+
+async function testAll() {
+  stopping = false;
+  $('#testAll').disabled = true;
+  $('#stop').disabled = false;
+  $('#log').innerHTML = '';
+
+  const list = await (await fetch('/api/random?count=50')).json();
+  for (let i = 0; i < list.length && !stopping; i++) {
+    const s = list[i];
+    const line = document.createElement('div');
+    line.textContent = `${String(i + 1).padStart(2)}. ${s.label}`;
+    line.className = 'playing';
+    $('#log').prepend(line);
+
+    profile = s.profile;
+    syncSliders();
+    try {
+      const buf = await render(s.profile, call);
+      draw(buf);
+      $('#status').textContent = `${i + 1}/${list.length} — ${s.label}`;
+      await playBuffer(buf);
+      await new Promise(r => setTimeout(r, 110));
+    } catch (e) { line.textContent += '  [' + e.message + ']'; }
+    line.className = '';
+  }
+
+  $('#status').textContent = stopping ? 'stopped' : 'done — 50 genomes';
+  $('#testAll').disabled = false;
+  $('#stop').disabled = true;
+}
+
+$('#play').onclick = play;
+$('#random').onclick = randomCreature;
+$('#testAll').onclick = testAll;
+$('#stop').onclick = () => { stopping = true; try { playing?.stop(); } catch {} };
+
+(async () => {
+  meta = await (await fetch('/api/meta')).json();
+  profile = meta.profile;
+  buildParams();
+  buildCalls();
+})();
+</script>
+</body>
+</html>

@@ -9,12 +9,18 @@ import java.util.List;
  * the player everything and left them nothing to find out — and the whole premise of the mod is
  * that the fauna was not designed and has to be investigated. So the guide withholds. It records
  * what the previous holder observed, in the order they came to understand it, and it hedges where
- * they were unsure.
+ * they were unsure. Recipes are deliberately absent: those arrive through advancements, and a
+ * shopping list here would just repeat what the player already has.
  * <p>
  * Entries are <b>locked until the reader has earned them</b>. What is legible is a function of what
  * they have filed, so the book fills in as their own work advances — the first specimen opens the
  * page about first specimens, and the page on speciation stays sealed until they have actually
  * watched a lineage fork. Reading ahead is not possible, which is the point.
+ * <p>
+ * Tabs follow the arc of understanding rather than loose topics — Preface, then the practical craft
+ * of the field, then what the animals do, then what happens whether or not anyone is watching, then
+ * what the writer never worked out. Within a tab, unlocks are non-decreasing: a later page never
+ * opens before an earlier one in the same tab.
  */
 public final class GuideChapters {
 
@@ -62,10 +68,10 @@ public final class GuideChapters {
 			return switch (this) {
 				case ALWAYS -> "";
 				case FIRST_SPECIMEN -> "Sealed. Bring something back first.";
-				case THREE_SPECIES -> "Sealed. Three kinds, at least, before this makes sense.";
-				case STUDIED -> "Sealed. One creature, properly studied — not merely met.";
-				case MASTERED -> "Sealed. Nothing here until you know one of them completely.";
-				case FORK_SEEN -> "Sealed. You have not yet seen a bloodline split.";
+				case THREE_SPECIES -> "Sealed. Three kinds at least, or none of this will mean anything.";
+				case STUDIED -> "Sealed. One creature properly studied, not merely met.";
+				case MASTERED -> "Sealed. Not until you know one of them completely.";
+				case FORK_SEEN -> "Sealed. You have not yet watched a bloodline divide.";
 			};
 		}
 	}
@@ -86,148 +92,225 @@ public final class GuideChapters {
 	public record Section(String title, String iconItemId, List<Chapter> chapters) {
 	}
 
-	private static final List<Chapter> ALL = List.of(
+	// ---- Preface ------------------------------------------------------------
+
+	private static final List<Chapter> PREFACE = List.of(
 			new Chapter("A word before you begin", List.of(
-					"If you are reading this, the book has outlived me. Good. It was never "
-							+ "mine to keep.",
+					"If you are reading this, the book has outlived me, which is as it should "
+							+ "be. It was never mine to keep.",
 					"",
-					"I came out here expecting animals. What I found does not breed true to "
-							+ "any pattern I was taught. Two of a kind will share a build and "
-							+ "a temper and still differ in every particular, as though each "
-							+ "were assembled fresh from the same instructions by a careless "
-							+ "hand.",
+					"I came out expecting animals. I had a naturalist's training and I expected "
+							+ "it to be enough: that I should watch a thing for a season, learn "
+							+ "the habits of its kind, and afterwards be able to say what that "
+							+ "kind did and did not do. That is not how this place works. Two "
+							+ "creatures of the same sort will share a build and a temper and "
+							+ "still differ in every particular, as though each had been "
+							+ "assembled fresh from the same instructions by a hand that was not "
+							+ "attending to the work.",
 					"",
-					"Do not trust a silhouette. Do not trust a colour. Bring something back "
-							+ "and read it properly, or you have learned nothing but where it "
-							+ "was standing."), Unlock.ALWAYS),
+					"So I stopped trusting my eyes. A silhouette will tell you very little and "
+							+ "a colour will tell you less than that. Bring the animal back, or a "
+							+ "piece of it, and read it properly. Otherwise you have learned "
+							+ "nothing except where it happened to be standing."), Unlock.ALWAYS),
 
-			new Chapter("Where to begin", List.of(
-					"You will need three things, and none of them are difficult.",
+			new Chapter("How this book fills itself", List.of(
+					"You will notice that most of it is shut.",
 					"",
-					"A KIT to take the sample with. Iron, a glass bottle, a length of string. "
-							+ "It goes dull with use; make a second before you need one.",
+					"That is deliberate, and it is my doing. The pages open as you earn them, "
+							+ "and they stay closed until then. I did try the other arrangement. "
+							+ "In my first year I kept everything I had written where I could "
+							+ "reach it, and I read ahead constantly, and it did me no good "
+							+ "whatever: I had nothing yet to hang the words on, so I hung them "
+							+ "on my own assumptions and had to take them down again later at "
+							+ "some cost.",
 					"",
-					"A LAB to read it in. Iron and glass around a furnace, with redstone and "
-							+ "a comparator for the reckoning half. It wants feeding twice — "
-							+ "something that burns for the reading, and redstone for the "
-							+ "thinking. Give it only one and it will get halfway and stop.",
+					"The rest looks after itself. Whatever the lab prints finds its way in "
+							+ "here without my asking, and the drawings at the back are not mine "
+							+ "at all. They are yours, and they will be better than mine, because "
+							+ "you will have more of them.",
 					"",
-					"And this BOOK, kept on you. Whatever the lab prints will find its way in "
-							+ "here on its own, and the paper is no loss.",
-					"",
-					"Then go and find something. That is the whole of it."), Unlock.ALWAYS),
+					"What I have written is not instruction. It is a record of the things I "
+							+ "got wrong, in roughly the order I got them wrong, which is the "
+							+ "only order that turned out to be any use."), Unlock.ALWAYS)
+	);
 
+	// ---- In the field ---------------------------------------------------------
+
+	private static final List<Chapter> IN_THE_FIELD = List.of(
 			new Chapter("On approaching them", List.of(
-					"They are not tame and they are not stupid.",
+					"They are not tame, and they are not stupid.",
 					"",
-					"Some will let you walk up. Some will not, and you will know which only "
-							+ "afterwards. The ones that stand their ground are rarely the "
-							+ "ones you expected — size is a poor guide to temper, and I have "
-							+ "been put on my back by something knee-high.",
+					"Some will stand and let you walk up to them. Others will not, and in my "
+							+ "experience you learn which sort you are dealing with only "
+							+ "afterwards. Size is a poor guide to it. I have walked unmolested "
+							+ "through a herd of things twice my height, and I have been put "
+							+ "flat on my back by an animal no higher than my knee, and I could "
+							+ "not have told you beforehand which of the two it would be.",
 					"",
-					"Take what you need quickly. It hurts them, and they remember."),
+					"Take your sample quickly and go. It hurts them, and they remember it."),
 					Unlock.ALWAYS),
 
 			new Chapter("The first reading", List.of(
-					"So you have brought one back and put it through the machines, and the "
-							+ "answer was almost nothing. Good — that is the honest answer.",
+					"So you have brought one back, put it through the machines, and got "
+							+ "almost nothing for your trouble. That is the honest answer, and "
+							+ "you should be glad the machines are willing to give it rather than "
+							+ "invent something tidier.",
 					"",
-					"A single specimen tells you what one animal was. It cannot tell you what "
-							+ "its kind is. The machines will hedge, and the hedging is not a "
-							+ "fault in them; there is genuinely nothing yet to compare "
-							+ "against.",
+					"One specimen tells you what one animal was. It cannot tell you what its "
+							+ "kind is, because a kind is not a thing you can carry home in a "
+							+ "bottle. The report will hedge wherever it is able to. There is "
+							+ "genuinely nothing yet to hold the creature against.",
 					"",
-					"Go back. Bring another of the same sort. The picture does not sharpen "
-							+ "because the creature changed — it sharpens because you finally "
-							+ "have two things to hold against each other."), Unlock.FIRST_SPECIMEN),
-
-			new Chapter("What the colours mean", List.of(
-					"I spent a season convinced the colouring was a code. It is not, or if "
-							+ "it is I never broke it.",
+					"Go back out and bring another of the same sort. The picture does not "
+							+ "sharpen because the second animal is any clearer than the first. "
+							+ "It sharpens because two of them, set side by side, begin to show "
+							+ "you which of their differences are worth attending to.",
 					"",
-					"What I can say: the earthy ones are common and the vivid ones are not, "
-							+ "and the deep blues and violets I have only ever seen muted, "
-							+ "never blazing. Whatever paints them seems able to make a rust "
-							+ "or an ochre freely and a true blue only grudgingly.",
-					"",
-					"And once — twice — something that lit its own way through the dark. I "
-							+ "have no explanation. If you find one, do not let it go "
-							+ "unstudied."), Unlock.THREE_SPECIES),
-
-			new Chapter("The valley keeps its own accounts", List.of(
-					"Here is the thing that unsettled me most, and I want it written down "
-							+ "plainly.",
-					"",
-					"I mapped a valley thick with grazers. I left. I came back after some "
-							+ "weeks and the grazers were thin and something long-legged had "
-							+ "moved through and was thin itself for want of them.",
-					"",
-					"Nothing was watching. Nothing needed to be. Whatever governs this place "
-							+ "does its arithmetic whether or not there is anyone standing in "
-							+ "the field to see the result."), Unlock.THREE_SPECIES),
-
-			new Chapter("Sleep, hunger, and the sense to stop", List.of(
-					"They eat when they are hungry and not otherwise. I have watched a "
-							+ "predator walk through a herd without turning its head.",
-					"",
-					"They give up. A chase that is not going to end well simply ends, and "
-							+ "both animals walk away. I find this more alarming than "
-							+ "ferocity would be — ferocity is stupid and can be predicted.",
-					"",
-					"And they sleep, about half of each day, though not all at the same "
-							+ "hours. Some of them keep the night. Learn which before you make "
-							+ "camp."), Unlock.STUDIED),
+					"One practical matter, since it cost me a fortnight. The machine wants "
+							+ "feeding twice over: something that burns, for the reading, and "
+							+ "redstone, for the reckoning. Give it only the one and it will work "
+							+ "halfway through and then sit there, and you will think you have "
+							+ "built it wrong."), Unlock.FIRST_SPECIMEN),
 
 			new Chapter("A note on the dead", List.of(
 					"A kill is left where it falls, and it does not stay alone for long.",
 					"",
-					"I have sat out a whole night watching a carcass draw in three separate "
-							+ "kinds that would not otherwise have met. If you want to see "
-							+ "what shares a valley, find something that died in it.",
+					"I once sat out an entire night beside a carcass and counted three "
+							+ "separate kinds coming to it that I had never seen within a mile of "
+							+ "one another. If you want to know what shares a valley, do not go "
+							+ "looking for the living. Find something that died there and wait.",
 					"",
-					"Fire takes them completely. I mention this because I once lost a "
-							+ "specimen I had walked two days for, and I would rather you did "
-							+ "not."), Unlock.STUDIED),
+					"One warning, which I give you because I learned it the expensive way. "
+							+ "Fire takes them completely and leaves you nothing to read. I lost "
+							+ "a specimen I had carried two days that way, and I would rather you "
+							+ "did not repeat the lesson."), Unlock.STUDIED)
+	);
+
+	// ---- Habits ---------------------------------------------------------------
+
+	private static final List<Chapter> HABITS = List.of(
+			new Chapter("Hunger, and the sense to stop", List.of(
+					"They eat when they are hungry and not otherwise. I have watched a "
+							+ "predator walk the whole length of a herd without so much as "
+							+ "turning its head, and watched what I believe was the same animal, "
+							+ "some days later, take one down inside a minute.",
+					"",
+					"They also give up. A chase that is not going to end well simply ends, "
+							+ "and the two of them walk off in opposite directions with no "
+							+ "apparent ill feeling on either side.",
+					"",
+					"I find this more disquieting than ferocity would be. Ferocity is "
+							+ "stupid, and a stupid thing can be predicted. Something that knows "
+							+ "when to stop is doing a sum, and I never learned what it was "
+							+ "counting."), Unlock.THREE_SPECIES),
+
+			new Chapter("Which of them keep the night", List.of(
+					"They sleep about half of each day. Not all of them keep the same "
+							+ "hours, and a good number keep the night instead and are abroad "
+							+ "while you are not.",
+					"",
+					"This is worth more of your attention than it sounds. Twice I chose a "
+							+ "campsite in daylight on the evidence of an empty meadow, and "
+							+ "twice I learned in the small hours what the meadow was for.",
+					"",
+					"Watch a place at both ends of the day before you decide anything about "
+							+ "it."), Unlock.STUDIED)
+	);
+
+	// ---- The valley -------------------------------------------------------
+
+	private static final List<Chapter> THE_VALLEY = List.of(
+			new Chapter("The valley keeps its own accounts", List.of(
+					"This is the observation that unsettled me most, and I want it set down "
+							+ "plainly rather than dressed up.",
+					"",
+					"In my second year I mapped a valley thick with grazers. I counted them "
+							+ "as carefully as I knew how, and I was pleased with the count. "
+							+ "Then I was called away and did not come back for some weeks. When "
+							+ "I did, the grazers were thin on the ground, and a long-legged "
+							+ "thing I had never seen before had moved through and was itself "
+							+ "thin for want of them.",
+					"",
+					"None of it required a witness. The herd did not wait for my return "
+							+ "before it declined, and the animal that thinned it did not wait "
+							+ "to be observed before it began to starve in its turn. Whatever "
+							+ "governs this place does its arithmetic in an empty field and "
+							+ "hands you the result when you happen to walk back into it."),
+					Unlock.THREE_SPECIES),
+
+			new Chapter("The mark they carry", List.of(
+					"Every one of them carries a mark its parents carried before it. Follow "
+							+ "the mark and you follow a line backwards as far as your own "
+							+ "records will take you, which is not far, but it is more than "
+							+ "nothing.",
+					"",
+					"The line does not hold still. Press a population hard enough, or leave "
+							+ "it to itself long enough, and it drifts. At some point what comes "
+							+ "out of the valley is far enough from what went into it that the "
+							+ "mark itself changes, and the notes you took in good faith no "
+							+ "longer describe the animal standing in front of you.",
+					"",
+					"The first time this happened I spent three days hunting for my error. "
+							+ "There was no error. The creature had stopped being the thing I "
+							+ "was studying, and it had done so while I was studying it."),
+					Unlock.FORK_SEEN)
+	);
+
+	// ---- Doubts -----------------------------------------------------------
+
+	private static final List<Chapter> DOUBTS = List.of(
+			new Chapter("What the colours mean", List.of(
+					"I spent the better part of a season convinced the colouring was a "
+							+ "code, and that if I catalogued enough of it I should be able to "
+							+ "read an animal's habits off its hide. I was wrong. Or I was right "
+							+ "and never broke it, which from where you are sitting comes to the "
+							+ "same thing.",
+					"",
+					"What I can say with any confidence is this. The earthy colours are "
+							+ "common and the vivid ones are not. The deep blues and the violets "
+							+ "I have only ever seen muted, never blazing, as though whatever "
+							+ "paints these creatures can mix a rust or an ochre freely and "
+							+ "arrives at a true blue only under protest.",
+					"",
+					"Once, and then a second time, I have seen one that carried its own "
+							+ "light through the dark. I have no explanation for it and I will "
+							+ "not pretend to one. If you find such a thing, do not let it go "
+							+ "unstudied on my account."), Unlock.THREE_SPECIES),
 
 			new Chapter("The shape of a thing", List.of(
 					"By now you will have noticed that no two of them are put together the "
-							+ "same way, and yet they all work.",
+							+ "same way, and that all of them work regardless.",
 					"",
-					"Legs in twos or in fours or in eights. Necks like columns and necks that "
-							+ "are barely a suggestion. Whatever is doing this is not choosing "
-							+ "from a catalogue of animals — it is choosing from a catalogue of "
-							+ "parts, and the walking is worked out afterwards.",
+					"Legs in twos, in fours, in eights. Necks like columns, and necks that "
+							+ "are barely a suggestion of a neck. Whatever is doing this is "
+							+ "plainly not working from a catalogue of animals. It is working "
+							+ "from a catalogue of parts, and the question of how the finished "
+							+ "creature is to walk appears to be settled afterwards, by trial, "
+							+ "and now and then not settled at all.",
 					"",
 					"I have come to think of the archetypes not as species but as habits: "
-							+ "postures the process falls into more often than chance would "
-							+ "allow. There are perhaps ten. I never satisfied myself that the "
-							+ "list was closed."), Unlock.MASTERED),
-
-			new Chapter("Bloodlines", List.of(
-					"Every one of them carries a mark that its parents carried. Follow the "
-							+ "mark and you follow a line back as far as your records go.",
-					"",
-					"But the line is not fixed. Push a population hard enough, or leave it "
-							+ "alone long enough, and it drifts — and at some point what comes "
-							+ "out is far enough from what went in that the mark itself "
-							+ "changes, and your notes no longer describe the animal in front "
-							+ "of you.",
-					"",
-					"The first time this happened I assumed I had made an error. I had not. "
-							+ "The creature had simply stopped being the thing I had studied, "
-							+ "while I was studying it."), Unlock.FORK_SEEN),
+							+ "postures the process falls into more often than chance alone "
+							+ "would account for. I make it about ten. I was never able to "
+							+ "satisfy myself that the list was closed, and I should not be at "
+							+ "all surprised to hear you had turned up an eleventh."),
+					Unlock.MASTERED),
 
 			new Chapter("What I never settled", List.of(
-					"I do not know what is doing this. I want that recorded, because "
-							+ "everything else in this book is observation and this is the one "
-							+ "place I have nothing.",
+					"I do not know what is doing this. I want that written in my own hand, "
+							+ "because everything else in this book is something I saw, and "
+							+ "this is the one place where I have nothing to give you.",
 					"",
-					"It is not random — random would not produce animals that can stand up. "
-							+ "It is not designed either, or the designer is indifferent to "
-							+ "whether its work survives the winter.",
+					"It is not random. Random does not produce an animal that can stand up, "
+							+ "and stand they do, in every arrangement of legs I have described "
+							+ "to you. Nor is it designed, or if it is, the designer is "
+							+ "indifferent to whether the work survives its first winter, which "
+							+ "is not what I was taught the word to mean.",
 					"",
-					"Whatever it is, it is still running. The book you are holding is already "
-							+ "out of date. Go and find out how."), Unlock.MASTERED)
+					"What I am sure of is that it has not stopped. Whatever process made "
+							+ "these creatures was still running on the day I closed this book, "
+							+ "and has gone on running since. Everything written here is "
+							+ "therefore already somewhat out of date, this sentence included. "
+							+ "You will have to go out and find how much."), Unlock.MASTERED)
 	);
 
 	/**
@@ -238,12 +321,11 @@ public final class GuideChapters {
 	 * certainly true.
 	 */
 	public static final List<Section> SECTIONS = List.of(
-			new Section("Preface", "primordia:field_guide", List.of(ALL.get(0), ALL.get(1))),
-			new Section("Fieldwork", "primordia:biopsy_kit",
-					List.of(ALL.get(2), ALL.get(3), ALL.get(7))),
-			new Section("Observations", "minecraft:bone", List.of(ALL.get(4), ALL.get(8))),
-			new Section("The valley", "minecraft:grass_block", List.of(ALL.get(5), ALL.get(6))),
-			new Section("Doubts", "minecraft:ender_eye", List.of(ALL.get(9), ALL.get(10))),
+			new Section("Preface", "primordia:field_guide", PREFACE),
+			new Section("In the field", "primordia:biopsy_kit", IN_THE_FIELD),
+			new Section("Habits", "minecraft:clock", HABITS),
+			new Section("The valley", "minecraft:grass_block", THE_VALLEY),
+			new Section("Doubts", "minecraft:ender_eye", DOUBTS),
 			new Section("Specimens", "primordia:genome_report", List.of()),
 			new Section("Bloodlines", "minecraft:oak_sapling", List.of())
 	);
@@ -254,5 +336,11 @@ public final class GuideChapters {
 	public static final int LINEAGE_TAB = 6;
 
 	/** Every entry, flat, in the order they were written. */
-	public static final List<Chapter> CHAPTERS = ALL;
+	public static final List<Chapter> CHAPTERS = List.of(
+			PREFACE.get(0), PREFACE.get(1),
+			IN_THE_FIELD.get(0), IN_THE_FIELD.get(1), IN_THE_FIELD.get(2),
+			HABITS.get(0), HABITS.get(1),
+			THE_VALLEY.get(0), THE_VALLEY.get(1),
+			DOUBTS.get(0), DOUBTS.get(1), DOUBTS.get(2)
+	);
 }

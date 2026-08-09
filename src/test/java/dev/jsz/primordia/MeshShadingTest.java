@@ -80,7 +80,7 @@ class MeshShadingTest {
 		for (int trial = 0; trial < TRIALS; trial++) {
 			MeshData mesh = bake(Genome.random(random));
 			for (int i = 0; i < mesh.quads.length; i += 4) {
-				FaceNormal.compute(mesh.positions, mesh.quads, i, normal);
+				FaceNormal.compute(mesh.positions, mesh.normals, mesh.quads, i, normal);
 				assertEquals(1f, normal.length(), 1e-3f, "a face normal is not unit length");
 				faces++;
 			}
@@ -106,7 +106,7 @@ class MeshShadingTest {
 		for (int trial = 0; trial < TRIALS; trial++) {
 			MeshData mesh = bake(Genome.random(random));
 			for (int i = 0; i < mesh.quads.length; i += 4) {
-				FaceNormal.compute(mesh.positions, mesh.quads, i, normal);
+				FaceNormal.compute(mesh.positions, mesh.normals, mesh.quads, i, normal);
 
 				float dot = 0f;
 				for (int k = 0; k < 4; k++) {
@@ -126,15 +126,60 @@ class MeshShadingTest {
 				"%d of %d faces point against their own surface", opposed, faces));
 	}
 
+	/**
+	 * A face turned inside out by posing is still lit from the right side.
+	 * <p>
+	 * The reconciliation of winding against outward direction happens once, at bake time, against
+	 * the bind pose — and skinning is not rigid. A vertex blended between two bones travels along a
+	 * chord rather than an arc, so a joint bent far enough collapses the quads across it and can
+	 * invert them. A large creature crouching bends its hips and knees exactly that far, and the
+	 * faces there were lit from behind.
+	 * <p>
+	 * Simulated here by reversing a quad's winding, which is what an inversion amounts to
+	 * geometrically. The corner normals are unchanged, because skinned vertex normals are blended
+	 * rotations and cannot invert — which is precisely why they are the thing worth trusting.
+	 */
+	@Test
+	void aFaceInvertedByPosingIsStillLitFromOutside() {
+		Random random = new Random(4242);
+		Vector3f upright = new Vector3f();
+		Vector3f inverted = new Vector3f();
+		int checked = 0;
+
+		for (int trial = 0; trial < 6; trial++) {
+			MeshData mesh = bake(Genome.random(random));
+			for (int i = 0; i < mesh.quads.length && checked < 400; i += 4) {
+				FaceNormal.compute(mesh.positions, mesh.normals, mesh.quads, i, upright);
+
+				int[] flipped = mesh.quads.clone();
+				flipped[i] = mesh.quads[i + 3];
+				flipped[i + 1] = mesh.quads[i + 2];
+				flipped[i + 2] = mesh.quads[i + 1];
+				flipped[i + 3] = mesh.quads[i];
+				FaceNormal.compute(mesh.positions, mesh.normals, flipped, i, inverted);
+
+				// Same direction either way: the winding no longer decides which side is outside.
+				assertTrue(upright.dot(inverted) > 0.99f, String.format(
+						"reversing a face's winding flipped its normal (%s vs %s) — shading still "
+								+ "depends on the bind-pose winding and will break under a crouch",
+						upright, inverted));
+				checked++;
+			}
+		}
+		assertTrue(checked > 100, "too few faces examined: " + checked);
+	}
+
 	@Test
 	void degenerateQuadsStillProduceAUsableNormal() {
 		// Four coincident corners have no direction to face. The normal still has to be finite and
 		// unit length or it poisons the lighting of everything drawn in the same batch.
 		float[] positions = {1f, 2f, 3f};
+		// A collapsed face with no usable corner normals either — the last-resort branch.
+		float[] normals = {0f, 0f, 0f};
 		int[] quads = {0, 0, 0, 0};
 		Vector3f normal = new Vector3f();
 
-		FaceNormal.compute(positions, quads, 0, normal);
+		FaceNormal.compute(positions, normals, quads, 0, normal);
 
 		assertTrue(Float.isFinite(normal.x) && Float.isFinite(normal.y) && Float.isFinite(normal.z),
 				"a degenerate face produced a non-finite normal");

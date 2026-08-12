@@ -1,6 +1,6 @@
 ![Primordia](https://cdn.modrinth.com/data/cached_images/5b3d6c167245848de481471729e64fb9cb9a7e2f.png)
 
-# Primordia
+---
 
 **Every creature in this mod is grown from a genome at runtime. There are no models, no textures,
 and no animation files.** A gene vector becomes a skeleton, the skeleton becomes a signed distance

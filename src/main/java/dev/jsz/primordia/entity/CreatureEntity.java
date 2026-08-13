@@ -22,6 +22,7 @@ import dev.jsz.primordia.entity.goal.FeedOnCarcassGoal;
 import dev.jsz.primordia.entity.goal.FleeLargerCreatureGoal;
 import dev.jsz.primordia.entity.goal.FollowOwnerGoal;
 import dev.jsz.primordia.entity.goal.GrazeGoal;
+import dev.jsz.primordia.entity.goal.LavaMarchGoal;
 import dev.jsz.primordia.entity.goal.LeaveWaterGoal;
 import dev.jsz.primordia.entity.goal.RestGoal;
 import dev.jsz.primordia.entity.goal.StayGoal;
@@ -78,7 +79,9 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.ChatFormatting;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.pathfinder.PathType;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.level.Level;
@@ -1144,6 +1147,46 @@ public class CreatureEntity extends PathfinderMob {
 		return entityData.get(CARCASS);
 	}
 
+	/**
+	 * Where {@code /primordia debug lava} has sent this creature, or null for the normal case.
+	 * <p>
+	 * Deliberately not saved, not synced and not part of the genome: it is a switch a developer
+	 * throws to watch a population die, and it should not survive a reload or reach a client. See
+	 * {@link LavaMarchGoal}, which is the only thing that reads it.
+	 */
+	private BlockPos lavaMarch;
+
+	public BlockPos getLavaMarch() {
+		return lavaMarch;
+	}
+
+	public void clearLavaMarch() {
+		lavaMarch = null;
+	}
+
+	/**
+	 * Points this creature at a block of lava and gets it out of its own way.
+	 * <p>
+	 * The pathfinding malus is the part that actually matters. A mob's node evaluator marks lava
+	 * unwalkable by default, so without this the navigation refuses to plot a route that ends in the
+	 * one place it is being asked to go, and the animal walks to the shore and stops. Zeroing the
+	 * fire and damage types too, or it routes politely around the heat and arrives at nothing.
+	 * <p>
+	 * Not undone afterwards. These creatures are being marched into lava; what their pathfinding
+	 * preferences look like next tick is not a live concern, and restoring them would need state
+	 * kept for a debug command that ends with the animal dead.
+	 */
+	public void marchToLava(BlockPos lava) {
+		this.lavaMarch = lava;
+		setPathfindingMalus(PathType.LAVA, 0f);
+		setPathfindingMalus(PathType.DAMAGING, 0f);
+		setPathfindingMalus(PathType.DAMAGING_IN_NEIGHBOR, 0f);
+		setPathfindingMalus(PathType.DAMAGE_CAUTIOUS, 0f);
+		setPathfindingMalus(PathType.FIRE, 0f);
+		setPathfindingMalus(PathType.FIRE_IN_NEIGHBOR, 0f);
+		getNavigation().stop();
+	}
+
 	/** Stripped to bone: the last stage a body goes through, and the longest. */
 	public boolean isSkeleton() {
 		return entityData.get(SKELETON);
@@ -1640,6 +1683,9 @@ public class CreatureEntity extends PathfinderMob {
 
 	@Override
 	protected void registerGoals() {
+		// First, so it outranks even StayGoal at the same priority — see LavaMarchGoal. Inert unless
+		// /primordia debug lava has pointed this creature at something.
+		goalSelector.addGoal(0, new LavaMarchGoal(this, 1.3));
 		goalSelector.addGoal(0, new FloatGoal(this));
 		goalSelector.addGoal(0, new StayGoal(this));
 

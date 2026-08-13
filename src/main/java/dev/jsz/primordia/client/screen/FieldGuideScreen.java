@@ -9,6 +9,7 @@ import dev.jsz.primordia.lab.SpawnSpeciesPayload;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import dev.jsz.primordia.lab.NameLineagePayload;
 import dev.jsz.primordia.lab.Phylogeny;
+import dev.jsz.primordia.util.MathX;
 import dev.jsz.primordia.entity.TamingPreference;
 import dev.jsz.primordia.client.render.CreaturePreview;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -227,6 +228,9 @@ public class FieldGuideScreen extends Screen {
 		treeZoom = keepZoom;
 		treePanX = keepPanX;
 		treePanY = keepPanY;
+		// The tree that pan was legal against is not the tree that was just rebuilt — a newly filed
+		// bloodline can move the extents under a view that is sitting at its limit.
+		clampPan();
 		plateSpin = keepSpin;
 		naming = keepNaming;
 		nameBuffer = keepBuffer;
@@ -396,20 +400,76 @@ public class FieldGuideScreen extends Screen {
 			treePanY = 0f;
 			return;
 		}
-		float widestColumn = 0f;
-		int deepest = 0;
-		for (Phylogeny.TreeNode node : treeNodes) {
-			widestColumn = Math.max(widestColumn, node.column);
-			deepest = Math.max(deepest, node.depth);
-		}
-		float treeW = widestColumn * (NODE + NODE_GAP_X) * treeZoom + NODE * treeZoom;
-		float treeH = deepest * ROW_H * treeZoom + NODE * treeZoom;
+		float treeW = treeSpanX();
+		float treeH = treeSpanY();
 
 		float viewW = PANEL_W - MARGIN * 2;
 		float viewH = PANEL_H - TAB_H - 8;
 		treePanX = (viewW - treeW) / 2f;
 		// The 16 undoes the fixed offset nodeY adds, so the top row lands where this asks it to.
 		treePanY = (viewH - treeH) / 2f - 16f;
+	}
+
+	/** Width the drawn tree occupies at the current zoom, in panel pixels. */
+	private float treeSpanX() {
+		float widestColumn = 0f;
+		for (Phylogeny.TreeNode node : treeNodes) {
+			widestColumn = Math.max(widestColumn, node.column);
+		}
+		return widestColumn * (NODE + NODE_GAP_X) * treeZoom + NODE * treeZoom;
+	}
+
+	/** Height the drawn tree occupies at the current zoom, in panel pixels. */
+	private float treeSpanY() {
+		int deepest = 0;
+		for (Phylogeny.TreeNode node : treeNodes) {
+			deepest = Math.max(deepest, node.depth);
+		}
+		return deepest * ROW_H * treeZoom + NODE * treeZoom;
+	}
+
+	/**
+	 * Holds the pan inside the tree's own extents, so the drawing can never be dragged off the page.
+	 * <p>
+	 * A viewport with no travel limit will happily be flung into empty paper, and once the tree is
+	 * gone there is nothing on screen to say which way it went — the only recovery was to change tab
+	 * and come back. The limit is derived from the layout rather than fixed, so it grows with the
+	 * collection on its own: the bound is "the tree may leave the page until {@link #keepOnPage} of
+	 * it is left", which for a two-node tree is a few pixels of travel and for a fifty-node one is
+	 * most of a screen in every direction. Zoom is in the spans too, so pulling back to see the whole
+	 * clade widens the leash at the same time as it shrinks the drawing.
+	 * <p>
+	 * Clamping the pan rather than the gesture means a drag that runs past the edge simply stops
+	 * there and keeps tracking the cursor on the other axis, which is what every map does.
+	 */
+	private void clampPan() {
+		if (treeNodes.isEmpty()) return;
+		float keep = keepOnPage();
+
+		// The clip rectangle drawTree uses, which is the real edge of the viewport.
+		float spanX = treeSpanX();
+		treePanX = MathX.clamp(treePanX,
+				2f + keep - MARGIN - spanX,
+				PANEL_W - 2f - keep - MARGIN);
+
+		// nodeY offsets by bodyTop + HEADING_H, and bodyTop is TAB_H, so the top of the viewport sits
+		// at pan zero. That cancels out of the lower bound and leaves the spans as the only term.
+		float spanY = treeSpanY();
+		treePanY = MathX.clamp(treePanY,
+				keep - spanY,
+				PANEL_H - 4f - (TAB_H + HEADING_H) - keep);
+	}
+
+	/**
+	 * How much of the tree has to stay on the page.
+	 * <p>
+	 * One whole box and the gap beside it, so whatever is left at the limit is a node the reader can
+	 * see and grab rather than a stub of a connector. Capped against the viewport for the case where
+	 * the boxes are larger than the window: at maximum zoom on a small tree, demanding a whole node
+	 * stay visible would be a stricter limit than the page itself.
+	 */
+	private float keepOnPage() {
+		return Math.min(nodeSize() + NODE_GAP_X, (PANEL_W - MARGIN * 2) * 0.4f);
 	}
 
 	/**
@@ -509,8 +569,58 @@ public class FieldGuideScreen extends Screen {
 						INK_FAINT, false);
 			}
 		}
+		featherEdges(context, bodyTop, 2, bodyTop + HEADING_H, PANEL_W - 2, PANEL_H - 4);
 		context.disableScissor();
 		hoveredNode = hovered;
+	}
+
+	/** How far the viewport edge fade reaches inward, in panel pixels. */
+	private static final int FEATHER = 14;
+
+	/**
+	 * Fades the tree out into the page around the edge of its viewport.
+	 * <p>
+	 * The scissor alone leaves branches and boxes sliced off mid-stroke at the boundary, which reads
+	 * as a rendering fault rather than as a window onto something larger. Washing the last few pixels
+	 * back to the page makes the edge look like the drawing running off the paper.
+	 * <p>
+	 * The wash is the page <i>texture</i> re-blitted over itself, not a flat fill of {@link #PAGE}.
+	 * Fading to the flat colour was the first attempt and it was wrong twice over: the constant is
+	 * lighter than most of the sheet, so the border read as a white halo rather than as paper, and at
+	 * full coverage it painted over the stains and grain the texture carries — a clean cream frame
+	 * around a weathered page. Sampling the texture at the same offset the background blit used means
+	 * full coverage is indistinguishable from untouched page, whatever is printed there.
+	 *
+	 * @param bodyTop where the page art starts, so the source offset matches the background blit
+	 */
+	private void featherEdges(GuiGraphicsExtractor context, int bodyTop, int x1, int y1, int x2, int y2) {
+		for (int i = 0; i < FEATHER; i++) {
+			// Smoothstep, not a power curve. A quadratic falloff was the first attempt and it did not
+			// read as a fade at all: it is already down to half coverage three pixels in, so the whole
+			// transition happens inside a band too narrow to see and what is left looks like the same
+			// hard cutoff moved inward. What makes an edge read as soft is a gentle *start* — the
+			// first few pixels of content must dim almost imperceptibly — which needs a curve that is
+			// flat at both ends rather than steepest where the eye is looking.
+			float d = (i + 0.5f) / FEATHER;
+			int alpha = Math.round(255f * (1f - d * d * (3f - 2f * d)));
+			if (alpha <= 0) continue;
+			// White tint: the texture keeps its own colours and only the alpha is ours.
+			int tint = (alpha << 24) | 0x00FFFFFF;
+			page(context, bodyTop, x1, y1 + i, x2 - x1, 1, tint);
+			page(context, bodyTop, x1, y2 - i - 1, x2 - x1, 1, tint);
+			page(context, bodyTop, x1 + i, y1, 1, y2 - y1, tint);
+			page(context, bodyTop, x2 - i - 1, y1, 1, y2 - y1, tint);
+		}
+	}
+
+	/**
+	 * Blits a patch of the page texture over itself at {@code tint}'s alpha.
+	 * <p>
+	 * The source offset is the destination minus {@code bodyTop}, which is exactly the mapping the
+	 * background blit sets up, so the patch lands back on the pixels it came from.
+	 */
+	private void page(GuiGraphicsExtractor context, int bodyTop, int x, int y, int w, int h, int tint) {
+		context.blit(RenderPipelines.GUI_TEXTURED, PAGE_TEXTURE, x, y, x, y - bodyTop, w, h, 512, 256, tint);
 	}
 
 	/** The tree node under the cursor this frame, for the tooltip drawn after the matrix pops. */
@@ -762,6 +872,7 @@ public class FieldGuideScreen extends Screen {
 		if (section == GuideChapters.LINEAGE_TAB) {
 			treePanX += (float) deltaX;
 			treePanY += (float) deltaY;
+			clampPan();
 		} else if (section == GuideChapters.REFERENCE_TAB) {
 			plateSpin += (float) deltaX * 0.02f;
 		}
@@ -806,6 +917,9 @@ public class FieldGuideScreen extends Screen {
 			// out from under the clip rectangle.
 			double originY = TAB_H + HEADING_H;
 			treePanY = (float) (my - originY - (my - originY - treePanY) * ratio);
+			// Zooming out shrinks the drawing and so tightens the leash: a view that was legally
+			// panned at the old scale can be off the page at the new one.
+			clampPan();
 			return true;
 		}
 		turn(vertical > 0 ? -1 : 1);

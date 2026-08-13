@@ -162,6 +162,13 @@ individual sliders below are for when a preset is nearly right.
 | `/primordia mutate` | Spawn a mutated clone of the nearest creature |
 | `/primordia clear 32` | Remove creatures within 32 blocks |
 | `/primordia stats` | Mesh cache and bake queue depth |
+| `/primordia debug lava [radius]` | Sends every creature within the radius (200 by default) walking into the nearest exposed lava |
+| `/primordia editor` | Opens the creature editor — **the only one that does not need cheats** |
+
+Everything except `editor` needs gamemaster permissions (cheats on, or op). The editor is a
+modelling tool that cannot read or write the world, so it is open to anyone with the mod installed;
+it binds to `127.0.0.1`, meaning on a dedicated server the page is only reachable from the machine
+hosting it.
 
 ---
 

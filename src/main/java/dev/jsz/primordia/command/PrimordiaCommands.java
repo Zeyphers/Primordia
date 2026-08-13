@@ -57,16 +57,28 @@ import java.util.Random;
 public final class PrimordiaCommands {
 	private static final double SEARCH_RADIUS = 32.0;
 
+	/**
+	 * The gate on everything that touches the world.
+	 * <p>
+	 * 26.2 swapped numeric permission levels for named ones; gamemaster is the successor to the old
+	 * level 2 that gates {@code /summon} and friends. Held as a field because it is now applied per
+	 * branch rather than once at the root, so that {@code editor} can sit outside it.
+	 */
+	private static final java.util.function.Predicate<CommandSourceStack> GAMEMASTER =
+			source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER);
+
 	private PrimordiaCommands() {
 	}
 
 	public static void register() {
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 				dispatcher.register(Commands.literal("primordia")
-						// 26.2 swapped numeric permission levels for named ones; gamemaster is the
-						// successor to the old level 2 that gates /summon and friends.
-						.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
+						// The root is open and every branch carries its own gate — see GAMEMASTER, which
+						// all of them below use except `editor`. Putting the check here instead would be
+						// tidier and would also hide `editor` from the players it is meant for: a node
+						// whose parent fails `requires` is unreachable however permissive it is itself.
 						.then(Commands.literal("spawn")
+								.requires(GAMEMASTER)
 								.executes(ctx -> spawn(ctx, 1, null, null))
 								// A genome straight from the editor. Greedy, because the encoded form is
 								// base64 and can carry characters a word argument would stop at.
@@ -93,7 +105,7 @@ public final class PrimordiaCommands {
 						// Everything that exists to test the mod rather than to play it lives under
 						// one node, gated on one constant. See Primordia.DEBUG_TOOLS.
 						.then(Commands.literal("debug")
-								.requires(source -> Primordia.DEBUG_TOOLS)
+								.requires(GAMEMASTER.and(source -> Primordia.DEBUG_TOOLS))
 								.then(Commands.literal("decay")
 										.executes(ctx -> decay(ctx, 0))
 										.then(Commands.argument("ticks", IntegerArgumentType.integer(1))
@@ -103,8 +115,14 @@ public final class PrimordiaCommands {
 										.executes(ctx -> spawnSkeleton(ctx, 1))
 										.then(Commands.argument("count", IntegerArgumentType.integer(1, 64))
 												.executes(ctx -> spawnSkeleton(ctx,
-														IntegerArgumentType.getInteger(ctx, "count"))))))
+														IntegerArgumentType.getInteger(ctx, "count")))))
+								.then(Commands.literal("lava")
+										.executes(ctx -> lavaMarch(ctx, LAVA_MARCH_RADIUS))
+										.then(Commands.argument("radius", IntegerArgumentType.integer(1, 256))
+												.executes(ctx -> lavaMarch(ctx,
+														IntegerArgumentType.getInteger(ctx, "radius"))))))
 						.then(Commands.literal("test")
+								.requires(GAMEMASTER)
 								.executes(ctx -> spawnTestGrid(ctx, null, false))
 								.then(Commands.literal("reload")
 										.executes(ctx -> spawnTestGrid(ctx, null, true)))
@@ -118,24 +136,35 @@ public final class PrimordiaCommands {
 										.executes(ctx -> spawnTestGrid(ctx,
 												LongArgumentType.getLong(ctx, "seed"), true))))
 						.then(Commands.literal("clear")
+								.requires(GAMEMASTER)
 								.executes(ctx -> clear(ctx, 32))
 								.then(Commands.argument("radius", IntegerArgumentType.integer(1, 256))
 										.executes(ctx -> clear(ctx, IntegerArgumentType.getInteger(ctx, "radius")))))
 						.then(Commands.literal("info")
+								.requires(GAMEMASTER)
 								.executes(PrimordiaCommands::info))
 						.then(Commands.literal("collect")
+								.requires(GAMEMASTER)
 								.executes(ctx -> collect(ctx, 48))
 								.then(Commands.argument("radius", IntegerArgumentType.integer(1, 256))
 										.executes(ctx -> collect(ctx,
 												IntegerArgumentType.getInteger(ctx, "radius")))))
 						.then(Commands.literal("region")
+								.requires(GAMEMASTER)
 								.executes(PrimordiaCommands::region))
 						.then(Commands.literal("breed")
+								.requires(GAMEMASTER)
 								.executes(PrimordiaCommands::breed))
 						.then(Commands.literal("mutate")
+								.requires(GAMEMASTER)
 								.executes(PrimordiaCommands::mutate))
 						.then(Commands.literal("stats")
+								.requires(GAMEMASTER)
 								.executes(PrimordiaCommands::stats))
+						// No gate. The editor is a modelling tool, not a way to affect the world: it
+						// bakes meshes from genomes typed into a web page and can neither read the save
+						// nor write to it. Gating it on cheats meant the one command a player might
+						// actually want was the one they could not reach.
 						.then(Commands.literal("editor")
 								.executes(PrimordiaCommands::editor))));
 	}
@@ -559,6 +588,147 @@ public final class PrimordiaCommands {
 		source.sendSuccess(() -> Component.literal("Removed " + found.size() + " creature(s)")
 				.withStyle(ChatFormatting.YELLOW), false);
 		return found.size();
+	}
+
+	/** How far {@code debug lava} reaches for creatures, in blocks. */
+	private static final int LAVA_MARCH_RADIUS = 200;
+	/**
+	 * How far above and below the creatures the lava sweep looks.
+	 * <p>
+	 * This is what keeps the sweep cheap as well as sensible. Unbounded, a search at any radius runs
+	 * down into the lava sea under y=-54 and finds tens of thousands of blocks nothing on the surface
+	 * could ever walk to; bounding it to the band the animals are actually standing in means the deep
+	 * sections are never even opened.
+	 */
+	private static final int LAVA_SCAN_VERTICAL = 48;
+	/** Ceiling on collected lava, so a command run beside a lava lake cannot build a huge list. */
+	private static final int LAVA_POSITION_CAP = 20_000;
+
+	/**
+	 * Sends every creature in range walking into the nearest lava it can see.
+	 * <p>
+	 * A population-scale kill switch for testing what the ecology does with a sudden hole in it —
+	 * carcass handling, the region ledger's response to a lineage crashing, scavengers arriving.
+	 * Doing it by pathfinding rather than by {@code kill} is the entire point: what is being tested
+	 * is the dying, not the deaths.
+	 * <p>
+	 * Only <i>exposed</i> lava counts — a block with air above it. Lava buried under stone is
+	 * unreachable however near it is, and offering it as a destination sends an animal to stand on
+	 * the rock above it forever.
+	 */
+	private static int lavaMarch(CommandContext<CommandSourceStack> ctx, int radius) {
+		CommandSourceStack source = ctx.getSource();
+		ServerLevel world = source.getLevel();
+		Vec3 origin = source.getPosition();
+
+		List<CreatureEntity> creatures = nearby(source, radius).stream()
+				.filter(c -> !c.isCarcass())
+				.filter(c -> c.distanceToSqr(origin) <= (double) radius * radius)
+				.toList();
+		if (creatures.isEmpty()) {
+			source.sendFailure(Component.literal("No living creatures within " + radius + " blocks."));
+			return 0;
+		}
+
+		double lowest = creatures.stream().mapToDouble(Entity::getY).min().orElse(origin.y);
+		double highest = creatures.stream().mapToDouble(Entity::getY).max().orElse(origin.y);
+		List<BlockPos> lava = findExposedLava(world, origin, radius,
+				(int) lowest - LAVA_SCAN_VERTICAL, (int) highest + LAVA_SCAN_VERTICAL);
+
+		if (lava.isEmpty()) {
+			source.sendFailure(Component.literal(
+					"Found " + creatures.size() + " creature(s) but no exposed lava within " + radius
+							+ " blocks of them (loaded chunks only, and " + LAVA_SCAN_VERTICAL
+							+ " blocks above and below)."));
+			return 0;
+		}
+
+		int sent = 0;
+		for (CreatureEntity creature : creatures) {
+			BlockPos nearest = null;
+			double best = Double.MAX_VALUE;
+			for (BlockPos pos : lava) {
+				double d = pos.distToCenterSqr(creature.position());
+				if (d < best) {
+					best = d;
+					nearest = pos;
+				}
+			}
+			if (nearest == null) continue;
+			creature.marchToLava(nearest);
+			sent++;
+		}
+
+		int count = sent;
+		int pools = lava.size();
+		source.sendSuccess(() -> Component.literal(
+				count + " creature(s) marching into lava (" + pools + " exposed block(s) found)")
+				.withStyle(ChatFormatting.RED), false);
+		return count;
+	}
+
+	/**
+	 * Collects lava with air above it, within {@code radius} of {@code centre} and between the given
+	 * heights.
+	 * <p>
+	 * Walks chunk sections rather than blocks. {@link net.minecraft.world.level.chunk.LevelChunkSection#maybeHas}
+	 * rejects a whole 16³ section that holds no lava in constant time against its palette, which is
+	 * every section in an ordinary landscape — so the cost of a 200-block sweep is proportional to
+	 * how much lava is nearby rather than to the volume searched.
+	 * <p>
+	 * Unloaded chunks are skipped rather than loaded. A debug command should not generate terrain as
+	 * a side effect of looking at it.
+	 */
+	private static List<BlockPos> findExposedLava(ServerLevel world, Vec3 centre, int radius,
+	                                              int minY, int maxY) {
+		List<BlockPos> found = new java.util.ArrayList<>();
+		minY = Math.max(minY, world.getMinY());
+		maxY = Math.min(maxY, world.getMaxY());
+		if (minY > maxY) return found;
+
+		int chunkRadius = (radius >> 4) + 1;
+		int originChunkX = net.minecraft.core.SectionPos.blockToSectionCoord((int) centre.x);
+		int originChunkZ = net.minecraft.core.SectionPos.blockToSectionCoord((int) centre.z);
+		double radiusSqr = (double) radius * radius;
+		BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+
+		for (int cx = originChunkX - chunkRadius; cx <= originChunkX + chunkRadius; cx++) {
+			for (int cz = originChunkZ - chunkRadius; cz <= originChunkZ + chunkRadius; cz++) {
+				net.minecraft.world.level.chunk.LevelChunk chunk =
+						world.getChunkSource().getChunkNow(cx, cz);
+				if (chunk == null) continue;
+
+				for (int index = chunk.getSectionIndex(minY); index <= chunk.getSectionIndex(maxY); index++) {
+					if (index < 0 || index >= chunk.getSections().length) continue;
+					net.minecraft.world.level.chunk.LevelChunkSection section = chunk.getSection(index);
+					if (section == null || section.hasOnlyAir() || !section.hasFluid()) continue;
+					if (!section.maybeHas(state -> state.is(net.minecraft.world.level.block.Blocks.LAVA))) {
+						continue;
+					}
+
+					int baseY = chunk.getSectionYFromSectionIndex(index) << 4;
+					for (int y = 0; y < 16; y++) {
+						int worldY = baseY + y;
+						if (worldY < minY || worldY > maxY) continue;
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								if (!section.getBlockState(x, y, z).is(net.minecraft.world.level.block.Blocks.LAVA)) {
+									continue;
+								}
+								int worldX = (cx << 4) + x;
+								int worldZ = (cz << 4) + z;
+								if (centre.distanceToSqr(worldX + 0.5, centre.y, worldZ + 0.5) > radiusSqr) continue;
+								cursor.set(worldX, worldY + 1, worldZ);
+								if (!world.getBlockState(cursor).isAir()) continue;
+								found.add(new BlockPos(worldX, worldY, worldZ));
+								if (found.size() >= LAVA_POSITION_CAP) return found;
+							}
+						}
+					}
+				}
+			}
+		}
+		return found;
 	}
 
 	private static int info(CommandContext<CommandSourceStack> ctx) {

@@ -52,20 +52,32 @@ public final class Fabrik {
 	 * @param pole    direction the mid joints should bend toward; may be null
 	 */
 	public void solve(Vector3f[] joints, float[] lengths, int n, Vector3f target, Vector3f pole) {
-		solve(joints, lengths, n, target, pole, null, DEFAULT_ITERATIONS);
+		solve(joints, lengths, n, target, pole, null, null, DEFAULT_ITERATIONS);
 	}
 
 	public void solve(Vector3f[] joints, float[] lengths, int n, Vector3f target, Vector3f pole, int iterations) {
-		solve(joints, lengths, n, target, pole, null, iterations);
+		solve(joints, lengths, n, target, pole, null, null, iterations);
+	}
+
+	/**
+	 * Without a bind plane. The signs are then enforced in whatever frame this frame's axis
+	 * produces, which is fine for a fixed target and wrong for a limb whose foot travels.
+	 */
+	public void solve(Vector3f[] joints, float[] lengths, int n, Vector3f target, Vector3f pole,
+	                  float[] bendSigns, int iterations) {
+		solve(joints, lengths, n, target, pole, bendSigns, null, iterations);
 	}
 
 	/**
 	 * @param bendSigns per-interior-joint bind-pose bend directions from
 	 *                  {@link dev.jsz.primordia.body.LimbChain#bendSigns}; when supplied, the limb
 	 *                  is held in a plane and each joint is kept on its original side of the axis
+	 * @param bindPerp  the plane those signs were recorded in, from
+	 *                  {@link dev.jsz.primordia.body.LimbChain#bindPerp}; without it the signs are
+	 *                  enforced in a frame that rotates with the foot and eventually inverts them
 	 */
 	public void solve(Vector3f[] joints, float[] lengths, int n, Vector3f target, Vector3f pole,
-	                  float[] bendSigns, int iterations) {
+	                  float[] bendSigns, Vector3f bindPerp, int iterations) {
 		if (n == 0) return;
 		rootStart.set(joints[0]);
 
@@ -93,7 +105,7 @@ public final class Fabrik {
 			// pass restores them exactly. Alternating constrain-then-solve converges on a solution
 			// that satisfies both.
 			if (bendSigns != null && n >= 2) {
-				constrainToPlane(joints, n, target, pole, bendSigns);
+				constrainToPlane(joints, n, target, pole, bendSigns, bindPerp);
 			}
 
 			// Backward pass: pin the effector to the target, walk toward the root.
@@ -130,7 +142,8 @@ public final class Fabrik {
 	 * frames. The per-joint sign check is the part that survives digitigrade limbs, where the knee
 	 * and hock sit on deliberately opposite sides and no single rotation can place both correctly.
 	 */
-	private void constrainToPlane(Vector3f[] joints, int n, Vector3f target, Vector3f pole, float[] bendSigns) {
+	private void constrainToPlane(Vector3f[] joints, int n, Vector3f target, Vector3f pole,
+	                              float[] bendSigns, Vector3f bindPerp) {
 		if (pole == null) return;
 
 		axis.set(target).sub(joints[0]);
@@ -140,6 +153,20 @@ public final class Fabrik {
 		desiredPerp.set(pole).fma(-pole.dot(axis), axis);
 		if (desiredPerp.lengthSquared() < 1e-8f) return;
 		desiredPerp.normalize();
+
+		// Re-anchor to the plane the limb was grown in.
+		//
+		// The vector above is the pole flattened against *this frame's* hip-to-target axis, and that
+		// axis swings with the foot: measured up to 113 degrees from the bind pose over ordinary
+		// ground. The bend signs below were recorded in the bind plane, so once the two are more than
+		// ninety degrees apart they disagree about which side is which, and the re-siding that exists
+		// to keep a knee facing the right way starts driving it the wrong way instead. Flipping the
+		// rebuilt vector back onto the bind plane's half-space costs one dot product and makes the
+		// sign convention mean the same thing at every point in the stride.
+		if (bindPerp != null && bindPerp.lengthSquared() > 0.5f
+				&& desiredPerp.dot(bindPerp) < 0f) {
+			desiredPerp.negate();
+		}
 
 		planeNormal.set(axis).cross(desiredPerp);
 		if (planeNormal.lengthSquared() < 1e-8f) return;

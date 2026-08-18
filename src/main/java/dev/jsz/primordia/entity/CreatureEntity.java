@@ -2211,6 +2211,8 @@ public class CreatureEntity extends PathfinderMob {
 
 		AttributeInstance armor = getAttribute(Attributes.ARMOR);
 		if (armor != null) {
+			// Deliberately stricter than Gene.DORSAL_SPINES.threshold: a token row of spines is a look,
+			// and only a back plated well past that is worth armour points.
 			double plated = g.expresses(Gene.DORSAL_SPINES, 0.62f) ? 2.0 : 0.0;
 			armor.setBaseValue(Math.min(14.0, g.raw(Gene.ARMOR) * 8.0 + plated));
 		}

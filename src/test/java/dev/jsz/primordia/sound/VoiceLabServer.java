@@ -264,7 +264,11 @@ public final class VoiceLabServer {
 				f(o, "stridulation", 0), f(o, "stridulationRate", 40),
 				Math.round(f(o, "syllables", 2)), f(o, "syllableLen", 0.25f), f(o, "gapLen", 0.06f),
 				f(o, "attack", 0.03f), f(o, "release", 0.12f), f(o, "nasality", 0.1f),
-				f(o, "volume", 1f));
+				f(o, "volume", 1f),
+				o.has("family") && !o.get("family").isJsonNull()
+						? dev.jsz.primordia.sound.VoiceFamily.valueOf(
+								o.get("family").getAsString().toUpperCase(java.util.Locale.ROOT))
+						: dev.jsz.primordia.sound.VoiceFamily.MOAN);
 	}
 
 	private static float f(JsonObject o, String key, float fallback) {

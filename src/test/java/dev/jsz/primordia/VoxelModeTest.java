@@ -2,7 +2,9 @@ package dev.jsz.primordia;
 
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BodyPlanBuilder;
+import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
+import dev.jsz.primordia.mesh.LodTier;
 import dev.jsz.primordia.mesh.MeshBaker;
 import dev.jsz.primordia.mesh.MeshData;
 import dev.jsz.primordia.mesh.SurfaceNets;
@@ -125,8 +127,8 @@ class VoxelModeTest {
 	 * a coordinate on that edge's axis and the face is a plane of constant X, Y or Z. This is the
 	 * geometric claim voxel mode makes, and unlike a look it can be checked exactly.
 	 * <p>
-	 * Checked against the mesher rather than against a finished creature, because MeshBaker appends
-	 * the teeth afterwards and those never went through the field at all.
+	 * Checked against the mesher itself rather than against a finished creature, so nothing a later
+	 * stage does to the mesh can mask a face the lattice never squared off.
 	 */
 	@Test
 	void everyVoxelFaceLiesOnAnAxis() {
@@ -255,6 +257,98 @@ class VoxelModeTest {
 			for (float f : net.positions()) {
 				assertTrue(Float.isFinite(f), "a vertex position was not finite");
 			}
+		}
+	}
+	/**
+	 * Two creatures standing together are built out of the same size of block.
+	 * <p>
+	 * The lattice is a power-of-two multiple of the base voxel, so a grid even slightly coarser
+	 * than a pixel is rounded up to two and that animal is visibly built from bigger blocks than
+	 * its neighbour. Large, thick-limbed genomes used to land there: nothing about their limbs
+	 * asked for a finer grid, so they kept the tier's own resolution, and past about five blocks
+	 * of span that resolution is coarser than a pixel. It was 0.2% of the population — rare, and
+	 * unmissable side by side, which is the worst combination for a look that is entirely about
+	 * uniformity.
+	 * <p>
+	 * Checked at the near tier, where the blocks are big enough on screen to compare. The distant
+	 * tiers coarsen on purpose.
+	 */
+	@Test
+	void everyCreatureIsBuiltFromTheSameSizedBlockUpClose() {
+		Random random = new Random(90210);
+		float previous = MeshBaker.voxelSize();
+		MeshBaker.setVoxelSize(PIXEL);
+		try {
+			int checked = 0;
+			for (int trial = 0; trial < 60; trial++) {
+				// Half the sample deliberately large: this only ever went wrong on big animals, and
+				// a uniform draw hits one about twice in a thousand.
+				// Deliberately large *and* thick-limbed. This only ever went wrong where the limbs
+				// asked for nothing — a slender giant already gets a fine grid to keep its legs
+				// from vanishing, and is carried over the line by accident.
+				Genome genome = Genome.random(random)
+						.with(Gene.SIZE, 0.85f + random.nextFloat() * 0.15f)
+						.with(Gene.LEG_THICKNESS, 0.7f + random.nextFloat() * 0.3f)
+						.with(Gene.LEG_LENGTH, 0.5f + random.nextFloat() * 0.5f);
+				BodyPlan plan = planOf(genome);
+				float span = Math.max(plan.boundsMax.x - plan.boundsMin.x,
+						Math.max(plan.boundsMax.y - plan.boundsMin.y,
+								plan.boundsMax.z - plan.boundsMin.z));
+				// Past the resolution ceiling a pixel is unaffordable and coarsening is the
+				// intended answer; those are outside this claim.
+				if (span > 8.5f) continue;
+				MeshData mesh = MeshBaker.bake(plan, LodTier.resolutionFor(LodTier.NEAR));
+				if (mesh.quadCount == 0) continue;
+				checked++;
+				float cell = inferCell(mesh, plan);
+				assertEquals(PIXEL, cell, PIXEL * 0.05f, String.format(
+						"a %.2f-block creature meshed at %.1f pixels per block while its neighbours "
+								+ "get one", span, cell / PIXEL));
+			}
+			assertTrue(checked > 25, "too few meshes to be meaningful: " + checked);
+		} finally {
+			MeshBaker.setVoxelSize(previous);
+		}
+	}
+
+	/** {@link #inferCell(SurfaceNets.Result, BodyPlan)} against a baked mesh rather than a net. */
+	private static float inferCell(MeshData mesh, BodyPlan plan) {
+		float smallest = Float.MAX_VALUE;
+		int verts = mesh.positions.length / 3;
+		for (int v = 0; v < verts; v++) {
+			for (int w = v + 1; w < Math.min(verts, v + 64); w++) {
+				float gap = Math.abs(mesh.positions[w * 3] - mesh.positions[v * 3]);
+				if (gap > 1e-4f) smallest = Math.min(smallest, gap);
+			}
+			if (smallest < Float.MAX_VALUE && v > 200) break;
+		}
+		return smallest == Float.MAX_VALUE ? 0f : smallest;
+	}
+	/**
+	 * The creature that reported this: a 6.4-block animal on thick legs, meshed at two pixels per
+	 * block while everything beside it was on one. Kept as a genome code rather than as a
+	 * description, because the bug was in the interaction between its span and its limb thickness
+	 * and no summary of it would reproduce that.
+	 */
+	private static final String THICK_LIMBED_GIANT =
+			"AZ-nzvaXojnv4MMo4cr96J8AAAAA77WHAqFGceITOL1zzPLm39fVzOI2hXybTK5yg1KHJdoAIvrDtn63rFA5"
+					+ "gArO8vHCF1GVKj8VcCVzS4Jlf3mEidPF3ZQr6K9heb6c0iX5yr2lePJUKYMHZppIcWIFJpyBg6hp"
+					+ "tHfr7LX_1zcMMVy2ci6i7xvk8K5grKu73iN9efXFOXRBg-kO_hBwlIo9B-sbhWz7yC4X7OuOp50k"
+					+ "BaWfcPZT1yV-EilfeyYpPUO6Atw";
+
+	@Test
+	void theReportedGiantIsBuiltFromOnePixelBlocks() {
+		Genome genome = Genome.decode(THICK_LIMBED_GIANT);
+		assertNotNull(genome, "the recorded genome code no longer decodes");
+		float previous = MeshBaker.voxelSize();
+		MeshBaker.setVoxelSize(PIXEL);
+		try {
+			BodyPlan plan = planOf(genome);
+			MeshData mesh = MeshBaker.bake(plan, LodTier.resolutionFor(LodTier.NEAR));
+			assertEquals(PIXEL, inferCell(mesh, plan), PIXEL * 0.05f,
+					"the creature this was reported on is back to oversized blocks");
+		} finally {
+			MeshBaker.setVoxelSize(previous);
 		}
 	}
 }

@@ -3,11 +3,13 @@ package dev.jsz.primordia;
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BodyPlanBuilder;
 import dev.jsz.primordia.body.BoneDef;
+import dev.jsz.primordia.body.Feature;
 import dev.jsz.primordia.genome.Archetype;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.mesh.MeshBaker;
 import dev.jsz.primordia.mesh.MeshData;
 import dev.jsz.primordia.mesh.SkinBinder;
+import dev.jsz.primordia.sdf.BodySdf;
 import dev.jsz.primordia.util.MathX;
 import org.junit.jupiter.api.Test;
 
@@ -35,6 +37,13 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@link MathX#projectOntoSegment} the binder itself calls, and then checks the binder's actual
  * output against that — never the other way around ({@code PITFALLS.md} §6: a test that
  * reimplements the code under test cannot catch the code under test).
+ * <p>
+ * The one thing the oracle does have to share is what "owning bone" <i>means</i>, because the hop
+ * budget is measured from it. It is the nearest bone the surface is entitled to be driven by, not
+ * simply the nearest bone: a leg is not allowed to own a frill it dangles past, and anchoring the
+ * budget on a bone that cannot drive the vertex would measure every influence from the wrong branch
+ * of the skeleton. That definition is restated below rather than imported, in the same spirit as
+ * {@link #MAX_HOPS}.
  */
 class SkinBindingTopologyTest {
 	/**
@@ -58,8 +67,21 @@ class SkinBindingTopologyTest {
 
 			int[][] hops = bfsHopDistances(plan.bones);
 
+			BodySdf sdf = new BodySdf(plan);
+			boolean[] limbBone = new boolean[plan.bones.length];
+			for (dev.jsz.primordia.body.LimbChain limb : plan.legs) {
+				for (int bone : limb.bones) limbBone[bone] = true;
+			}
+			for (dev.jsz.primordia.body.LimbChain limb : plan.arms) {
+				for (int bone : limb.bones) limbBone[bone] = true;
+			}
+
 			for (int v = 0; v < mesh.vertexCount; v++) {
-				int owner = nearestBone(plan.bones, mesh.positions, v);
+				int owner = nearestBone(plan.bones, mesh.positions, v, limbBone,
+						sdf.featureAt(mesh.positions[v * 3], mesh.positions[v * 3 + 1],
+								mesh.positions[v * 3 + 2]),
+						sdf.groupAt(mesh.positions[v * 3], mesh.positions[v * 3 + 1],
+								mesh.positions[v * 3 + 2]));
 				if (owner < 0) continue;
 				vertices++;
 
@@ -107,7 +129,11 @@ class SkinBindingTopologyTest {
 	}
 
 	/** Nearest bone to a vertex by capsule-surface distance — the vertex's owning bone. */
-	private static int nearestBone(BoneDef[] bones, float[] positions, int vertex) {
+	private static int nearestBone(BoneDef[] bones, float[] positions, int vertex,
+	                               boolean[] limbBone, Feature feature, int group) {
+		// A limb bone may only own a surface that is limb, or one the field assigns to that limb.
+		boolean limbSurface = feature == Feature.LIMB || feature == Feature.FOOT
+				|| feature == Feature.CLAWS || feature == Feature.HAND;
 		float px = positions[vertex * 3];
 		float py = positions[vertex * 3 + 1];
 		float pz = positions[vertex * 3 + 2];
@@ -117,6 +143,7 @@ class SkinBindingTopologyTest {
 		for (int b = 0; b < bones.length; b++) {
 			BoneDef bone = bones[b];
 			if (!bone.emitsGeometry && bone.length() <= 1e-5f) continue;
+			if (limbBone[b] && !limbSurface && bone.blendGroup != group) continue;
 
 			float t = MathX.projectOntoSegment(px, py, pz,
 					bone.head.x, bone.head.y, bone.head.z,

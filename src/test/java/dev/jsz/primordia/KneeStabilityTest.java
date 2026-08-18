@@ -154,4 +154,55 @@ class KneeStabilityTest {
 		solver.solve(backward, lengths(2, bone), 2, target, new Vector3f(0f, 0f, -1f), new float[]{1f}, 16);
 		assertTrue(backward[1].z < 0f, "two-bone knee ignored a -Z pole");
 	}
+
+	/**
+	 * On a creature with more than two pairs of legs, every knee bends the way its own foot fans.
+	 * <p>
+	 * "Elbow forward, knee back" is a fact about quadrupeds. A hexapod has no forelimbs and
+	 * hindlimbs, just legs, and applying the opposed convention to it bows the middle pairs toward
+	 * each other. Worse, the middle pair of an odd-numbered set has no fan at all, so whatever
+	 * fraction of the quadruped rule survives becomes the <i>only</i> term deciding its bend: it was
+	 * measured bowing backward at -0.77 while the pair in front of it bowed forward at +0.92, with
+	 * its own foot planted square out to the side. Neighbouring legs bending opposite ways, which is
+	 * what "some legs look different from the others" turns out to mean.
+	 * <p>
+	 * The rule is that the knee radiates with the foot, and a leg whose foot does not fan bends
+	 * straight out to the side rather than picking a direction from a convention that does not
+	 * apply to it.
+	 */
+	@Test
+	void manyLeggedCreaturesRadiateTheirKnees() {
+		StringBuilder wrong = new StringBuilder();
+		for (dev.jsz.primordia.genome.Archetype archetype
+				: dev.jsz.primordia.genome.Archetype.VALUES) {
+			for (int seed = 0; seed < 12; seed++) {
+				Random random = new Random(4242L + seed * 7919L + archetype.ordinal());
+				BodyPlan plan = BodyPlanBuilder.build(archetype.create(random));
+				int pairs = plan.legs.length / 2;
+				if (pairs <= 2) continue;
+				for (LimbChain leg : plan.legs) {
+					float fan = leg.restEffector.z - leg.origin.z;
+					float poleZ = new Vector3f(leg.poleDirection).normalize().z;
+					// A foot barely fanned has no direction to radiate along, and the knee should be
+					// out to the side rather than committed either way.
+					if (Math.abs(fan) < leg.totalLength * 0.05f) {
+						if (Math.abs(poleZ) > 0.5f) {
+							wrong.append(String.format(
+									"%s seed %d: a leg with no fan bends %.2f fore/aft%n",
+									archetype, seed, poleZ));
+						}
+					} else if (fan * poleZ < 0f) {
+						wrong.append(String.format(
+								"%s seed %d: foot fans %.3f but the knee bends %.2f, the other way%n",
+								archetype, seed, fan, poleZ));
+					}
+				}
+			}
+		}
+		assertTrue(wrong.isEmpty(), "knees bending against their own foot fan:" + nl2() + wrong);
+	}
+
+	private static String nl2() {
+		return System.lineSeparator();
+	}
 }

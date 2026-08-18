@@ -41,11 +41,24 @@ public final class LimbChain {
 	 * whole-chain rotation must put them on the same side. Recording the bind-pose sign per joint
 	 * fixes both: the solver restores the configuration the limb was actually grown with.
 	 */
+	/**
+	 * The limb's bind-pose bend plane: {@link #poleDirection} with the component along the bind
+	 * hip-to-foot axis removed, normalised.
+	 * <p>
+	 * {@link #bendSigns} are recorded against this vector, so it is the only frame in which the
+	 * correct side means anything. The solver has to rebuild an equivalent from the live
+	 * hip-to-target axis each frame, and as a foot swings that rebuilt vector rotates - measured at
+	 * up to 113 degrees away from this one. Past ninety the two disagree about which way is which,
+	 * and enforcing a sign in the rotated frame puts the knee on the wrong side of the limb. Keeping
+	 * the bind plane lets the solver re-anchor instead of inverting.
+	 */
+	public final Vector3f bindPerp;
+
 	public final float[] bendSigns;
 
 	public LimbChain(int[] bones, Vector3f origin, Vector3f restEffector, Vector3f poleDirection,
 	                 int side, int pairIndex, float gaitPhase, float totalLength, boolean weightBearing,
-	                 float[] bendSigns) {
+	                 float[] bendSigns, Vector3f bindPerp) {
 		this.bones = bones;
 		this.origin = origin;
 		this.restEffector = restEffector;
@@ -56,5 +69,6 @@ public final class LimbChain {
 		this.totalLength = totalLength;
 		this.weightBearing = weightBearing;
 		this.bendSigns = bendSigns;
+		this.bindPerp = bindPerp;
 	}
 }

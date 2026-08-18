@@ -131,8 +131,11 @@ public final class BodyPalette {
 	 * what it is, so a creature that grew pods while reporting no glow would light up regardless
 	 * of every other check. {@link dev.jsz.primordia.mesh.Pattern} now refuses that combination
 	 * outright rather than trusting the two constants to stay in order.
+	 * <p>
+	 * The number itself lives on {@link Gene#threshold} now, so the editor can draw the cut as a
+	 * tick on the slider and describe the same boundary this class shades against.
 	 */
-	public static final float GLOW_THRESHOLD = 0.82f;
+	public static final float GLOW_THRESHOLD = Gene.BIOLUMINESCENCE.threshold;
 
 	/**
 	 * Maps the glow locus onto hues that bioluminescence actually occurs at.

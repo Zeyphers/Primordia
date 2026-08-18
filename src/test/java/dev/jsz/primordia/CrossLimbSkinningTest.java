@@ -3,11 +3,13 @@ package dev.jsz.primordia;
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BodyPlanBuilder;
 import dev.jsz.primordia.body.BoneDef;
+import dev.jsz.primordia.body.Feature;
 import dev.jsz.primordia.genome.Archetype;
 import dev.jsz.primordia.mesh.LodTier;
 import dev.jsz.primordia.mesh.MeshBaker;
 import dev.jsz.primordia.mesh.MeshData;
 import dev.jsz.primordia.mesh.SkinBinder;
+import dev.jsz.primordia.sdf.BodySdf;
 import org.junit.jupiter.api.Test;
 
 import java.util.Random;
@@ -80,5 +82,58 @@ class CrossLimbSkinningTest {
 		}
 
 		assertTrue(checked > 50_000, "not enough vertices were examined: " + checked);
+	}
+	/**
+	 * A limb drives limbs, and nothing else.
+	 * <p>
+	 * The blend-group rule above reasons about the skeleton, and the fault this catches is about the
+	 * surface: a frill hangs off a spine bone but sits, in bind pose, right beside a thigh. The
+	 * thigh is then the nearest capsule, so the frill vertex was "owned" by it and ownership was
+	 * allowed to override the group — deliberately, because a splayed foot's outer toe reads as
+	 * trunk by group and welding it to the spine looked worse.
+	 * <p>
+	 * Measured before the surface rule, across eleven archetypes: <b>26% of every frill vertex the
+	 * generator makes was driven by a leg</b>, at up to 0.98 of its weight, along with 7% of ears
+	 * and a scatter of plates, horns and light organs. It is invisible standing still and shows the
+	 * moment the animal walks — the ornament stretches toward the swinging limb. Every offender was
+	 * a vertex the field says belongs to the body, which is what the rule keys on.
+	 */
+	@Test
+	void noLimbDrivesOrnamentOrTheAbdomen() {
+		Random random = new Random(90125);
+		int checked = 0, ornament = 0;
+
+		// Every archetype, not just the crowded ones: this fault needs ornament rather than packed
+		// limbs, and it is the grazers and saurians that grow the frills it showed on.
+		for (Archetype archetype : Archetype.VALUES) {
+			for (int trial = 0; trial < 6; trial++) {
+				BodyPlan plan = BodyPlanBuilder.build(archetype.create(random));
+				MeshData mesh = MeshBaker.bake(plan, LodTier.resolutionFor(LodTier.NEAR));
+				BodySdf sdf = new BodySdf(plan);
+
+				for (int v = 0; v < mesh.vertexCount; v++) {
+					Feature feature = sdf.featureAt(mesh.positions[v * 3],
+							mesh.positions[v * 3 + 1], mesh.positions[v * 3 + 2]);
+					// Limb surfaces are supposed to be limb-driven; this is about everything else.
+					if (feature == Feature.LIMB || feature == Feature.FOOT
+							|| feature == Feature.CLAWS || feature == Feature.HAND) continue;
+					ornament++;
+
+					for (int i = 0; i < SkinBinder.MAX_INFLUENCES; i++) {
+						float w = mesh.boneWeights[v * SkinBinder.MAX_INFLUENCES + i];
+						if (w <= 0.02f) continue;
+						BoneDef bone = plan.bones[mesh.boneIndices[v * SkinBinder.MAX_INFLUENCES + i]];
+						if (!bone.name.startsWith("leg") && !bone.name.startsWith("arm")) continue;
+						fail(String.format(
+								"%s: a %s vertex is %.0f%% driven by %s — it will be dragged along "
+										+ "as that limb swings", archetype, feature, w * 100f, bone.name));
+					}
+					checked++;
+				}
+			}
+		}
+
+		assertTrue(ornament > 20_000, "not enough non-limb surface was examined: " + ornament);
+		assertTrue(checked > 20_000, "not enough vertices were examined: " + checked);
 	}
 }

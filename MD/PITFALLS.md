@@ -31,8 +31,10 @@ The smooth union is what makes a limb grow out of a hip instead of intersecting 
 that wants a hard edge it is exactly wrong.
 
 - **Teeth** were tried as `SdfBlob`s twice. They came out as rounded white lumps welded to the lip.
-  They are now `ToothDef` + `ToothMesher`, emitted as geometry outside the field entirely and
-  appended to the baked mesh after smoothing, skin binding and winding correction have all run.
+  The answer was `ToothDef` + `ToothMesher`, emitting them outside the field entirely and appending
+  them to the baked mesh after smoothing, skin binding and winding correction had all run. *Teeth
+  have since been cut from the generator and those classes deleted — the sections below that use
+  them as their example are kept for the general lesson, not as a description of current code.*
 - **Armour plates and light organs** had the opposite problem: they were in the *hard*-union set
   (`Feature.isSurfaceDetail`) and read as discs and balls stuck on the body with a visible rim. They
   belong in the smooth union with the cranium and the jaw.
@@ -287,3 +289,304 @@ Two things this cost time on:
 rather than recomputing from the genome (§6), and asserts both ends of the range are actually
 reachable — the same thing `OrnamentTest` exists to check, for the same reason: no single head is
 invalid, so reachability is all there is to test.
+
+---
+
+## 16. An over-reached limb does not look over-reached
+
+The gait asked legs for targets outside their own reach on **59% of all leg-frames**, averaging 1.39
+times the limb's length and peaking at twelve times it. Nothing reported this. Every animation test
+passed, `KneeStabilityTest` found no popping, and the solved poses all had a visible bend in them.
+
+The bend is why. `CreatureAnimator.solveLeg` absorbs over-reach by stretching a *working copy* of the
+bone lengths and clamping the target to 95% of the stretched chain — so an impossible target still
+comes back bent, and every straightness measurement says the limb is fine. What is actually wrong is
+that the chain ends up **short**, pointing at somewhere the foot never arrives. On screen that is a
+rigid leg held out at an angle with its foot off the ground, which is what "the legs go straight and
+pin" describes.
+
+**Measure the gap between the target and the toe, not the shape of the limb.** `GaitRig`'s
+`reachmiss` is that number; it ran at 0.507 leg lengths and is now 0.047.
+
+Two roots, both the same shape — a proportion picked by eye standing in for a measurement:
+
+- **Stride was `hipHeight * 1.35`** with a foot planted `0.65` of a stride ahead. Nothing related
+  either figure to how far a leg can actually move. Worse, the plant lead was a constant fraction of
+  stride while cadence was clamped top and bottom, so wherever cadence and speed stopped agreeing —
+  a large animal moving slowly, a small one moving fast — the foot was planted ahead of the hip by
+  an unbounded amount and *stayed* ahead for the whole stance. A real stride is symmetric about the
+  hip, and the lead that makes it so is half the distance the body covers during a stance.
+- **Limbs were grown all but straight.** `LIMB_SLACK` says bones are made 10% longer than the
+  hip-to-foot line, and for a C-curve they are; for the digitigrade S-curve the second control point
+  crosses the axis and at mid-range lands *on* it, so the two halves of the bow cancel. Bind-pose
+  extension ran to 0.99 — an insectoid standing at 99% of its legs' length, with nothing left to
+  step with. Whatever a limb's curve shape, the bow is now solved until the arc is long enough.
+
+The reach envelope is the fix and everything else falls out of it: stride length, how far a foot may
+be planted, when a dragged foot must step again, and how high the body can ride.
+
+---
+
+## 17. Guessed spans make arctangents lie
+
+Body pitch and roll came from averaging the front feet against the rear, and the left against the
+right, over a span guessed as a fraction of the bounding box. The guess had nothing to do with how
+far apart the feet in question actually were, so the same one-block height difference produced a
+different angle on every creature — and roll was not clamped at all. One foot up a single block on a
+narrow animal asked for **sixty-six degrees** of lean and was given it, at four hundred degrees a
+second. That is the creature rolling onto its side at a block edge.
+
+A least-squares plane through the grounded feet needs no span, uses the positions that are actually
+there, and handles two legs or eight without a special case. Swinging feet are excluded: a foot is
+lifted during swing *by design*, and feeding that lift into the body's attitude made every creature
+rock in time with its own footfalls.
+
+Related, and the same lesson at a different scale: measuring terrain slope from one sample ahead and
+one behind is a coin toss on ground made of blocks. The pair straddles a step, the slope jumps by a
+whole block, and the body snaps. Several samples fitted as a line turn the same step into the gentle
+grade it visually is.
+
+---
+
+## 18. A scale error inside one frame is invisible from inside that frame
+
+The animator works in unscaled model space; foot plants are world positions; the renderer scales the
+whole model by how far grown the creature is. Nothing divided that back out, so a juvenile's drawn
+legs reached 42% of the way to ground its feet were correctly planted on.
+
+The test written to catch it — stand a juvenile on a ramp, check its toes land on the ground —
+**passed against the bug**. The error scales both axes about the creature's own position, and a
+straight ramp through that point maps onto itself under exactly that scaling. Every toe sat
+perfectly on a slope that was wrong by more than half.
+
+This is §5 again in a new place: a self-consistent frame cannot be tested from inside itself. The
+assertion that works compares the two frames directly — the drawn toe, scaled the way the renderer
+scales it, against the world position the foot was planted at.
+
+---
+
+## 19. Redundant systems defeat single-point break testing
+
+§3 says to break the code deliberately and confirm the test fails. Doing that here produced a
+surprise worth recording: reverting the stride to its old formula changed nothing, and disabling the
+envelope clamp entirely changed nothing either. Both tests still passed.
+
+That is not a bad test, it is a redundant fix — the corrective-step trigger and the body-height
+solver each independently keep limbs inside their reach, so removing any one of the three leaves the
+other two holding. Good design, and it means **breaking one piece is not a discrimination check when
+the pieces overlap.** The check that works is to restore the whole original and run the new suite
+against it: six of seven tests failed, each naming the symptom it exists for.
+
+## 20. A stride sized from the tighter half of an asymmetric envelope
+
+Body plans routinely grow a foot well fore or aft of its own hip — a quadruped's front foot commonly
+sits two thirds of a leg length ahead of its shoulder. Measured about that bind position the leg's
+fore/aft reach is wildly lopsided: 0.14 leg lengths of forward room against 1.38 behind.
+
+Sizing the stride as `2 × min(forward, backward)` throws the larger half away. Worse, the stride is a
+minimum across every leg, so one such limb sets the cadence for the whole animal. Measured: stride
+collapsed to 0.28 of hip height, step frequency pinned against its ceiling, and every leg blurred.
+
+**None of the reach metrics catch this.** A creature taking paces a tenth of its hip height never
+over-reaches, never misses its target and never tips over — it scores *better* on all of them than a
+creature that strides properly. The suite was green while the animals shivered. The stride has to be
+measured about the middle of each leg's travel, and cadence has to be a tested property in its own
+right, because it is the only reading that distinguishes walking from vibrating.
+
+## 21. Frequency, not amplitude, is what reads as "jittering"
+
+The torso's vertical bob is `hipHeight * 0.035` — a third of a percent of a block on a small
+creature, and invisible in a still. It runs at *twice* the step frequency, so a creature trotting at
+four steps a second bobs at eight hertz, and eight hertz of anything reads as a vibration rather than
+a gait.
+
+Two consequences. Any oscillation whose frequency is derived from cadence needs an amplitude that
+falls away as cadence rises, or it turns into a buzz precisely when the animal is most visible.
+And when measuring smoothness, count direction changes per second, not displacement: the amplitude
+here never changed, and the amplitude was never the complaint.
+
+## 22. Clamping to a boundary puts the trigger exactly on the boundary
+
+Stance clamps each planted foot back inside its reach envelope every frame. A corrective step that
+fires when the foot is *outside* that envelope therefore fires on a foot sitting exactly on the
+threshold, and the next millimetre of body travel re-fires it — a leg stepping every frame, measured
+at 13 steps per second per leg against a phase ceiling of 6.
+
+Any test of the form "is this quantity past the limit we just clamped it to" needs hysteresis. It
+also needs an escape hatch: a dwell time added to stop the chatter will strand a foot that is
+genuinely out of reach, so the gross violation has to bypass the wait that the marginal one respects.
+
+## 23. A convention borrowed from one body plan is undefined on another
+
+Legs were poled by the quadruped rule — elbow bends back, knee bends forward — softened toward a
+radial fan for many-legged creatures, but only by 75%. The surviving quarter is harmless on any leg
+whose foot fans fore or aft, because the fan term outvotes it.
+
+It is not harmless on the middle pair of a hexapod, whose fan is exactly zero. There the leftover
+quarter of a rule about forelimbs and hindlimbs is the *only* term deciding which way the knee
+bends. Measured on a flat-legged insectoid: front pair poled +0.92 with its foot fanned forward,
+middle pair -0.77 with its foot square out to the side, rear pair -0.92. Neighbouring legs bending
+opposite ways for no reason present in the geometry — which is what a report of "some legs look
+different from the others" turned out to mean.
+
+When a rule is inherited from a body plan the current creature does not have, the answer is not to
+weight it down. It is to drop it: a hexapod has no forelimbs and hindlimbs, just legs.
+
+## 24. A constraint frame rebuilt per frame is not the frame it was recorded in
+
+`LimbChain.bendSigns` records which side of the limb each joint was grown on, measured against the
+pole flattened against the **bind** hip-to-foot axis. The solver rebuilt an equivalent vector every
+frame from the **live** hip-to-target axis — and as a foot swings through a stride that axis
+rotates, carrying the rebuilt vector with it. Measured at up to 113 degrees from the bind plane.
+
+Past ninety the two frames disagree about which way is which, so the re-siding that exists to hold a
+knee on its correct side starts driving it to the wrong one. The symptom is a knee that inverts
+partway through a stride, on some legs and not others, depending on where each foot happens to be.
+
+Any per-frame reconstruction of a stored convention needs anchoring to the frame the convention was
+stored in — here, one dot product and a negate.
+
+## 25. "It will fail loudly" is not a reason to keep a copy
+
+`EditorServer` recomputed the gait cadence rather than asking the animator, and said so:
+
+> Duplication is normally how two copies of a rule drift apart, but this one fails loudly rather
+> than silently: get it wrong and the loop visibly jumps, which is the first thing anyone watching
+> a walk cycle notices.
+
+The stride stopped being a multiple of hip height and started coming from the legs' reach envelope.
+The copy went on dividing by `hipHeight * 1.35`, the clip stopped being one whole gait cycle, and
+the preview stopped looping — exactly as predicted, in exactly the described way. Predicting a
+failure is not preventing one. If a value cannot be derived outside a class, publish it from inside.
+
+## 26. A loop needs every layer to be periodic, not just the one you are looking at
+
+Even with the clip length correct, the walk preview would not close. The gait was periodic; the idle
+layer was not. Breathing runs at 1.7 radians a second, the tail sways at 2.4 and pitches at 1.9, the
+jaw idles at 1.5 — all driven from absolute `time` and all deliberately incommensurate with the
+stride, because that is what stops a standing animal looking frozen.
+
+The tell was in the error ranking: saurian 0.375, apex 0.19, biped 0.10 — tail size, not leg count.
+Anything that has to loop needs those layers switched off rather than tuned, which is what
+`AnimationContext.ambient` now does.
+
+## 27. A floor on the thick end of a taper is not a floor
+
+Limb thickness had two minimums, one absolute and one against hip height, and both applied at the
+shoulder. The tip is that times the taper, so making the taper a per-creature trait sent the
+thinnest limbs straight through a slenderness limit that looked like it was holding — 0.0088 against
+a hip height of 0.48, over 50:1.
+
+Clamping the taper instead would have been the wrong repair: holding the shoulder fixed and pulling
+the ankle in only ever yields a thinner limb. The floors have to be divided by the taper, so a limb
+that narrows harder *starts* thicker. A broad shoulder over a narrow ankle is the silhouette; a
+fixed ratio is not a silhouette, it is the absence of one.
+
+## 28. Wide parameter ranges are not variety if they all track one gene
+
+Every voice parameter was derived from the genome over a generous range, and the synthesiser was a
+careful source-filter model with four named nonlinearities. It still all sounded the same, and the
+reason was not in any one range. Measured over 4400 voices, nine parameters correlated with
+`AGGRESSION`: speed quotient 0.95, open quotient -0.92, chaos 0.90, subharmonic 0.90, shimmer 0.90,
+jump chance 0.89, jitter 0.82, spectral tilt 0.81, biphonation 0.56. Jitter and shimmer were derived
+*from chaos*, so they were a third copy of the same reading rather than separate ones.
+
+Two principal components accounted for **68%** of all variation in the population. Every creature
+was somewhere between a big calm one and a small cross one; hearing both corners was hearing the
+whole range. Widening any individual range only stretches that sheet — it cannot add a dimension to
+it. The fixes were to give roughness its own sources and to add a categorical axis (`VoiceFamily`)
+chosen from loci other than temper, taking PC1+PC2 to 56%.
+
+The general form: **the effective dimensionality of a generator is a property nobody notices until
+they experience the output in bulk.** It cannot be read off the code, because the code looks like a
+lot of independent parameters. Measure it.
+
+## 29. Scores built from different numbers of terms are not comparable
+
+The first version of `VoiceFamily` selection summed weighted trait terms per family and took the
+argmax. Families whose scores happened to have more terms, or terms with higher means, simply won:
+78% of the population landed in three of the eight families and warble got 0.9%. Eight families in
+the code, three in the world.
+
+Nearest-prototype selection has no such bias — every family is a point in the same trait space and
+distances are comparable by construction, which spread the same eight families over 5% to 26%
+without tuning a single coefficient.
+
+## 30. "Individual variation" from a hash is not heritable
+
+`VoiceProfile` added per-genome variation by scrambling `Genome.hashCode()`, which is
+`Arrays.hashCode(values)` — one point mutation changes it completely. So the class's own promise
+that "a lineage keeps its voice across generations" held only for the part of the voice derived
+from body size; the individual part resampled every birth, and a calf sounded nothing like its
+mother.
+
+A weighted sum over every locus gives the same apparent randomness while changing by about a
+hundredth per mutation. If a value is meant to be inherited, it has to be a smooth function of the
+thing that is inherited — a hash is deliberately the opposite of smooth.
+
+## 31. A target chosen at lift-off is arrived at one swing later
+
+The gait led each foot's plant by half the stance travel — the distance the body covers while that
+foot is on the ground — which makes a stride symmetric only if the foot arrives the instant it
+leaves. It does not: it arrives one swing later, and at a duty factor of 0.62 the swing carries the
+body 0.38 of a cycle while that lead covers 0.31 of one. Every foot therefore touched down *already*
+behind its hip and then spent the whole stance falling further back.
+
+Measured across the gait sweep it was **0.29 of a leg length aft, on every leg of every archetype**,
+and nothing in the suite caught it: reach, cadence, contact quality and body attitude were all green
+the whole time. There is no reading of "is the leg overstretched" or "does the foot reach the
+ground" that notices an entire animal being dragged along by its shoulders.
+
+Adding the swing's own travel to the lead brought it to 0.13 overall and 0.06 at a walk, and quietly
+improved over-reach, demanded reach and foot-sinking as well. `GaitRig.Result.footBiasMean` measures
+it now, and `TerrainGaitTest.feetDoNotTrailBehindTheBody` holds it.
+
+Corollary: whenever a value is computed at one moment and consumed at another, the interval between
+them belongs in the arithmetic. The residual at high speed is a different fault — a creature given
+more speed than its stride can cover has its plants dragged back by the envelope clamp, which is
+honest.
+
+## 32. A power-of-two grid rounds a near miss all the way up
+
+Voxel mode sizes its lattice to a power-of-two multiple of the base voxel so successive LOD tiers
+stay aligned. That means a grid **one per cent** coarser than a pixel is not one per cent coarser on
+screen — it is rounded to two pixels, and that creature is visibly built from blocks twice the size
+of the ones beside it.
+
+The resolution was raised only for thin limbs and narrow gaps, so the genomes that landed there were
+the ones asking for nothing: large, thick-legged animals kept the tier's own resolution, and past
+about five blocks of span that resolution is coarser than a pixel. It was 0.2% of the population —
+rare enough to look like a rendering glitch and impossible to miss when one stands next to a normal
+animal, which is the worst combination for an effect whose entire claim is uniformity.
+
+`MeshBaker.resolutionFor` now asks for the world's voxel as well as the creature's limbs. Holding a
+6.4-block animal to one pixel cost 2,000 quads → 8,142, well inside the near-tier budget.
+
+## 33. Two rules about the skeleton cannot answer a question about the surface
+
+`SkinBinder` had two guards against a limb dragging geometry it has no business driving: a
+parent-chain hop budget, and the blend group that keeps a spider's legs apart. Both reason about the
+*skeleton*. The remaining fault was about the *surface* — a frill hangs off a spine bone but sits,
+in bind pose, right beside a thigh, so the thigh is the nearest capsule and the frill vertex was
+owned by it. Ownership was then allowed to override the group rule, deliberately, because a splayed
+foot's outer toe reads as trunk by group and welding it to the spine looked worse.
+
+Measured across eleven archetypes, that escape was driving **26% of every frill vertex the generator
+makes from a leg bone, at up to 0.98 weight**, plus 7% of ears and a scatter of plates, horns and
+light organs. Invisible standing still; the ornament stretches toward the limb the moment the animal
+walks. Every offender was a vertex the field says belongs to the body, so `groupAt` had the answer
+all along and nothing was asking it at the right moment.
+
+The rule now is that a leg or arm bone may drive limb surfaces and its own group, and nothing else —
+applied to *ownership* as well as to candidacy, since the owner is what anchors the hop budget.
+`SkinProbe` (`gradle skinProbe`) prints the split by feature and every ornament row now reads 0.00%.
+
+Two corollaries, both paid for here:
+
+- **Do not treat "has a blend group" as "is a limb".** The jaw carries one, so the first version of
+  this rule denied the jaw ownership of its own surface and a jaw vertex picked up spine weight four
+  hops away. Leg and arm chain membership is the property actually meant, and `BodyPlan` lists it.
+- **Overlapping guards hide each other.** Disabling either half of the fix left the other half
+  passing the new test, and it only failed with both off. A test that has not been seen to fail has
+  not been shown to test anything — and with two guards that means turning off both.
+

@@ -108,7 +108,9 @@ public record VoiceProfile(
 		/** Strength of the nasal antiresonance, in [0,1]. */
 		float nasality,
 		/** Playback volume handed to the sound engine, before distance. */
-		float volume
+		float volume,
+		/** Which kind of noise this animal makes. See {@link VoiceFamily}. */
+		VoiceFamily family
 ) {
 
 	/** Speed of sound in air at body temperature, m/s. Sets the formants from the tube length. */
@@ -128,7 +130,7 @@ public record VoiceProfile(
 				0.02f, 0.06f, 0.05f,
 				5f, 0.01f,
 				0f, 40f,
-				2, 0.28f, 0.10f, 0.02f, 0.12f, 0.1f, 0.8f);
+				2, 0.28f, 0.10f, 0.02f, 0.12f, 0.1f, 0.8f, VoiceFamily.MOAN);
 	}
 
 	public static VoiceProfile of(Genome genome, BodyPlan plan) {
@@ -153,11 +155,13 @@ public record VoiceProfile(
 		// A per-genome scramble, so two animals that happen to share a mass are still not the same
 		// voice. Individual variation on top of the systematic part, exactly as in a real population.
 		final int hash = genome.hashCode();
-		final float v1 = unitFromHash(hash, 0x9E3779B9);
-		final float v2 = unitFromHash(hash, 0x85EBCA6B);
-		final float v3 = unitFromHash(hash, 0xC2B2AE35);
-		final float v4 = unitFromHash(hash, 0x27D4EB2F);
-		final float v5 = unitFromHash(hash, 0x165667B1);
+		final float v1 = variate(genome, 0x9E3779B9);
+		final float v2 = variate(genome, 0x85EBCA6B);
+		final float v3 = variate(genome, 0xC2B2AE35);
+		final float v4 = variate(genome, 0x27D4EB2F);
+		final float v5 = variate(genome, 0x165667B1);
+		final float v6 = variate(genome, 0x2545F491);
+		final float v7 = variate(genome, 0x94D049BB);
 
 		// ---- the source: how fast the folds beat -----------------------------------------------
 		//
@@ -223,40 +227,59 @@ public record VoiceProfile(
 		//
 		// Chaos is aperiodic fold vibration, and it is the whole of the rasp in a roar. Predators
 		// and anything pushing hard live at the top of this range.
+		//
+		// Aggression is weighted down through this whole section, and that is the point of it.
+		// Measured over 4400 voices, nine parameters here tracked aggression between 0.56 and 0.95,
+		// so the entire roughness of a voice was one gene and two components accounted for 68% of
+		// all variation in the population. A crow is not an angry animal and a stag's roar is nearly
+		// tonal; roughness is a property of an individual larynx, and the individual variate now
+		// carries as much of it as the temper does.
 		float chaos = Mth.clamp(
-				aggression * 0.55f + (diet == DietGroup.CARNIVORE ? 0.18f : 0f) + v2 * 0.12f,
+				aggression * 0.26f + (diet == DietGroup.CARNIVORE ? 0.14f : 0f)
+						+ v2 * 0.34f + metabolism * 0.12f,
 				0.03f, 0.85f);
 
 		// Period doubling puts a band an octave below f0. It is why a growl sounds bigger than the
 		// animal making it — the ear reads the subharmonic as the fundamental.
-		float subharmonic = Mth.clamp(aggression * 0.6f + (float) Math.log1p(mass) * 0.18f + v1 * 0.1f,
-				0.02f, 0.8f);
+		float subharmonic = Mth.clamp(aggression * 0.24f + (float) Math.log1p(mass) * 0.22f
+						+ v6 * 0.36f, 0.02f, 0.8f);
 
 		// Two sources at once. Kept modest — a little is roughness, a lot is a horse whinny.
-		float biphonation = Mth.clamp(0.04f + v4 * 0.18f + aggression * 0.12f, 0f, 0.35f);
+		float biphonation = Mth.clamp(0.02f + v4 * 0.34f + aggression * 0.05f, 0f, 0.45f);
 		// Deliberately not a simple ratio: a simple one fuses into one tone, and the beating is the
 		// entire point.
 		float biphonationRatio = 1.21f + v5 * 0.55f;
 
-		float jumpChance = Mth.clamp(0.05f + aggression * 0.22f + fear * 0.12f, 0f, 0.45f);
+		float jumpChance = Mth.clamp(0.03f + aggression * 0.10f + fear * 0.12f + v7 * 0.26f,
+				0f, 0.45f);
 
 		// ---- source shaping ----------------------------------------------------------------------
 		//
 		// Spectral tilt. Low cutoff is a dull, breathy, closed sound; high is a hard bright blare.
 		// Big animals are darker, and effort brightens (applied per call in the synthesiser).
 		float spectralTilt = Mth.clamp(
-				900f + aggression * 2600f + (1f - (float) Math.log1p(mass)) * 900f + v3 * 500f,
+				700f + aggression * 1100f + (1f - (float) Math.log1p(mass)) * 900f
+						+ v3 * 2300f + headElongation * 500f,
 				450f, 5200f);
 
 		float aspiration = Mth.clamp(
-				0.14f + metabolism * 0.22f + (float) Math.log1p(mass) * 0.14f - aggression * 0.06f,
-				0.06f, 0.75f);
+				0.10f + metabolism * 0.20f + (float) Math.log1p(mass) * 0.14f
+						- aggression * 0.05f + v5 * 0.28f,
+				0.06f, 0.85f);
 
-		float openQuotient = Mth.clamp(0.72f - aggression * 0.33f + v1 * 0.14f, 0.25f, 0.9f);
-		float speedQuotient = Mth.clamp(0.35f + aggression * 0.45f + v2 * 0.15f, 0.25f, 0.9f);
+		// Centred so the variate can use the whole legal range. Written around 0.74 these two sat
+		// hard against their own clamps, which quietly threw away most of the individual
+		// variation and left temper as the only thing still moving them.
+		float openQuotient = Mth.clamp(0.575f - aggression * 0.09f + (v1 - 0.5f) * 0.56f,
+				0.25f, 0.9f);
+		float speedQuotient = Mth.clamp(0.575f + aggression * 0.11f + (v5 - 0.5f) * 0.54f,
+				0.25f, 0.9f);
 
-		float jitter = Mth.clamp(0.008f + chaos * 0.06f + fear * 0.02f, 0f, 0.10f);
-		float shimmer = Mth.clamp(0.04f + chaos * 0.30f, 0f, 0.4f);
+		// Derived from chaos before, which made them a third copy of the same axis rather than
+		// separate readings. Hoarseness and loudness instability really are correlated with rasp,
+		// but they are not the same measurement, and modelling them as one flattened both.
+		float jitter = Mth.clamp(0.006f + chaos * 0.030f + fear * 0.02f + v7 * 0.035f, 0f, 0.10f);
+		float shimmer = Mth.clamp(0.02f + chaos * 0.14f + v6 * 0.22f, 0f, 0.4f);
 
 		// Vibrato is control, not strain — the opposite signal to chaos. Social animals with long
 		// calls use it; it is kept shallow so it never reads as a synthesiser LFO.
@@ -286,12 +309,118 @@ public record VoiceProfile(
 
 		float volume = Mth.clamp(0.55f + (float) Math.log1p(mass) * 0.30f, 0.45f, 1.35f);
 
+
+		// ---- family: what kind of noise this is -------------------------------------------------
+		//
+		// Everything above places the animal on a sheet of size against temper. This is the axis
+		// that is not on that sheet, and it is a mechanism rather than a setting: a whistle is not a
+		// quiet roar, it is a different way of making sound. See VoiceFamily for the measurements
+		// that made it necessary.
+		VoiceFamily family = chooseFamily(acousticSize, sociability, metabolism, fear,
+				aggression, headElongation, jawWidth, v3, v4);
+
+		switch (family) {
+			case BELLOW -> {
+				f0 *= 0.70f;
+				subharmonic = Math.max(subharmonic, 0.58f);
+				spectralTilt *= 0.70f;
+				syllables = Math.max(1, syllables / 2);
+				syllableLen *= 1.75f;
+				attack = Mth.clamp(attack * 2.4f, 0.02f, 0.30f);
+				release *= 1.5f;
+				vibratoDepth *= 0.45f;
+			}
+			case BARK -> {
+				// The silence is half the sound. A bark with the gaps closed is a growl.
+				syllableLen *= 0.34f;
+				gapLen = Math.max(gapLen, 0.055f);
+				syllables = Mth.clamp(syllables + 1, 2, 8);
+				attack = 0.005f;
+				release *= 0.32f;
+				spectralTilt *= 1.45f;
+				chaos = Math.min(0.9f, chaos * 1.15f);
+				for (int i = 0; i < formantMotion.length; i++) formantMotion[i] *= 1.4f;
+			}
+			case TRILL -> {
+				// Past about fifteen a second the syllable stops being an event and the rate becomes
+				// the timbre, which is the entire identity of this family.
+				syllables = 8;
+				syllableLen = Mth.clamp(syllableLen * 0.20f, 0.028f, 0.10f);
+				gapLen = Mth.clamp(gapLen * 0.25f, -0.01f, 0.03f);
+				f0 *= 1.32f;
+				chaos *= 0.30f;
+				subharmonic *= 0.30f;
+				jitter *= 0.5f;
+				vibratoRate *= 1.6f;
+			}
+			case WHISTLE -> {
+				// Suppressed rather than driven: what is left when the nonlinearities are taken away
+				// is one partial, and that is what a whistle is.
+				f0 *= 1.55f;
+				chaos *= 0.10f;
+				subharmonic *= 0.12f;
+				biphonation *= 0.18f;
+				aspiration *= 0.30f;
+				jumpChance *= 0.25f;
+				spectralTilt *= 0.55f;
+				openQuotient = Mth.clamp(openQuotient + 0.18f, 0.25f, 0.92f);
+				vibratoDepth = Mth.clamp(vibratoDepth * 2.4f + 0.006f, 0f, 0.05f);
+				for (int i = 0; i < formantBw.length; i++) formantBw[i] *= 0.42f;
+			}
+			case RASP -> {
+				// No usable fundamental; the tract shapes broadband noise and the formants carry the
+				// whole size cue on their own.
+				aspiration = Math.max(aspiration, 0.78f);
+				chaos = Math.max(chaos, 0.62f);
+				subharmonic *= 0.35f;
+				spectralTilt *= 1.30f;
+				f0 *= 0.92f;
+				syllableLen *= 1.35f;
+				attack = Mth.clamp(attack * 1.8f, 0.01f, 0.20f);
+				for (int i = 0; i < formantBw.length; i++) formantBw[i] *= 1.55f;
+			}
+			case MOAN -> {
+				f0 *= 0.84f;
+				syllables = Mth.clamp(syllables / 2, 1, 2);
+				syllableLen *= 2.10f;
+				attack = Mth.clamp(attack * 3.0f, 0.03f, 0.34f);
+				release *= 1.9f;
+				chaos *= 0.38f;
+				jumpChance *= 0.3f;
+				vibratoRate *= 0.55f;
+			}
+			case KNOCK -> {
+				// Borrows the insect excitation at a rate slow enough that the knocks are separate
+				// events. Above roughly thirty a second this family stops knocking and starts buzzing.
+				stridulation = Math.max(stridulation, 0.62f);
+				stridulationRate = 7f + v4 * 11f;
+				syllableLen *= 0.55f;
+				syllables = Mth.clamp(syllables, 2, 6);
+				for (int i = 0; i < formantBw.length; i++) formantBw[i] *= 0.55f;
+			}
+			case WARBLE -> {
+				biphonation = Math.max(biphonation, 0.32f);
+				biphonationRatio = 1.37f + v5 * 0.42f;
+				jumpChance = Math.max(jumpChance, 0.38f);
+				syllables = Mth.clamp(syllables + 1, 3, 8);
+				vibratoRate *= 1.35f;
+				for (int i = 0; i < formantMotion.length; i++) formantMotion[i] *= 1.8f;
+			}
+		}
+
+		f0 = Mth.clamp(f0, 40f, 1800f);
+		syllableLen = Mth.clamp(syllableLen, 0.025f, 0.95f);
+		chaos = Mth.clamp(chaos, 0f, 0.9f);
+		subharmonic = Mth.clamp(subharmonic, 0f, 0.85f);
+		aspiration = Mth.clamp(aspiration, 0.04f, 0.92f);
+		stridulation = Mth.clamp(stridulation, 0f, 1f);
+
 		return new VoiceProfile(hash, f0, formantHz, formantBw, formantMotion,
 				openQuotient, speedQuotient, spectralTilt, aspiration,
 				chaos, subharmonic, biphonation, biphonationRatio,
 				jitter, shimmer, jumpChance, vibratoRate, vibratoDepth,
 				stridulation, stridulationRate,
-				syllables, syllableLen, gapLen, attack, release, nasality, volume);
+				syllables, syllableLen, gapLen, attack, release, nasality, volume, family);
 	}
 
 	/** Pitch handed to the sound engine. Kept at 1 — the pitch is baked into the samples. */
@@ -299,13 +428,106 @@ public record VoiceProfile(
 		return 1.0f;
 	}
 
-	private static float unitFromHash(int hash, int salt) {
-		int x = hash ^ salt;
-		x ^= x >>> 16;
-		x *= 0x7FEB352D;
-		x ^= x >>> 15;
-		x *= 0x846CA68B;
-		x ^= x >>> 16;
-		return (x >>> 8) / (float) (1 << 24);
+	/**
+	 * Traits each family is defined by, in the order {@link #chooseFamily} compares them:
+	 * size, sociability, metabolism, fear, aggression, head elongation, jaw width.
+	 * <p>
+	 * A family is a point in trait space and an animal joins the one it most resembles. This
+	 * replaced a set of hand-summed scores, which is the obvious way to do it and does not work:
+	 * scores built from different numbers of terms have different means, so the families with the
+	 * fattest sums simply win. Measured, that put 78% of the population into three families and left
+	 * warble on 0.9% — eight families on paper and three in the world. Distances to prototypes are
+	 * naturally comparable, so the spread comes out of the geometry instead of out of tuning.
+	 */
+	private static final float[][] FAMILY_TRAITS = {
+			//        size  social  metab   fear   aggr  elong    jaw
+			/* BELLOW  */ {0.90f, 0.40f, 0.25f, 0.20f, 0.70f, 0.50f, 0.60f},
+			/* BARK    */ {0.50f, 0.30f, 0.70f, 0.30f, 0.80f, 0.45f, 0.60f},
+			/* TRILL   */ {0.08f, 0.80f, 0.90f, 0.50f, 0.30f, 0.40f, 0.40f},
+			/* WHISTLE */ {0.25f, 0.60f, 0.60f, 0.88f, 0.15f, 0.50f, 0.22f},
+			/* RASP    */ {0.40f, 0.18f, 0.50f, 0.62f, 0.62f, 0.88f, 0.38f},
+			/* MOAN    */ {0.80f, 0.88f, 0.28f, 0.35f, 0.22f, 0.45f, 0.50f},
+			/* KNOCK   */ {0.18f, 0.45f, 0.50f, 0.45f, 0.40f, 0.12f, 0.85f},
+			/* WARBLE  */ {0.45f, 0.92f, 0.68f, 0.28f, 0.35f, 0.72f, 0.45f},
+	};
+
+	/**
+	 * How much each trait counts toward which family an animal belongs to.
+	 * <p>
+	 * Aggression is weighted down hard and deliberately. It is already the strongest axis in the
+	 * continuous parameters — nine of them correlated with it above 0.8 — and letting it also choose
+	 * the family would rebuild the same collapse one level up, with steps in it.
+	 */
+	private static final float[] FAMILY_WEIGHTS = {1.15f, 1.00f, 0.85f, 0.95f, 0.35f, 0.90f, 0.80f};
+
+	/**
+	 * The family this animal most resembles.
+	 * <p>
+	 * Continuous in the genome, so a lineage keeps its kind of voice and crosses into a neighbouring
+	 * one gradually rather than on a single mutation — the same property that makes a clade stay
+	 * visually recognisable while still being able to change.
+	 */
+	private static VoiceFamily chooseFamily(float acousticSize, float sociability, float metabolism,
+	                                        float fear, float aggression, float headElongation,
+	                                        float jawWidth, float v3, float v4) {
+		// Size onto 0..1 over the range that actually occurs, so it competes on the same footing as
+		// the loci, which are already normalised.
+		float[] traits = {
+				Mth.clamp(acousticSize * 1.7f, 0f, 1f),
+				sociability, metabolism, fear, aggression, headElongation, jawWidth};
+
+		int pick = 0;
+		float best = Float.MAX_VALUE;
+		for (int i = 0; i < FAMILY_TRAITS.length; i++) {
+			float d = 0f;
+			for (int t = 0; t < traits.length; t++) {
+				float delta = (traits[t] - FAMILY_TRAITS[i][t]) * FAMILY_WEIGHTS[t];
+				d += delta * delta;
+			}
+			// A slight per-genome tilt, so animals sitting on a boundary do not all fall the same
+			// way and no family goes unheard for want of a corner of gene space nothing occupies.
+			d *= 0.90f + (i % 2 == 0 ? v3 : v4) * 0.20f;
+			if (d < best) {
+				best = d;
+				pick = i;
+			}
+		}
+		return VoiceFamily.VALUES[pick];
+	}
+
+	/**
+	 * An individual's own vocal anatomy, as a smooth projection of the whole genome onto [0,1].
+	 * <p>
+	 * Two animals of the same size and temper still do not have the same voice, because the exact
+	 * dimensions of a larynx are not predictable from any gross trait. That individual part has to
+	 * be modelled, and it has to be <b>heritable</b>: a calf sounds like its mother.
+	 * <p>
+	 * This used to be a scramble of {@link Genome#hashCode()}, which is
+	 * {@code Arrays.hashCode(values)} — a single point mutation changes it completely. So every
+	 * offspring drew a fresh individual voice unrelated to either parent, and a lineage kept only
+	 * the part of its voice that came from its body while the rest resampled every generation.
+	 * <p>
+	 * A weighted sum over every locus fixes that. Each gene contributes at most about a
+	 * hundredth of the result, so a mutation nudges the voice instead of replacing it, while
+	 * different salts give near-independent projections — which is what lets this carry real weight
+	 * in the parameters below without collapsing them onto each other.
+	 */
+	private static float variate(Genome genome, int salt) {
+		double acc = 0, weight = 0;
+		for (int i = 0; i < Gene.COUNT; i++) {
+			// Deterministic per-locus coefficient in [-1,1]; no state, no allocation.
+			int x = (i * 0x9E3779B9) ^ salt;
+			x ^= x >>> 16;
+			x *= 0x7FEB352D;
+			x ^= x >>> 15;
+			float w = ((x >>> 8) / (float) (1 << 23)) - 1f;
+			acc += w * genome.raw(Gene.VALUES[i]);
+			weight += Math.abs(w);
+		}
+		// Centred on the midpoint a uniform genome would give, then stretched so the usable range
+		// is actually used — a sum of ninety independent terms is otherwise tightly clustered by
+		// the central limit theorem, and a variate that never leaves the middle is not variation.
+		double unit = weight > 1e-6 ? acc / weight : 0.0;
+		return (float) Mth.clamp(0.5 + unit * 4.6, 0.0, 1.0);
 	}
 }

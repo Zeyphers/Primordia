@@ -35,6 +35,8 @@
     --danger:      #a83232;
     --amber:       #ffd54a;
     --pixel: 2px;
+    /* Slider thumb width. Named because the tick strip has to inset by half of it. */
+    --thumb: 16px;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -120,7 +122,7 @@
     cursor: pointer;
   }
   input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none; width: 16px; height: 22px; background: var(--btn);
+    -webkit-appearance: none; width: var(--thumb); height: 22px; background: var(--btn);
     border-top: var(--pixel) solid var(--btn-lit); border-left: var(--pixel) solid var(--btn-lit);
     border-bottom: var(--pixel) solid var(--edge-dark); border-right: var(--pixel) solid var(--edge-dark);
   }
@@ -149,6 +151,64 @@
   .gene-row { display: contents; }
   .gene-row > .name { font-size: 13px; color: var(--ink-dim); white-space: nowrap; }
   .gene-row > input[type=range] { width: 100%; min-width: 0; }
+
+  /* ---- tick marks -------------------------------------------------------
+     A locus that decodes to a named option is a menu wearing a slider, and a bare 0..1 track says
+     nothing about where the menu changes. Each band below spans one option and carries one mark;
+     hovering a band names the option and clicking it jumps there. The numbers come from GeneOptions
+     on the server, which reads them off the real enums.
+
+     Where the mark sits depends on what it means, because the two kinds of locus answer different
+     questions. An option locus snaps, so its mark is drawn at the value it snaps to — the middle of
+     the band — and the thumb lands on the mark rather than between two of them. A threshold locus
+     does not snap: it stays a magnitude, and the only thing worth marking is the boundary where the
+     trait switches on, which is where its prose points ("Past the tick, ..."). */
+  .gene-row > .slider-cell { position: relative; min-width: 0; }
+  .slider-cell > input[type=range] { width: 100%; }
+  /* Inset by half a thumb, plus the track's own border.
+     A range thumb's centre travels between thumb/2 and width - thumb/2, so it never reaches either
+     end of the element. Ticks laid across the full width therefore disagree with the thumb by up to
+     half a thumb — eight pixels, worst at the ends of the track, and in the same direction as the
+     value is low. Snapping to a band then parked the thumb visibly to one side of the mark it had
+     snapped to. The strip is laid over the thumb's travel instead of over the element. */
+  .ticks { position: relative; height: 7px;
+    margin: 0 calc(var(--pixel) + var(--thumb) / 2); }
+  .band { position: absolute; top: 0; height: 5px; cursor: pointer; }
+  .band::before {
+    content: ''; position: absolute; top: 0; height: 5px; width: var(--pixel);
+    background: var(--edge-lit);
+  }
+  /* Snapping loci: the mark is the value the thumb parks at. */
+  .ticks.snapped .band::before { left: 50%; transform: translateX(-50%); }
+  /* Threshold loci: the mark is the cut. The start of the track is not one of them. */
+  .ticks.edges .band::before { left: 0; }
+  .ticks.edges .band:first-child { cursor: default; }
+  .ticks.edges .band:first-child::before { display: none; }
+  .band.active::before { background: var(--amber); }
+  /* The label follows the cursor along the band rather than sitting at its left edge: on a band
+     two pixels wide the edge is nowhere near what the mouse is pointing at. Placed by the
+     mousemove handler in buildGeneUI, which also keeps it from hanging off the end of the track. */
+  .band > i {
+    display: none; position: absolute; left: 0; top: 9px; z-index: 6;
+    font-style: normal; font-size: 12px; letter-spacing: .06em; white-space: nowrap;
+    color: var(--ink); background: var(--void); padding: 3px 7px;
+    border: var(--pixel) solid var(--edge-lit); pointer-events: none;
+  }
+  .band:hover > i { display: block; }
+
+  /* ---- gene tooltip ------------------------------------------------------
+     The description of the locus, in the page's own frame rather than the browser's. A native
+     title takes a second to appear and cannot be styled, which put the behaviour genes — the ones
+     whose names say least about what they do — behind the slowest affordance on the panel. */
+  #geneTip {
+    position: fixed; z-index: 1001; display: none; max-width: 300px;
+    background: var(--panel); color: var(--ink); padding: 8px 10px;
+    font-size: 12px; line-height: 1.5; pointer-events: none;
+    border-top: var(--pixel) solid var(--edge-lit); border-left: var(--pixel) solid var(--edge-lit);
+    border-bottom: var(--pixel) solid var(--edge-dark); border-right: var(--pixel) solid var(--edge-dark);
+    box-shadow: 3px 3px 0 rgba(0,0,0,0.5);
+  }
+  #geneTip b { color: var(--amber); display: block; margin-bottom: 4px; letter-spacing: .06em; }
   .check { display: flex; align-items: center; gap: 8px; margin: 7px 0; min-height: 26px;
     font-size: 13px; color: var(--ink-dim); cursor: pointer; }
   .check:hover { color: var(--ink); }
@@ -331,6 +391,43 @@
         <textarea id="code" readonly rows="3" aria-label="Genome code"></textarea>
         <div class="btnrow" style="margin-top:6px"><button id="copyCode" type="button">Copy</button></div>
         <div class="hint">Paste into <code>/primordia spawn code &lt;genome&gt;</code>.</div>
+      </div>
+    </details>
+
+    <details class="group" id="voiceGroup">
+      <summary>Voice</summary>
+      <div class="well">
+        <div class="row"><span class="name">Family</span>
+          <span class="val" id="voiceFamily" style="width:auto; min-width:70px">-</span></div>
+        <div class="hint" id="voiceFamilyNote">The kind of noise this animal makes. Chosen from
+          size, sociability, metabolism, fear, head shape and jaw — deliberately not from temper.</div>
+
+        <div class="btnrow" style="margin-top:8px; flex-wrap: wrap; gap: 4px">
+          <button type="button" class="callBtn" data-call="ambient">Ambient</button>
+          <button type="button" class="callBtn" data-call="threat">Threat</button>
+          <button type="button" class="callBtn" data-call="hurt">Hurt</button>
+          <button type="button" class="callBtn" data-call="death">Death</button>
+          <button type="button" class="callBtn" data-call="mating">Mating</button>
+          <button type="button" class="callBtn" data-call="chirp">Chirp</button>
+          <button type="button" class="callBtn" data-call="sleep">Sleep</button>
+        </div>
+        <div class="hint">One voice, seven ways of using it. Rendered by the game's own
+          synthesiser, so this is what the creature will actually sound like.</div>
+
+        <div class="row" style="margin-top:8px">
+          <span class="name">Variant</span>
+          <input type="range" id="voiceVariant" min="0" max="7" step="1" value="0"
+                 aria-label="Call variant">
+          <input type="text" class="val" id="voiceVariantV" value="0" aria-label="Variant"></div>
+        <div class="hint">Animals do not repeat themselves exactly. Each variant is a different
+          utterance from the same throat.</div>
+
+        <canvas id="voiceWave" width="260" height="52"
+                style="width:100%; height:52px; margin-top:8px; background:#1b1b1b;
+                       border: var(--pixel) solid var(--edge-dark); image-rendering: pixelated;"
+                aria-label="Waveform of the last played call"></canvas>
+
+        <div id="voiceStats" class="hint" style="margin-top:6px; line-height:1.5"></div>
       </div>
     </details>
 
@@ -1117,7 +1214,7 @@ function hud() {
   $('hud').innerHTML =
     `<b>${m.vertexCount.toLocaleString()}</b> verts · <b>${m.quadCount.toLocaleString()}</b> quads · ` +
     `<b>${m.boneCount}</b> bones<br>` +
-    `legs <b>${m.legs}</b> · arms <b>${m.arms}</b> · teeth <b>${m.teeth}</b><br>` +
+    `legs <b>${m.legs}</b> · arms <b>${m.arms}</b><br>` +
     `hip <b>${(+m.hipHeight).toFixed(3)}</b> · len <b>${(+m.bodyLength).toFixed(3)}</b> · ` +
     `minLimb <b>${(+m.minLimbRadius).toFixed(4)}</b><br>` +
     `bake <b>${S.bakeMs}</b> ms` +
@@ -1350,6 +1447,8 @@ async function bake() {
     if (d.error) throw new Error(d.error);
     S.bakeMs = Math.round(performance.now() - t0);
     adopt(d);
+    // The voice comes from the same genome, so it is stale the moment the mesh is.
+    loadVoice();
     $('err').style.display = 'none';
   } catch (e) {
     $('err').style.display = 'block';
@@ -1376,6 +1475,88 @@ function adopt(d) {
   makeMesh(d);
   if (!hadData) frame();
 }
+
+// ---------------------------------------------------------------- voice
+//
+// The synthesiser lives in the mod, not here. A second implementation in JavaScript would drift
+// from the game the way the walk-clip cadence did, and a preview that does not match what the
+// player hears is worse than no preview at all — so this asks the server for a WAV and plays it.
+const V = { ctx: null, buffers: new Map(), token: 0 };
+
+function voiceParams(extra) {
+  const p = new URLSearchParams({
+    seed: $('seed').value || '1', archetype: $('archetype').value, ...extra
+  });
+  if (S.genes) p.set('genes', S.genes.map(v => v.toFixed(5)).join(','));
+  return p;
+}
+
+async function loadVoice() {
+  const mine = ++V.token;
+  try {
+    const r = await (await fetch('/api/voice?' + voiceParams({}).toString())).json();
+    if (mine !== V.token) return;               // a newer genome landed while this was in flight
+    if (r.error) throw new Error(r.error);
+    $('voiceFamily').textContent = r.family;
+    const f = r.formants.map(x => Math.round(x)).join(' / ');
+    $('voiceStats').innerHTML =
+      'f0 <b>' + r.f0.toFixed(0) + ' Hz</b> &middot; formants <b>' + f + '</b><br>' +
+      'chaos ' + r.chaos.toFixed(2) + ' &middot; subharmonic ' + r.subharmonic.toFixed(2) +
+      ' &middot; biphonation ' + r.biphonation.toFixed(2) + '<br>' +
+      'breath ' + r.aspiration.toFixed(2) + ' &middot; jitter ' + r.jitter.toFixed(3) +
+      (r.stridulation > 0.01 ? ' &middot; stridulation ' + r.stridulation.toFixed(2) : '') + '<br>' +
+      r.syllables + ' syllable' + (r.syllables === 1 ? '' : 's') +
+      ' of ' + (r.syllableLen * 1000).toFixed(0) + ' ms';
+  } catch (e) {
+    $('voiceFamily').textContent = '-';
+    $('voiceStats').textContent = String(e);
+  }
+}
+
+async function playCall(call) {
+  try {
+    V.ctx = V.ctx || new (window.AudioContext || window.webkitAudioContext)();
+    if (V.ctx.state === 'suspended') await V.ctx.resume();
+    const variant = $('voiceVariant').value;
+    const url = '/api/voice.wav?' + voiceParams({ call: call, variant: variant }).toString();
+    const bytes = await (await fetch(url)).arrayBuffer();
+    const buf = await V.ctx.decodeAudioData(bytes.slice(0));
+    const src = V.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(V.ctx.destination);
+    src.start();
+    drawWave(buf);
+  } catch (e) {
+    $('voiceStats').textContent = 'could not play: ' + e;
+  }
+}
+
+function drawWave(buf) {
+  const c = $('voiceWave'), g = c.getContext('2d');
+  const w = c.width, h = c.height, d = buf.getChannelData(0);
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = '#1b1b1b'; g.fillRect(0, 0, w, h);
+  g.strokeStyle = '#4a4a4a'; g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+  // Min/max per column rather than a sampled point: a call is mostly high-frequency content, and
+  // point sampling a waveform at one pixel per few hundred samples draws aliasing, not a signal.
+  g.fillStyle = '#e8b046';
+  const step = d.length / w;
+  for (let x = 0; x < w; x++) {
+    let lo = 1, hi = -1;
+    const a = Math.floor(x * step), b = Math.min(d.length, Math.floor((x + 1) * step));
+    for (let i = a; i < b; i++) { const v = d[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (lo > hi) continue;
+    const y0 = (1 - hi) * h / 2, y1 = (1 - lo) * h / 2;
+    g.fillRect(x, y0, 1, Math.max(1, y1 - y0));
+  }
+}
+
+document.querySelectorAll('.callBtn').forEach(b => {
+  b.addEventListener('click', () => playCall(b.dataset.call));
+});
+$('voiceVariant').addEventListener('input', e => {
+  $('voiceVariantV').value = e.target.value;
+});
 
 // ---------------------------------------------------------------- animation
 async function loadAnim() {
@@ -1482,6 +1663,7 @@ function applyValueToSelected(sourceInput, rawVal) {
       if (row) {
         const slider = row.querySelector('input[type=range]');
         if (slider) slider.value = v;
+        refreshBands(row, v);
       }
     } else if (inputEl.id === 'voxelV') {
       v = Math.max(0, Math.min(0.25, v));
@@ -1550,6 +1732,96 @@ const GROUPS = [
   ['Colour', /^(HUE|SATURATION|BRIGHTNESS|PATTERN|COUNTERSHADING)/],
   ['Behaviour', /.*/]
 ];
+
+/** Quotes a string for an HTML attribute. Descriptions carry apostrophes and the odd bracket. */
+function escapeAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+/**
+ * The bands to draw under one gene's slider, or null for a plain magnitude.
+ *
+ * Two kinds of locus get them. A locus with named options is served a `ticks` array — one entry per
+ * option with the value it starts at — and a locus that switches a trait on has a `threshold`, which
+ * is the same shape with two entries. Everything here is what the server said; the page never works
+ * out a boundary for itself, because a boundary it guessed would be a boundary that could be wrong.
+ */
+function geneBands(g) {
+  const raw = g.ticks
+    || (g.threshold !== undefined ? [{ label: 'none', at: 0 }, { label: 'yes', at: g.threshold }] : null);
+  if (!raw || raw.length < 2) return null;
+  return raw.map((t, i) => ({
+    label: t.label,
+    from: t.at,
+    to: i + 1 < raw.length ? raw[i + 1].at : 1,
+    // Options are decoded from a band, not a point, so the honest place to sit inside one is the
+    // middle: it is the value furthest from either edge and so the one no rounding can move.
+    centre: (t.at + (i + 1 < raw.length ? raw[i + 1].at : 1)) / 2
+  }));
+}
+
+function bandAt(bands, v) {
+  for (let i = bands.length - 1; i >= 0; i--) {
+    if (v >= bands[i].from) return i;
+  }
+  return 0;
+}
+
+/** Marks the band the current value falls in. #geneTip reads the same band back for its heading. */
+function refreshBands(row, v) {
+  const bands = row._bands;
+  if (!bands) return;
+  const active = bandAt(bands, v);
+  const els = row.querySelectorAll('.band');
+  els.forEach((el, i) => el.classList.toggle('active', i === active));
+}
+
+/** The shared description popup. One element for the whole panel; only ever one is visible. */
+const geneTip = document.createElement('div');
+geneTip.id = 'geneTip';
+document.body.appendChild(geneTip);
+let geneTipTimer = null;
+
+function showGeneTip(row, e) {
+  const bands = row._bands;
+  const option = bands ? bands[bandAt(bands, S.genes ? S.genes[row._idx] : 0.5)].label : null;
+  geneTip.innerHTML = `<b>${escapeAttr(row.dataset.geneName)}${option ? ': ' + escapeAttr(option) : ''}</b>`
+    + escapeAttr(row.dataset.description || '');
+  geneTip.style.display = 'block';
+  moveGeneTip(e);
+}
+
+function moveGeneTip(e) {
+  if (geneTip.style.display !== 'block') return;
+  // Below and right of the cursor, flipped back over it at either edge of the window so the box
+  // is never the thing that runs off the screen.
+  const w = geneTip.offsetWidth, h = geneTip.offsetHeight;
+  const x = e.clientX + 16 + w > window.innerWidth ? e.clientX - 16 - w : e.clientX + 16;
+  const y = e.clientY + 18 + h > window.innerHeight ? e.clientY - 18 - h : e.clientY + 18;
+  geneTip.style.left = Math.max(4, x) + 'px';
+  geneTip.style.top = Math.max(4, y) + 'px';
+}
+
+function hideGeneTip() {
+  clearTimeout(geneTipTimer);
+  geneTip.style.display = 'none';
+}
+
+/**
+ * Hangs the popup off one control. Held back a moment so that running the mouse down the panel on
+ * the way to something else does not strobe a box at every locus it passes.
+ */
+function attachGeneTip(row, el) {
+  el.addEventListener('mouseenter', e => {
+    clearTimeout(geneTipTimer);
+    const at = { clientX: e.clientX, clientY: e.clientY };
+    geneTipTimer = setTimeout(() => showGeneTip(row, at), 220);
+  });
+  el.addEventListener('mousemove', moveGeneTip);
+  el.addEventListener('mouseleave', hideGeneTip);
+  el.addEventListener('mousedown', hideGeneTip);
+}
+
 function buildGeneUI() {
   const host = $('genes');
   host.innerHTML = '';
@@ -1566,22 +1838,81 @@ function buildGeneUI() {
     groupDiv.appendChild(h);
     for (const name of mine) {
       const idx = names.indexOf(name);
+      const meta = S.meta.genes[idx];
+      const bands = geneBands(meta);
       const row = document.createElement('div');
       row.className = 'gene-row';
       row.dataset.name = name.toLowerCase();
-      row.innerHTML = `<span class="name" title="${name}">${name}</span>` +
+      row.dataset.geneName = name;
+      // The description is the whole of what a first-time reader has to go on: the names are
+      // shouted constants and half of them mean nothing until you have dragged them once. It hangs
+      // off the row so #geneTip can read it back on hover.
+      row.dataset.description = meta.description || '';
+      const ticks = bands
+        ? '<div class="ticks ' + (meta.ticks ? 'snapped' : 'edges') + '">' + bands.map(b =>
+            `<span class="band" style="left:${(b.from * 100).toFixed(3)}%;width:${((b.to - b.from) * 100).toFixed(3)}%"` +
+            ` data-centre="${b.centre}"><i>${b.label}</i></span>`).join('') + '</div>'
+        : '';
+      row.innerHTML = `<span class="name">${name}</span>` +
+        `<div class="slider-cell">` +
         `<input type="range" min="0" max="1" step="0.001" value="0.5" data-i="${idx}" aria-label="${name}">` +
+        ticks + `</div>` +
         `<input type="text" class="val" value="0.50" data-i="${idx}" aria-label="${name} value">`;
+      row._bands = bands;
+      row._idx = idx;
+      // Only the option loci snap. A threshold locus is still a magnitude either side of its cut —
+      // how much armour, how bright the glow — and snapping it would throw that away.
+      row._snap = bands && meta.ticks
+        ? v => bands[bandAt(bands, v)].centre
+        : v => v;
 
       const slider = row.querySelector('input[type=range]');
       const valInput = row.querySelector('input.val');
+
+      // Not on the ticks strip: that has labels of its own, and two popups over one row is noise.
+      attachGeneTip(row, row.querySelector('.name'));
+      attachGeneTip(row, slider);
+      attachGeneTip(row, valInput);
+
+      const ticksEl = row.querySelector('.ticks');
+      if (ticksEl) {
+        // Put the label under the pointer. A band can be two pixels wide, so anchoring the label
+        // to its edge would put the text nowhere near what the mouse is pointing at.
+        ticksEl.addEventListener('mousemove', e => {
+          const band = e.target.closest('.band');
+          if (!band) return;
+          const label = band.querySelector('i');
+          // Clamped to the panel rather than to the track: the label is wider than a narrow
+          // slider column, and clamping it to the track would pin it to one end and stop it
+          // following the cursor at all. It may overhang the name and value columns.
+          const panel = row.parentElement.getBoundingClientRect();
+          const bandBox = band.getBoundingClientRect();
+          const w = label.offsetWidth;
+          const x = Math.max(panel.left, Math.min(panel.right - w, e.clientX - w / 2));
+          label.style.left = (x - bandBox.left) + 'px';
+        });
+      }
+
+      for (const band of row.querySelectorAll('.band')) {
+        band.addEventListener('click', () => {
+          const v = row._snap(+band.dataset.centre);
+          S.genes[idx] = v;
+          slider.value = v;
+          valInput.value = v.toFixed(2);
+          refreshBands(row, v);
+          requestBake(false);
+        });
+      }
 
       slider.addEventListener('input', () => {
         if (selectedValInputs.has(valInput) && selectedValInputs.size > 1) {
           applyValueToSelected(valInput, slider.value);
         } else {
-          S.genes[idx] = +slider.value;
-          valInput.value = (+slider.value).toFixed(2);
+          const v = row._snap(+slider.value);
+          S.genes[idx] = v;
+          slider.value = v;
+          valInput.value = v.toFixed(2);
+          refreshBands(row, v);
           requestBake(false);
         }
       });
@@ -1596,6 +1927,7 @@ function buildGeneUI() {
           S.genes[idx] = v;
           slider.value = v;
           valInput.value = v.toFixed(2);
+          refreshBands(row, v);
           requestBake(false);
         }
       };
@@ -1617,6 +1949,7 @@ function syncGeneSliders() {
     const valInput = row.querySelector('input.val');
     const v = S.genes[+s.dataset.i];
     s.value = v;
+    refreshBands(row, v);
     if (document.activeElement !== valInput) {
       valInput.value = v.toFixed(2);
     }
@@ -1662,6 +1995,7 @@ function setMaxGenes() {
       if (row) {
         const slider = row.querySelector('input[type=range]');
         if (slider) slider.value = 1.0;
+        refreshBands(row, 1.0);
       }
     }
   }

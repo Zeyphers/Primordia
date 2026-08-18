@@ -229,12 +229,12 @@ class JawTest {
 	 * <p>
 	 * The head's basis was built with an inverted up vector for a long time, and nothing caught
 	 * it because every consumer used the same wrong vector consistently — the relationships all
-	 * held, they were just upside down. It put the mandible on top of the braincase, grew the
-	 * upper teeth out through the skull, and hung horns and ears off the chin. Testing the basis
-	 * against world up is the one check that could not be fooled that way.
+	 * held, they were just upside down. It put the mandible on top of the braincase and hung horns
+	 * and ears off the chin. Testing the basis against world up is the one check that could not be
+	 * fooled that way.
 	 */
 	@Test
-	void theMandibleHangsBelowTheSkullAndTeethPointIntoTheMouth() {
+	void theMandibleHangsBelowTheSkull() {
 		Random random = new Random(1217);
 		for (int trial = 0; trial < 120; trial++) {
 			BodyPlan plan = BodyPlanBuilder.build(Genome.random(random));
@@ -245,19 +245,6 @@ class JawTest {
 					"the jaw hinges above the skull axis — the head is upside down");
 			assertTrue(jaw.tail.y < jaw.head.y,
 					"the mandible rises from hinge to chin; it should hang");
-
-			for (dev.jsz.primordia.body.ToothDef tooth : plan.teeth) {
-				if (tooth.bone() == plan.headBone) {
-					assertTrue(tooth.direction().y < 0f,
-							"an upper tooth grows upward, out through the top of the head");
-				} else {
-					assertTrue(tooth.direction().y > 0f,
-							"a lower tooth grows downward, out through the bottom of the jaw");
-				}
-				// And mostly along the jaw's normal rather than lying flat against the lip.
-				assertTrue(Math.abs(tooth.direction().y) > Math.abs(tooth.direction().x) * 1.5f,
-						"a tooth leans more sideways than it stands up: " + tooth.direction());
-			}
 		}
 	}
 }

@@ -256,6 +256,10 @@ public class CreatureRenderer extends EntityRenderer<CreatureEntity, CreatureRen
 		context.z = pos.z;
 
 		context.bodyYaw = yaw * Mth.DEG_TO_RAD;
+		// The submit pass scales the whole model by this, so every world measurement the animator
+		// makes — foot plants, ground heights — has to be divided back out of it or a juvenile's
+		// legs reach only a fraction of the way to the ground it is standing on.
+		context.scale = entity.getGrowth();
 
 		float headYaw = Mth.rotLerp(tickDelta, entity.yHeadRotO, entity.yHeadRot);
 		context.lookYaw = Mth.wrapDegrees(headYaw - yaw) * Mth.DEG_TO_RAD;

@@ -85,7 +85,7 @@ Eight commits on top of `3482b50 Initial commit`.
 
 **Anatomy.** Six eye styles, seven horn types, five tail shapes, four ear types, frills, beaks,
 tusks, bioluminescence. Two-part arachnid bodies (clustered legs, abdomen, knees above the hip) and
-`ARACHNID` / `CRUSTACEAN` archetypes. A hinged mandible with teeth.
+`ARACHNID` / `CRUSTACEAN` archetypes. A hinged mandible.
 
 **Legs no longer web together.** They were physically intersecting — thicker than the gaps between
 them — so the union of two overlapping solids was one solid. Hip spacing is reconciled against leg
@@ -166,11 +166,11 @@ watcher on `run/screenshots/` for most of the session. Getting one is the single
 step; the smooth-normals slider is a fast discriminator, because if dragging it changes nothing the
 cause is not normals at all.
 
-**Saurians drop 18% of their teeth** as genuinely unfittable — the mouth has nowhere to put them.
-Everything else keeps 100%. If the gaps look wrong the fix is saurian jaw proportions, not the teeth.
+**Teeth have been removed entirely.** `ToothDef`, `ToothMesher` and their tests are gone, and the
+mesh is now exactly what the signed distance field produces. Nothing bypasses the field any more.
 
-**Nothing about the mouth has been verified by eye.** The jaw, the mandible silhouette and the teeth
-are all confirmed geometrically and by test only.
+**Nothing about the mouth has been verified by eye.** The jaw and the mandible silhouette are
+confirmed geometrically and by test only.
 
 **The quad winding residual is inherent.** A quad bent over a knuckle has two triangle halves that
 disagree with each other, and no winding or diagonal choice reconciles that. Reaching zero means
@@ -187,7 +187,6 @@ Fifteen test classes. The ones that encode something non-obvious:
 | `LimbSeparationTest` | limbs do not intersect, and legs get their own blend groups |
 | `ThinLimbTest` | nothing is finer than the mesher can resolve; near-tier stays inside budget |
 | `JawTest` | the skull is the right way up, the jaw hangs below it and opens downward |
-| `ToothClippingTest` | no tooth comes through the opposing jaw with the mouth shut |
 | `QuadWindingTest` | quads face the way their shading normals point |
 | `PoseWalkTest` | a stationary creature fed a walking speed actually moves its feet |
 | `OrnamentTest` | every horn type, tail shape and glow region is reachable |

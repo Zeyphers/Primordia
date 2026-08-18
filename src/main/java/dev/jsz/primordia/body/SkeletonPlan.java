@@ -117,7 +117,7 @@ public final class SkeletonPlan {
 				plan.rootBone, plan.headBone, plan.jawBone, plan.jawRestAngle, plan.hipHeight,
 				// A skeleton is built from the flesh plan's own limbs, so it inherits their
 				// clearance: the bones inside a leg cannot be further apart than the leg was.
-				min, max, plan.teeth, plan.bodyLength, plan.mass, minRadius, plan.minLimbGap);
+				min, max, plan.bodyLength, plan.mass, minRadius, plan.minLimbGap);
 	}
 
 	private static float shaftScale(BoneDef b) {

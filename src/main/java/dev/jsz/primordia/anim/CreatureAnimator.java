@@ -56,6 +56,102 @@ public final class CreatureAnimator {
 	private static final float ROOT_PITCH_SHARE = 0.55f;
 	/** Fraction of its full length a limb reaches before the solver starts stretching it. */
 	private static final float COMFORTABLE_REACH = 0.95f;
+
+	// ---------------------------------------------------------------- reach envelope
+	//
+	// Everything below exists because a leg has a reach and a stride has a length, and until now
+	// nothing in this file related the two. Stride was `hipHeight * 1.35`, a proportion picked by
+	// eye, while a limb is grown along a shallow Bezier only five to ten per cent longer than the
+	// straight line from hip to foot — so a creature standing still already sits at 86% to 99% of
+	// its legs' full length, and a stride of that size asks every leg for a target well outside its
+	// own reach on every single step. Measured across all eleven archetypes over blocky terrain,
+	// 59% of leg-frames were asking for the impossible.
+	//
+	// The solver cannot report that. It absorbs over-reach by stretching a working copy of the bone
+	// lengths, so an unreachable target still comes back with a bend in it — the chain simply ends
+	// up short, pointing at somewhere the foot never arrives. On screen that is a rigid leg held out
+	// at an angle with its foot off the ground, which is what "the legs go straight and pin" is
+	// describing, and it is why every straightness-based check passed while it was happening.
+	//
+	// So the stride is now derived from the geometry instead of guessed: how far a foot may travel
+	// fore and aft, and sideways, before the hip can no longer hold it. See buildEnvelope.
+
+	/**
+	 * Hard ceiling on hip-to-foot distance, as a fraction of the limb's own length. Nothing —
+	 * gait, terrain or turn — may ask for more than this.
+	 */
+	private static final float WORKING_REACH = 0.97f;
+	/**
+	 * How heavily a leg is loaded standing still, as a fraction of {@link #WORKING_REACH}. Under
+	 * one on purpose: the body settles a little below its bind height so that a stride has
+	 * somewhere to go. An animal standing with its legs locked straight has no step available to
+	 * it, which is exactly the corner the old numbers painted every creature into.
+	 */
+	private static final float STANCE_LOAD = 0.93f;
+	/**
+	 * Fraction of the envelope an ordinary stride uses. The remainder is headroom for the ground
+	 * being somewhere other than where the gait assumed — which, on terrain made of whole blocks,
+	 * is most of the time.
+	 */
+	private static final float STRIDE_MARGIN = 0.85f;
+	/**
+	 * Smallest excursion a leg is credited with, as a fraction of its length, however cramped its
+	 * geometry. Keeps cadence finite for limbs whose rest position is already near the edge of
+	 * their own reach.
+	 */
+	private static final float MIN_EXCURSION = 0.06f;
+	/** Ceiling on step frequency. Small animals really do scurry; past this it reads as a blur. */
+	private static final float MAX_STEP_FREQUENCY = 6f;
+	/** Cadence up to which the torso's bob is drawn at full size, in steps per second. */
+	private static final float BOB_FULL_RATE = 1.8f;
+	/** Cadence at and above which the bob is gone entirely. */
+	private static final float BOB_SILENT_RATE = 4.2f;
+	/**
+	 * Furthest the neutral stance may be shifted fore or aft of where a limb was grown, as a
+	 * fraction of the leg's length.
+	 * <p>
+	 * Body plans routinely grow a foot far ahead of or behind its own hip, and a foot planted at
+	 * the front of its reach has almost no forward room left before it is dragged straight. Walking
+	 * from that point costs the whole stride, so the gait works about the middle of the leg's
+	 * travel instead of about its bind position. Capped, because the bind position is also the
+	 * silhouette the mesh was built around and moving it far enough to fix the arithmetic would be
+	 * a different creature.
+	 */
+	private static final float MAX_STANCE_SHIFT = 0.35f;
+	/**
+	 * How far past its envelope a planted foot must be dragged before a corrective step fires, as a
+	 * fraction of the envelope.
+	 * <p>
+	 * Stance clamps the plant to the envelope boundary every frame, so without a margin the foot
+	 * sits exactly on the trigger and the next millimetre of body travel re-fires it — a leg
+	 * stepping every frame, which is what "vibrating" looks like. The step has to be worth taking.
+	 */
+	private static final float ENVELOPE_HYSTERESIS = 1.06f;
+	/**
+	 * Shortest time a foot must stay down between corrective steps, in seconds.
+	 * <p>
+	 * Hysteresis alone is not enough: a foot can land already outside its envelope when the body is
+	 * turning, and re-fire immediately. The phase-driven step is never subject to this — the gait's
+	 * own timing is what keeps the creature balanced.
+	 */
+	private static final float STEP_REFRACTORY = 0.12f;
+	/**
+	 * Fastest the torso may rise or fall, in leg lengths per second.
+	 * <p>
+	 * The height target is a minimum taken over whichever feet are bearing weight this frame, and
+	 * a minimum over a changing set is a step function: every touchdown and lift-off moves it
+	 * discontinuously. Damping alone chases that, which reads as the whole animal juddering
+	 * vertically. This is the brake, and it is the last thing applied.
+	 */
+	private static final float MAX_RISE_RATE = 1.4f;
+	/** Steepest the body will tilt to follow ground, radians. Roughly twenty degrees. */
+	private static final float MAX_BODY_TILT = 0.35f;
+	/** Fastest the body may change attitude, radians per second. */
+	private static final float MAX_TILT_RATE = 2.2f;
+	/** Weight of the look-ahead terrain slope against the slope the feet are actually standing on. */
+	private static final float TERRAIN_ANTICIPATION = 0.25f;
+	/** Samples along the body used to measure the slope it is walking onto. */
+	private static final int TERRAIN_SAMPLES = 5;
 	/**
 	 * Most the solver may lengthen a limb's bones to reach a target. Only the solve is stretched —
 	 * the rendered bones keep their true lengths — so nothing visibly deforms; the point is purely
@@ -75,6 +171,38 @@ public final class CreatureAnimator {
 	private final int[] neckBones;
 	private final int[] tailBones;
 
+	// ---- reach envelope, per leg, model units. Constant for a body plan; see buildEnvelope.
+	/** Furthest a foot may be from its hip, ever. */
+	private final float[] legReach;
+	/** How far forward of its rest position a foot may travel. */
+	private final float[] excursionFwd;
+	/** How far behind it. Asymmetric because a leg whose foot already fans forward has less room. */
+	private final float[] excursionBack;
+	/** How far to either side. */
+	private final float[] excursionSide;
+	/** How far below its bind height the body sits when standing, so a stride has somewhere to go. */
+	private final float stanceDrop;
+	/** Longest leg on the creature; sets how far down a foot may look for ground. */
+	private final float longestLeg;
+
+	/**
+	 * Model-space hip position of each leg as of the last completed solve, and the root translation
+	 * that was in force when it was taken.
+	 * <p>
+	 * The body height pass needs to know where the hips are, and it runs before the skeleton is
+	 * posed — the hips do not exist yet this frame. Last frame's are one frame stale, which on a
+	 * quantity that is damped anyway is not observable, and they are <i>measured</i> rather than
+	 * reconstructed from the bind pose, so they carry the spine bend and the body attitude that
+	 * actually moved them.
+	 */
+	private final Vector3f[] hipAtLastSolve;
+	private float riseAtLastSolve;
+	/** Model-space fore/aft offset from each limb's bind foot to the middle of its reach. */
+	private float[] strideCentre;
+	/** Steps per second the gait is currently running at. Shared with the body's vertical bob. */
+	private float stepFrequency;
+	private boolean hipsKnown;
+
 	/** Position within the gait cycle, [0,1). */
 	private float gaitPhase;
 	private float lastTime = Float.NaN;
@@ -91,11 +219,16 @@ public final class CreatureAnimator {
 	// Scratch, reused every frame.
 	private final Vector3f v0 = new Vector3f();
 	private final Vector3f v1 = new Vector3f();
+	private final Vector3f v2 = new Vector3f();
 	private final Vector3f dir = new Vector3f();
 	private final Quaternionf q0 = new Quaternionf();
 	private final Quaternionf q1 = new Quaternionf();
 	private final Vector3f[] jointScratch;
 	private final float[] lengthScratch;
+	/** Scratch for the support-plane and terrain regressions. */
+	private final float[] planeX, planeY, planeZ;
+	/** Rise per unit of model-space width and depth, from the last support-plane fit. */
+	private float planeSlopeX, planeSlopeZ;
 
 	public CreatureAnimator(BodyPlan plan) {
 		this.plan = plan;
@@ -104,8 +237,49 @@ public final class CreatureAnimator {
 		for (int i = 0; i < feet.length; i++) {
 			feet[i] = new FootState();
 		}
-		// A natural stride scales with leg reach / hip height; long strides for large animals.
-		this.strideLength = Math.max(0.25f, plan.hipHeight * 1.35f);
+
+		int legCount = plan.legs.length;
+		this.legReach = new float[legCount];
+		this.excursionFwd = new float[legCount];
+		this.excursionBack = new float[legCount];
+		this.excursionSide = new float[legCount];
+		this.strideCentre = new float[legCount];
+		this.hipAtLastSolve = new Vector3f[legCount];
+		for (int i = 0; i < legCount; i++) hipAtLastSolve[i] = new Vector3f();
+
+		float longest = 0f;
+		for (LimbChain leg : plan.legs) longest = Math.max(longest, leg.totalLength);
+		this.longestLeg = Math.max(0.1f, longest);
+
+		this.stanceDrop = buildEnvelope();
+		// One stride carries the body from the front of the envelope to the back of it, so the
+		// distance covered per gait cycle is twice the half-span the tightest leg can manage. Every
+		// leg has to fit, which is why this is a minimum and not an average: a creature whose rear
+		// pair could stride further than its front pair would simply tear the front pair straight.
+		//
+		// The half-span is measured about the middle of each leg's travel, not about the foot's
+		// bind position, and that distinction is the difference between a walk and a shiver. Body
+		// plans grow feet well fore or aft of their own hips — a quadruped's front foot commonly
+		// sits two thirds of a leg length ahead of its shoulder — which leaves that leg a tenth of
+		// its length of forward room and well over a full length behind it. Taking the smaller side
+		// and doubling it threw the larger side away, and because this is a minimum over every leg,
+		// one such limb set the cadence for the whole animal: stride collapsed to a quarter of hip
+		// height, step frequency pinned against its ceiling, and every leg blurred.
+		float tightest = Float.MAX_VALUE;
+		for (int i = 0; i < legCount; i++) {
+			// Centre of the reach interval, capped so a limb is never relocated far enough to
+			// change the creature's outline.
+			float centre = MathX.clamp(0.5f * (excursionFwd[i] - excursionBack[i]),
+					-MAX_STANCE_SHIFT * plan.legs[i].totalLength,
+					MAX_STANCE_SHIFT * plan.legs[i].totalLength);
+			strideCentre[i] = centre;
+			// Room left on each side of that centre; the stride has to fit inside the smaller.
+			tightest = Math.min(tightest,
+					Math.min(excursionFwd[i] - centre, excursionBack[i] + centre));
+		}
+		this.strideLength = legCount == 0
+				? Math.max(0.25f, plan.hipHeight)
+				: Math.max(0.06f, 2f * STRIDE_MARGIN * tightest);
 
 		this.spineBones = collect(plan, "spine");
 		this.neckBones = collect(plan, "neck");
@@ -117,10 +291,147 @@ public final class CreatureAnimator {
 		this.jointScratch = new Vector3f[maxSegments + 1];
 		for (int i = 0; i < jointScratch.length; i++) jointScratch[i] = new Vector3f();
 		this.lengthScratch = new float[maxSegments];
+
+		int scratch = Math.max(TERRAIN_SAMPLES, Math.max(1, legCount));
+		this.planeX = new float[scratch];
+		this.planeY = new float[scratch];
+		this.planeZ = new float[scratch];
+	}
+
+	/**
+	 * Works out how far each foot may travel from where it was grown, and returns how far the body
+	 * has to settle for any of that travel to be possible.
+	 * <p>
+	 * The whole thing is one piece of geometry. A hip sits at {@code b} from its rest foot; the leg
+	 * can span at most {@code R = totalLength * WORKING_REACH}. Drop the body by {@code d} and
+	 * displace the foot by {@code e} along one axis, and the constraint is simply
+	 * {@code |b - (0,d,0) - e| <= R}. Solved for {@code e} that is an interval, and the interval is
+	 * the envelope — asymmetric, because a foot that already fans forward of its hip has spent some
+	 * of its forward room before the creature has taken a step.
+	 * <p>
+	 * The drop is chosen first, as the least that loads every leg to {@link #STANCE_LOAD} of its
+	 * reach rather than to the hilt. Without it the envelope is empty: a creature standing at full
+	 * extension has no direction it can move a foot in that does not over-extend the limb, which is
+	 * the arithmetic behind every pinned leg this system used to produce.
+	 *
+	 * @return the model-space distance the body sits below its bind height when standing
+	 */
+	private float buildEnvelope() {
+		float drop = 0f;
+		for (int i = 0; i < plan.legs.length; i++) {
+			LimbChain leg = plan.legs[i];
+			legReach[i] = leg.totalLength * WORKING_REACH;
+
+			float bx = leg.origin.x - leg.restEffector.x;
+			float by = leg.origin.y - leg.restEffector.y;
+			float bz = leg.origin.z - leg.restEffector.z;
+			// Never ask a leg for more than it already manages standing: a limb grown at 0.99 of
+			// its own length is telling us what its owner's stance is, and stretching it to a
+			// nominal 0.97 would be reading the constant instead of the creature.
+			float rest = (float) Math.sqrt(bx * bx + by * by + bz * bz);
+			float loaded = Math.min(legReach[i], rest) * STANCE_LOAD;
+			float horizontal = bx * bx + bz * bz;
+			float vertical = (float) Math.sqrt(Math.max(0f, loaded * loaded - horizontal));
+			// by is the hip's height over its foot and is positive for any leg that reaches the
+			// ground; a limb arched so far that its hip sits below its own foot has no drop to give.
+			drop = Math.max(drop, by - vertical);
+		}
+
+		for (int i = 0; i < plan.legs.length; i++) {
+			LimbChain leg = plan.legs[i];
+			float floor = leg.totalLength * MIN_EXCURSION;
+			float bx = leg.origin.x - leg.restEffector.x;
+			float by = leg.origin.y - leg.restEffector.y - drop;
+			float bz = leg.origin.z - leg.restEffector.z;
+			float r2 = legReach[i] * legReach[i];
+
+			// Fore and aft: the foot may sit anywhere in [bz - s, bz + s] measured from the hip's
+			// own z, which about the rest position is [-(s - bz), s + bz] ... and the same figure
+			// mirrored for a hip behind its foot. Hence the two separate limits.
+			float sz = (float) Math.sqrt(Math.max(0f, r2 - bx * bx - by * by));
+			excursionFwd[i] = Math.max(floor, sz + bz);
+			excursionBack[i] = Math.max(floor, sz - bz);
+
+			float sx = (float) Math.sqrt(Math.max(0f, r2 - bz * bz - by * by));
+			excursionSide[i] = Math.max(floor, sx - Math.abs(bx));
+		}
+		return Math.max(0f, drop);
 	}
 
 	public Skeleton skeleton() {
 		return skeleton;
+	}
+
+	/**
+	 * Distance the body travels per gait cycle, in model units. Derived from the legs' reach
+	 * envelope rather than from body proportions — see {@link #buildEnvelope}.
+	 */
+	/**
+	 * Steps per second this creature takes at the given speed and growth.
+	 * <p>
+	 * Published because the gait's cadence is not derivable from the body plan by anyone outside
+	 * this class — it comes from the legs' reach envelope — and anything that has to line up with
+	 * the walk needs the same number the walk is using. The editor's clip recorder kept its own copy
+	 * of this formula and the two drifted the moment the stride derivation changed, which is exactly
+	 * the failure its own comment predicted: a clip that is no longer one whole cycle long cannot
+	 * loop, and the seam is the first thing anyone watching a walk cycle sees.
+	 */
+	public float stepFrequencyFor(float speed, float growth) {
+		float s = growth > 1e-3f ? growth : 1f;
+		return MathX.clamp(speed / (strideLength * s), 0.15f, MAX_STEP_FREQUENCY);
+	}
+
+	/** Seconds one whole gait cycle takes — the clip length that loops seamlessly. */
+	public float gaitCycleSeconds(float speed, float growth) {
+		float f = stepFrequencyFor(speed, growth);
+		return f > MathX.EPS ? 1f / f : 0f;
+	}
+
+	public float strideLength() {
+		return strideLength;
+	}
+
+	/** How far below its bind height the creature stands, model units. */
+	public float stanceDrop() {
+		return stanceDrop;
+	}
+
+	/** Furthest the given leg may ever be asked to reach, model units. */
+	public float legReach(int index) {
+		return legReach[index];
+	}
+
+	public float excursionFwd(int index) {
+		return excursionFwd[index];
+	}
+
+	public float excursionBack(int index) {
+		return excursionBack[index];
+	}
+
+	public float excursionSide(int index) {
+		return excursionSide[index];
+	}
+
+	/** Current damped body pitch, radians, nose-up positive. Exposed for gait diagnostics. */
+	/** Model-space height the torso is riding at, bob and crouch included. Diagnostics. */
+	public float bodyRise() {
+		return riseAtLastSolve;
+	}
+
+	public float bodyPitch() {
+		return bodyPitch;
+	}
+
+	/** Current damped body roll, radians, right-side-up positive. Exposed for gait diagnostics. */
+	public float bodyRoll() {
+		return bodyRoll;
+	}
+
+	/** Whether this foot is currently bearing weight rather than swinging. For gait diagnostics. */
+	public boolean isFootGrounded(int index) {
+		return feet != null && index >= 0 && index < feet.length
+				&& feet[index] != null && feet[index].initialised && feet[index].grounded;
 	}
 
 	public boolean getFootWorldPosition(int index, org.joml.Vector3d dest) {
@@ -171,8 +482,12 @@ public final class CreatureAnimator {
 
 		if (isDead || LodTier.usesInverseKinematics(ctx.tier)) {
 			for (int i = 0; i < plan.legs.length; i++) {
+				// Recorded before the solve, not after: this is where the hip is, and the solve is
+				// about to move everything below it. The body height pass reads these next frame.
+				skeleton.boneHead(plan.legs[i].bones[0], hipAtLastSolve[i]);
 				solveLeg(ctx, plan.legs[i], feet[i]);
 			}
+			hipsKnown = true;
 			for (LimbChain arm : plan.arms) {
 				swingArm(ctx, arm);
 			}
@@ -213,10 +528,10 @@ public final class CreatureAnimator {
 				// A little extra pitch remains so the animal commits to the mouthful rather than
 				// merely facing it, and the crouch settles the body over its food.
 				targetHeadPitch = 0.18f;
-				targetHeadYaw = 0.10f * (float) Math.sin(ctx.time * 1.3);
+				targetHeadYaw = 0.10f * idle(ctx, ctx.time * 1.3);
 				// Fast small bob is the jaw working; the slow one is the head shifting between bites.
-				targetHeadPitch += 0.09f * (float) Math.sin(ctx.time * 9.0)
-						+ 0.05f * (float) Math.sin(ctx.time * 2.1);
+				targetHeadPitch += 0.09f * idle(ctx, ctx.time * 9.0)
+						+ 0.05f * idle(ctx, ctx.time * 2.1);
 				targetCrouch = 0.10f;
 			}
 			case BITE -> {
@@ -254,8 +569,8 @@ public final class CreatureAnimator {
 			case FEED -> {
 				// Head down at the body on the ground, worrying at it.
 				targetHeadPitch = 1.15f;
-				targetHeadYaw = 0.22f * (float) Math.sin(ctx.time * 3.1);
-				targetHeadPitch += 0.14f * (float) Math.sin(ctx.time * 7.5);
+				targetHeadYaw = 0.22f * idle(ctx, ctx.time * 3.1);
+				targetHeadPitch += 0.14f * idle(ctx, ctx.time * 7.5);
 				targetCrouch = 0.18f;
 			}
 			case CARCASS -> {
@@ -358,91 +673,261 @@ public final class CreatureAnimator {
 			return;
 		}
 		boolean moving = ctx.speed > IDLE_SPEED && !ctx.airborne;
-		// Step frequency falls out of speed and stride: cadence matches how fast the body moves.
-		// The minimum keeps large creatures' legs visibly moving rather than looking frozen.
-		// Large creatures still step slower than small ones, but never below a visible threshold.
-		float minFreq = MathX.clamp(0.25f / Math.max(0.5f, plan.hipHeight * 0.35f), 0.18f, 0.45f);
-		float stepFrequency = moving ? MathX.clamp(ctx.speed / strideLength, minFreq, 3.2f) : 0f;
+		// Cadence falls out of speed and stride, and stride is now the distance the legs can
+		// actually carry the body — so a creature whose legs cannot make the step it is being asked
+		// for takes more steps rather than longer ones. There is no minimum any more: the old floor
+		// existed to keep a large animal's legs visibly moving, but it did that by cycling the gait
+		// faster than the body was travelling, which planted every foot ahead of where the hip
+		// would ever reach. Legs that move but cannot hold the ground are worse than slow legs.
+		stepFrequency = moving ? stepFrequencyFor(ctx.speed, ctx.scale) : 0f;
 		gaitPhase = (gaitPhase + stepFrequency * dt) % 1f;
+
+		// How far the body will travel while a foot is on the ground. Half of it is the lead: plant
+		// the foot that far ahead of the hip and it passes under the hip at mid-stance and finishes
+		// as far behind, which is what makes a stride symmetric. The old fixed 0.65 of a stride put
+		// the foot ahead of the hip at touchdown and *still* ahead at lift-off, so every leg spent
+		// its whole stance reaching forward — and at the two frequency clamps, where cadence and
+		// speed stop agreeing, it was ahead by an unbounded amount.
+		float stanceTravel = stepFrequency > MathX.EPS ? ctx.speed * DUTY_FACTOR / stepFrequency : 0f;
+		float swingSeconds = stepFrequency > MathX.EPS
+				? MathX.clamp((1f - DUTY_FACTOR) / stepFrequency, 0.06f, 0.6f)
+				: 0.25f;
+		// The plant is chosen when the foot leaves the ground and reached when it lands, and the
+		// body keeps moving in between. Leading by half a stance alone therefore aims at where the
+		// hip was, not where it will be: at a duty factor of 0.62 the swing carries the body 0.38
+		// of a cycle while the lead covers 0.31 of one, so the foot touched down already behind the
+		// hip and spent its whole stance falling further back. Measured over the gait report it was
+		// 0.29 of a leg length aft on average, every leg, every archetype — the legs trailing look.
+		//
+		// Adding the swing's own travel makes the plant land where the rest position will be, and
+		// the half-stance lead then does what it was always meant to: the foot passes under the hip
+		// at mid-stance and finishes as far behind as it started ahead.
+		float lead = ctx.speed * swingSeconds + stanceTravel * 0.5f;
 
 		for (int i = 0; i < plan.legs.length; i++) {
 			LimbChain leg = plan.legs[i];
 			FootState foot = feet[i];
 
-			restFootWorld(ctx, leg, v0);
+			restFootWorld(ctx, i, leg, v0);
 			if (!foot.initialised) {
 				foot.snapTo(v0.x, groundAt(ctx, v0.x, v0.z), v0.z);
 				continue;
 			}
 
-			float duty = DUTY_FACTOR;
-
 			if (!moving) {
-				// Standing: ease each foot back under its rest position rather than freezing wherever
-				// the last step ended, so the creature settles into a natural stance.
+				// Standing: ease each foot back under its rest position rather than freezing
+				// wherever the last step ended, so the creature settles into a natural stance.
 				double blend = Math.exp(-6.0 * dt);
 				foot.plantX = v0.x + (foot.plantX - v0.x) * blend;
 				foot.plantZ = v0.z + (foot.plantZ - v0.z) * blend;
-
-				// Clamp plant distance from hip rest position so turning on the spot never twists or stretches legs
-				double dx = foot.plantX - v0.x;
-				double dz = foot.plantZ - v0.z;
-				double maxDist = leg.totalLength * 0.65f;
-				if (dx * dx + dz * dz > maxDist * maxDist) {
-					double dist = Math.sqrt(dx * dx + dz * dz);
-					foot.plantX = v0.x + (dx / dist) * maxDist;
-					foot.plantZ = v0.z + (dz / dist) * maxDist;
-				}
-
-				// Un-cross legs when turning > 90 degrees or crossing body midline
-				float cos = (float) Math.cos(ctx.bodyYaw);
-				float sin = (float) Math.sin(ctx.bodyYaw);
-				float modelX = (float) ((foot.plantX - ctx.x) * cos - (foot.plantZ - ctx.z) * sin);
-				float modelZ = (float) ((foot.plantX - ctx.x) * sin + (foot.plantZ - ctx.z) * cos);
-				float maxReach = leg.totalLength * 0.80f;
-				if ((leg.side > 0 && modelX < -0.05f) || (leg.side < 0 && modelX > 0.05f)
-						|| (Math.abs(modelZ - leg.restEffector.z) > maxReach)) {
-					foot.plantX = v0.x;
-					foot.plantZ = v0.z;
-				}
-
+				clampPlantToEnvelope(ctx, i, leg, foot);
 				foot.plantY = groundAt(ctx, foot.plantX, foot.plantZ);
 				foot.grounded = true;
+				foot.groundedTime += dt;
+				foot.inStanceWindow = true;
 				settleToward(foot, SETTLE_RATE_STOP, dt);
 				continue;
 			}
 
 			float legPhase = (gaitPhase + leg.gaitPhase) % 1f;
-			if (legPhase < duty) {
+			boolean inWindow = legPhase < DUTY_FACTOR;
+
+			if (foot.grounded) {
+				// Two things can start a step. The gait phase asking for one, on the falling edge of
+				// the stance window — edge-triggered, so a foot that already stepped for its own
+				// reasons is not made to step again the moment it lands. And the foot having been
+				// carried outside what its leg can hold, which the phase knows nothing about: a
+				// creature turning on the spot, cresting a block, or changing speed drags a planted
+				// foot out of reach with the gait cycle nowhere near its swing. That case used to
+				// end with the limb pointing at a target it could not reach until the phase came
+				// round, which is most of what "pinned straight legs" was.
+				boolean phaseWants = foot.inStanceWindow && !inWindow;
+				// The refractory period stops a foot clamped to its own boundary from re-stepping
+				// every frame. It must not also strand a foot that is genuinely out of reach: a
+				// creature moving faster than its legs can stride drags a plant a long way in a
+				// tenth of a second, and waiting it out is the leg held straight behind the body.
+				// So marginal violations wait and gross ones are answered at once.
+				boolean settled = foot.groundedTime >= STEP_REFRACTORY;
+				boolean dragged = footBeyondEnvelope(ctx, i, leg, foot)
+						&& (settled || footStranded(ctx, i, leg, foot));
+				if ((phaseWants || dragged) && (phaseWants || canLift(i))) {
+					stepTo(ctx, i, leg, foot, lead, swingSeconds);
+				}
+			}
+			foot.inStanceWindow = inWindow;
+
+			if (foot.grounded) {
 				// Stance: the foot is pinned to the world. The body moves over it.
-				foot.grounded = true;
+				//
+				// Except when the body is moving faster than the legs can stride, which for a small
+				// creature is most of the time — a fifteen-centimetre insectoid given three blocks a
+				// second is being asked for fifteen leg-lengths a second, and no gait makes that
+				// work. Something has to give, and the only choices are the foot's grip or the leg
+				// itself. Dragging the plant back inside the envelope spends the grip: the feet
+				// skate, which is honest about what is happening and leaves every limb bent and
+				// attached. It is deliberately the last resort and a walk at any sane speed never
+				// reaches it, because a plant inside the envelope is left exactly where it was put.
+				foot.groundedTime += dt;
+				clampPlantToEnvelope(ctx, i, leg, foot);
 				settleToward(foot, SETTLE_RATE_STANCE, dt);
 			} else {
-				float s = (legPhase - duty) / (1f - duty);
-				if (foot.grounded) {
-					// Lift-off: choose the next plant well ahead of the rest position.
-					// Real animals reach their foot forward during the swing phase so the foot
-					// lands in front of where the hip will be, not behind.
-					float lead = strideLength * 0.65f;
-					double tx = v0.x + ctx.forwardX() * lead;
-					double tz = v0.z + ctx.forwardZ() * lead;
-					foot.beginSwing(tx, groundAt(ctx, tx, tz), tz);
-				}
+				foot.swingTime += dt;
+				float s = MathX.clamp01(foot.swingTime / foot.swingDuration);
 				foot.swing = s;
 				// Anticipatory reach: the foot overshoots forward in early swing, then
 				// settles back to the plant target as it touches down — matching how real
 				// creatures extend their leg forward before planting it.
 				float e = MathX.smoothstep(s);
 				float overshoot = 0.15f * (float) Math.sin(Math.PI * s);
-				float ex = MathX.lerp((float) foot.xo, (float) foot.plantX, Math.min(1f, e + overshoot));
-				float ez = MathX.lerp((float) foot.zo, (float) foot.plantZ, Math.min(1f, e + overshoot));
-				foot.currentX = ex;
-				foot.currentZ = ez;
-				// Parabolic lift, peaking mid-swing.
-				float lift = STEP_LIFT * plan.hipHeight * (float) Math.sin(Math.PI * s);
+				float reach = Math.min(1f, e + overshoot);
+				foot.currentX = MathX.lerp((float) foot.xo, (float) foot.plantX, reach);
+				foot.currentZ = MathX.lerp((float) foot.zo, (float) foot.plantZ, reach);
+				// Parabolic lift, peaking mid-swing. Sized to the leg rather than to the hip height
+				// so a short-legged creature does not high-step over ground it is barely clearing.
+				float lift = STEP_LIFT * longestLeg * scale(ctx) * (float) Math.sin(Math.PI * s);
 				foot.currentY = MathX.lerp((float) foot.prevY, (float) foot.plantY, e) + lift;
+				if (s >= 1f) {
+					foot.grounded = true;
+					foot.swing = 0f;
+				}
 			}
 		}
+	}
+
+	/**
+	 * Chooses where a foot lands and starts it moving.
+	 * <p>
+	 * The target is the rest position led forward far enough to cover the swing the foot is about
+	 * to take plus half the stance that follows it, then pulled back inside the leg's envelope. The
+	 * clamp is the guarantee: whatever the gait, the terrain or the turn asked for, the foot is
+	 * planted somewhere the hip can hold it.
+	 */
+	private void stepTo(AnimationContext ctx, int index, LimbChain leg, FootState foot,
+	                    float lead, float swingSeconds) {
+		restFootWorld(ctx, index, leg, v0);
+		double tx = v0.x + ctx.forwardX() * lead;
+		double tz = v0.z + ctx.forwardZ() * lead;
+		foot.beginSwing(tx, groundAt(ctx, tx, tz), tz, swingSeconds);
+		clampPlantToEnvelope(ctx, index, leg, foot);
+		foot.plantY = groundAt(ctx, foot.plantX, foot.plantZ);
+	}
+
+	/**
+	 * True when a planted foot has been carried outside the box its leg can reach over.
+	 * <p>
+	 * Horizontal only. Vertical over-reach is the body height pass's problem and it can usually
+	 * solve it by settling the creature lower; a foot too far out sideways or fore-and-aft is one
+	 * no amount of crouching rescues, and the only honest answer is another step.
+	 */
+	private boolean footBeyondEnvelope(AnimationContext ctx, int index, LimbChain leg, FootState foot) {
+		toModel(ctx, foot.plantX, foot.plantY, foot.plantZ, v1);
+		// Every limit is widened by the hysteresis margin. Stance pulls the plant back to the
+		// boundary each frame, so a test that fires exactly at the boundary fires forever.
+		float dz = v1.z - (leg.restEffector.z + strideCentre[index]);
+		float dx = v1.x - leg.restEffector.x;
+		if (dz > roomFwd(index) * ENVELOPE_HYSTERESIS
+				|| dz < -roomBack(index) * ENVELOPE_HYSTERESIS
+				|| Math.abs(dx) > excursionSide[index] * ENVELOPE_HYSTERESIS) {
+			return true;
+		}
+		hipBase(index, v0);
+		float room = horizontalRoom(index, v0, v1.y) * ENVELOPE_HYSTERESIS;
+		float hx = v1.x - v0.x, hz = v1.z - v0.z;
+		return hx * hx + hz * hz > room * room;
+	}
+
+	/**
+	 * True when a planted foot is not merely outside its stride envelope but outside what the limb
+	 * can physically span, so that no amount of crouching or waiting will reach it.
+	 */
+	private boolean footStranded(AnimationContext ctx, int index, LimbChain leg, FootState foot) {
+		toModel(ctx, foot.plantX, foot.plantY, foot.plantZ, v1);
+		hipBase(index, v0);
+		float dx = v1.x - v0.x;
+		float dy = v1.y - (v0.y + riseAtLastSolve);
+		float dz = v1.z - v0.z;
+		float reach = legReach[index];
+		return dx * dx + dy * dy + dz * dz > reach * reach;
+	}
+
+	/** Forward room left to this leg from the middle of its travel. */
+	private float roomFwd(int index) {
+		return Math.max(plan.legs[index].totalLength * MIN_EXCURSION,
+				excursionFwd[index] - strideCentre[index]);
+	}
+
+	/** Backward room left to this leg from the middle of its travel. */
+	private float roomBack(int index) {
+		return Math.max(plan.legs[index].totalLength * MIN_EXCURSION,
+				excursionBack[index] + strideCentre[index]);
+	}
+
+	/**
+	 * How far from its hip, measured on the ground plane alone, this leg can put a foot at the
+	 * given height right now.
+	 * <p>
+	 * The three excursions bound each axis separately, which describes a box; a leg describes a
+	 * sphere, and a foot at maximum forward <i>and</i> maximum sideways sits in a corner of the box
+	 * outside it — measured at 1.28 leg lengths of horizontal offset on a sprawling insectoid while
+	 * every individual axis was comfortably inside its own limit. This is the circle to trim to,
+	 * and it is worked out from where the hip and the ground actually are rather than stored from
+	 * the bind pose, because a creature crouched over broken ground has real horizontal room that a
+	 * stance-height constant would refuse it.
+	 */
+	private float horizontalRoom(int index, Vector3f hipBase, float footY) {
+		float dy = hipBase.y + riseAtLastSolve - footY;
+		float span = legReach[index] * legReach[index] - dy * dy;
+		return span > 0f
+				? (float) Math.sqrt(span)
+				: plan.legs[index].totalLength * MIN_EXCURSION;
+	}
+
+	/** Pulls a plant position back inside its leg's envelope, in place, in world space. */
+	private void clampPlantToEnvelope(AnimationContext ctx, int index, LimbChain leg, FootState foot) {
+		toModel(ctx, foot.plantX, foot.plantY, foot.plantZ, v1);
+		// The box first: it is what keeps a stride symmetric about where the leg was grown and
+		// stops feet wandering across the body's midline into each other.
+		float centre = leg.restEffector.z + strideCentre[index];
+		float dz = MathX.clamp(v1.z - centre, -roomBack(index), roomFwd(index));
+		float dx = MathX.clamp(v1.x - leg.restEffector.x, -excursionSide[index], excursionSide[index]);
+		v1.x = leg.restEffector.x + dx;
+		v1.z = centre + dz;
+
+		// Then the circle, about the hip that has to hold it — measured, so it follows the hip that
+		// the spine bend and the body's lean have actually moved rather than the one the bind pose
+		// says should be there.
+		hipBase(index, v0);
+		float limit = horizontalRoom(index, v0, v1.y);
+		float hx = v1.x - v0.x, hz = v1.z - v0.z;
+		float span = hx * hx + hz * hz;
+		if (span > limit * limit && span > 1e-10f) {
+			float k = limit / (float) Math.sqrt(span);
+			v1.x = v0.x + hx * k;
+			v1.z = v0.z + hz * k;
+		}
+
+		toWorld(ctx, v1, v0);
+		foot.plantX = v0.x;
+		foot.plantZ = v0.z;
+	}
+
+	/**
+	 * Whether this leg may leave the ground right now for a corrective step.
+	 * <p>
+	 * A phase-driven step is never refused — the gait's own timing is what keeps a creature
+	 * balanced, and second-guessing it here would desynchronise every limb. A corrective step is
+	 * different: it can fire on any number of legs at once, and a creature that answers a lurch by
+	 * lifting all of them is not walking, it is falling. One other weight-bearing leg is the
+	 * minimum for anything with legs to spare; a biped has none to spare and is allowed its
+	 * airborne moment, which is what running is.
+	 */
+	private boolean canLift(int index) {
+		if (plan.legs.length <= 2) return true;
+		int grounded = 0;
+		for (int i = 0; i < feet.length; i++) {
+			if (i != index && feet[i].grounded) grounded++;
+		}
+		return grounded >= 2;
 	}
 
 	// --------------------------------------------------------------------- body
@@ -465,61 +950,92 @@ public final class CreatureAnimator {
 			return;
 		}
 
-		float sumY = 0f, frontY = 0f, rearY = 0f, leftY = 0f, rightY = 0f;
-		float frontW = 0f, rearW = 0f, leftW = 0f, rightW = 0f;
+		// ---- how high the legs can hold the body ---------------------------------------------
+		//
+		// The old answer was the mean height of the feet, which is where the body would sit if legs
+		// were infinitely long. They are not, and the difference is the whole problem: a foot placed
+		// out to the side or down a step needs the hip nearer to it, and a body that stays at the
+		// average simply over-extends that leg and draws it as a rigid spar.
+		//
+		// So the body rides at the *lowest* height any weight-bearing leg demands. That is what
+		// carrying weight means — the load settles until the supports can take it — and it makes
+		// the creature crouch over broken ground and rise again on the flat, for free, out of the
+		// same arithmetic that keeps the limbs inside their reach.
+		// Heights come from the plants of the feet carrying weight, never from where the feet
+		// happen to be. A swinging foot is lifted by design, and averaging that lift into the body's
+		// height walks the whole creature upward in time with its own steps.
+		float groundSum = 0f, allSum = 0f;
+		int supported = 0;
+		float maxRise = Float.MAX_VALUE;
 
 		for (int i = 0; i < plan.legs.length; i++) {
-			LimbChain leg = plan.legs[i];
-			// Model-space height of this foot relative to the entity's own feet level.
-			float modelY = (float) (feet[i].currentY - ctx.y);
-			sumY += modelY;
-			if (leg.restEffector.z >= 0f) {
-				frontY += modelY;
-				frontW++;
-			} else {
-				rearY += modelY;
-				rearW++;
-			}
-			if (leg.side > 0) {
-				rightY += modelY;
-				rightW++;
-			} else {
-				leftY += modelY;
-				leftW++;
-			}
+			// Model-space height of this foot's plant relative to the entity's own feet level.
+			float modelY = (float) (feet[i].plantY - ctx.y) / scale(ctx);
+			allSum += modelY;
+			if (!feet[i].grounded) continue;
+			groundSum += modelY;
+			supported++;
+
+			// Hip with the body's vertical offset taken back out, so the constraint can be solved
+			// for the offset rather than merely checked against it.
+			hipBase(i, v0);
+			toModel(ctx, feet[i].plantX, feet[i].plantY, feet[i].plantZ, v1);
+			float dx = v0.x - v1.x, dy = v0.y - v1.y, dz = v0.z - v1.z;
+			float slack = legReach[i] * legReach[i] - (dx * dx + dz * dz);
+			// Horizontally out of reach already: no body height rescues this one, and the gait's
+			// corrective step owns it. Leaving it out of the minimum stops one stranded foot from
+			// dragging the whole animal onto its belly.
+			if (slack <= 0f) continue;
+			maxRise = Math.min(maxRise, (float) Math.sqrt(slack) - dy);
 		}
 
-		int n = Math.max(1, plan.legs.length);
-		float targetRise = sumY / n;
-
-		// Measure ground incline ahead and behind to organically angle up before stepping up blocks.
-		float ahead = Math.max(0.6f, plan.bodyLength * 0.5f);
-		float frontTerrain = groundAt(ctx, ctx.x + ctx.forwardX() * ahead, ctx.z + ctx.forwardZ() * ahead);
-		float rearTerrain = groundAt(ctx, ctx.x - ctx.forwardX() * ahead, ctx.z - ctx.forwardZ() * ahead);
-		float terrainPitch = (float) Math.atan2(frontTerrain - rearTerrain, Math.max(0.2f, ahead * 2f));
-
-		// Pitch and roll come from the support polygon, blended with ahead-terrain anticipation.
-		float targetPitch = 0f, targetRoll = 0f;
-		if (frontW > 0 && rearW > 0) {
-			float span = Math.max(0.2f, plan.bodyLength * 0.6f);
-			float footPitch = (float) Math.atan2((frontY / frontW) - (rearY / rearW), span);
-			targetPitch = footPitch * 0.5f + terrainPitch * 0.5f;
-		} else {
-			targetPitch = terrainPitch;
+		float footLevel = supported > 0
+				? groundSum / supported
+				: allSum / Math.max(1, plan.legs.length);
+		float targetRise = footLevel - stanceDrop;
+		if (supported > 0 && maxRise < Float.MAX_VALUE) {
+			// Floored so a momentary bad plant cannot drive the torso through the floor.
+			targetRise = Math.max(Math.min(targetRise, maxRise), footLevel - longestLeg * 0.5f);
 		}
-		targetPitch = MathX.clamp(targetPitch, -0.7f, 0.7f);
-		if (leftW > 0 && rightW > 0) {
-			float span = Math.max(0.2f, plan.width() * 0.6f);
-			targetRoll = (float) Math.atan2((rightY / rightW) - (leftY / leftW), span);
+
+		// ---- which way it leans ---------------------------------------------------------------
+		float targetPitch = terrainPitch(ctx);
+		float targetRoll = 0f;
+		if (fitSupportPlane(ctx)) {
+			// planeSlopeZ / planeSlopeX are rise per unit of model-space depth and width.
+			targetPitch = MathX.lerp((float) Math.atan(planeSlopeZ), targetPitch, TERRAIN_ANTICIPATION);
+			targetRoll = (float) Math.atan(planeSlopeX);
 		}
+		// Both clamped, and roll for the first time. An unclamped roll is what tipped a creature
+		// onto its side at a block edge: the old figure was an arctangent over a guessed span of
+		// six tenths of the body's width, so a single foot up one block on a narrow animal asked
+		// for sixty degrees of lean and got it.
+		targetPitch = MathX.clamp(targetPitch, -MAX_BODY_TILT, MAX_BODY_TILT);
+		targetRoll = MathX.clamp(targetRoll, -MAX_BODY_TILT, MAX_BODY_TILT);
 
 		// Organic, smooth damping rates so the creature gracefully angles up at block edges instead of snapping.
-		bodyRise = MathX.damp(bodyRise, targetRise, 5.0f, dt);
-		bodyPitch = MathX.damp(bodyPitch, targetPitch, 4.5f, dt);
-		bodyRoll = MathX.damp(bodyRoll, targetRoll, 4.5f, dt);
+		// The height target is a minimum over whichever feet bear weight this frame, so it steps
+		// every time one lifts or lands — damping chases that faithfully and the animal judders.
+		// The rate limit is what turns a step function back into a walk.
+		float dampedRise = MathX.damp(bodyRise, targetRise, 5.0f, dt);
+		float riseLimit = MAX_RISE_RATE * longestLeg * dt;
+		bodyRise += MathX.clamp(dampedRise - bodyRise, -riseLimit, riseLimit);
+		bodyPitch = rateLimited(bodyPitch, MathX.damp(bodyPitch, targetPitch, 4.5f, dt), dt);
+		bodyRoll = rateLimited(bodyRoll, MathX.damp(bodyRoll, targetRoll, 4.5f, dt), dt);
 
 		// Vertical bob at twice the step frequency — one dip per footfall of a diagonal pair.
-		float bobAmount = ctx.speed > IDLE_SPEED ? plan.hipHeight * 0.035f : plan.hipHeight * 0.008f;
+		//
+		// Faded out as cadence climbs, and that fade is most of what "the body jitters up and down"
+		// was. The amplitude is small, but the frequency is twice the step rate, so a creature
+		// trotting at four steps a second bobs at eight hertz — and eight hertz of anything does not
+		// read as a gait, it reads as a vibration. A big animal at a walk keeps the whole bob; a
+		// small one scurrying keeps none of it, which is also how it looks in life, where a visible
+		// rise and fall belongs to slow heavy strides.
+		float bobFade = 1f - MathX.clamp01((stepFrequency - BOB_FULL_RATE)
+				/ (BOB_SILENT_RATE - BOB_FULL_RATE));
+		float bobAmount = ctx.speed > IDLE_SPEED
+				? plan.hipHeight * 0.035f * bobFade
+				: plan.hipHeight * 0.008f;
 		float bob = bobAmount * (float) Math.sin(gaitPhase * Math.PI * 4.0 + (ctx.speed > IDLE_SPEED ? 0.0 : ctx.time));
 
 		// Sign note: a right-handed rotation about +X tips +Z (forward) toward -Y, i.e. nose down,
@@ -530,12 +1046,128 @@ public final class CreatureAnimator {
 		// actually arcs over the slope.
 		// Behavioural offsets ride on the locomotion transform: a lunge drives the body forward
 		// along its own facing, and crouching drops it toward the ground.
+		riseAtLastSolve = bodyRise + bob - activityCrouch * plan.hipHeight;
 		skeleton.rootTransform.identity()
-				.translate(0f,
-						bodyRise + bob - activityCrouch * plan.hipHeight,
-						activityLunge * plan.bodyLength * 0.28f)
+				.translate(0f, riseAtLastSolve, activityLunge * plan.bodyLength * 0.28f)
 				.rotateX(-bodyPitch * ROOT_PITCH_SHARE)
 				.rotateZ(bodyRoll);
+	}
+
+	/**
+	 * Least-squares plane through the feet that are carrying weight, in model space.
+	 * <p>
+	 * Replaces averaging the front feet against the rear and the left against the right over a span
+	 * guessed from the body's bounding box. The guess was the fault: the arctangent's denominator
+	 * had nothing to do with how far apart the feet in question actually were, so the same one-block
+	 * height difference produced wildly different angles depending on the creature's proportions,
+	 * and on a narrow one it produced an angle that laid the animal over on its side. A fit uses the
+	 * real positions, needs no span, and works for two legs or eight without a special case.
+	 * <p>
+	 * Only weight-bearing feet are included. A foot in mid-swing is lifted by design, and feeding
+	 * that lift into the body's attitude made every creature rock in time with its own footfalls.
+	 *
+	 * @return whether the fit succeeded; feet in a line or all at one point have no plane
+	 */
+	private boolean fitSupportPlane(AnimationContext ctx) {
+		planeSlopeX = 0f;
+		planeSlopeZ = 0f;
+		float sx = 0f, sz = 0f, sy = 0f;
+		int n = 0;
+		for (int i = 0; i < plan.legs.length; i++) {
+			if (!feet[i].grounded) continue;
+			toModel(ctx, feet[i].currentX, feet[i].currentY, feet[i].currentZ, v1);
+			planeX[n] = v1.x;
+			planeZ[n] = v1.z;
+			planeY[n] = v1.y;
+			sx += v1.x;
+			sz += v1.z;
+			sy += v1.y;
+			n++;
+		}
+		if (n < 2) return false;
+
+		float mx = sx / n, mz = sz / n, my = sy / n;
+		float sxx = 0f, szz = 0f, sxz = 0f, sxy = 0f, szy = 0f;
+		for (int i = 0; i < n; i++) {
+			float dx = planeX[i] - mx, dz = planeZ[i] - mz, dy = planeY[i] - my;
+			sxx += dx * dx;
+			szz += dz * dz;
+			sxz += dx * dz;
+			sxy += dx * dy;
+			szy += dz * dy;
+		}
+
+		float det = sxx * szz - sxz * sxz;
+		if (Math.abs(det) > 1e-5f) {
+			planeSlopeX = (szz * sxy - sxz * szy) / det;
+			planeSlopeZ = (sxx * szy - sxz * sxy) / det;
+			return true;
+		}
+		// Degenerate: the feet are collinear, which is every biped and any creature with one leg
+		// off the ground. Fit the one axis that still has spread and leave the other flat rather
+		// than inventing a lean out of a near-zero denominator.
+		if (szz > 1e-5f && szz >= sxx) {
+			planeSlopeZ = szy / szz;
+			return true;
+		}
+		if (sxx > 1e-5f) {
+			planeSlopeX = sxy / sxx;
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Slope of the ground the body is walking along, from a regression over samples spread along
+	 * its own length.
+	 * <p>
+	 * Two samples — one ahead, one behind — is what this used to be, and on terrain made of blocks
+	 * two samples is a coin toss: the pair straddles a step, the measured slope jumps by a whole
+	 * block at once, and the body snaps. Several samples fitted as a line turn the same step into
+	 * the gentle grade it visually is.
+	 */
+	private float terrainPitch(AnimationContext ctx) {
+		float half = Math.max(0.6f, plan.bodyLength * 0.5f) * scale(ctx);
+		float sd = 0f, sy = 0f;
+		for (int i = 0; i < TERRAIN_SAMPLES; i++) {
+			float t = TERRAIN_SAMPLES == 1 ? 0f : (2f * i / (TERRAIN_SAMPLES - 1) - 1f);
+			float d = t * half;
+			planeX[i] = d;
+			planeY[i] = groundAt(ctx, ctx.x + ctx.forwardX() * d, ctx.z + ctx.forwardZ() * d);
+			sd += d;
+			sy += planeY[i];
+		}
+		float md = sd / TERRAIN_SAMPLES, my = sy / TERRAIN_SAMPLES;
+		float sdd = 0f, sdy = 0f;
+		for (int i = 0; i < TERRAIN_SAMPLES; i++) {
+			float dd = planeX[i] - md;
+			sdd += dd * dd;
+			sdy += dd * (planeY[i] - my);
+		}
+		return sdd < 1e-5f ? 0f : (float) Math.atan(sdy / sdd);
+	}
+
+	/** Caps how fast an attitude angle may change, so nothing snaps however sharp the ground is. */
+	private static float rateLimited(float current, float proposed, float dt) {
+		float step = MAX_TILT_RATE * dt;
+		float delta = proposed - current;
+		if (delta > step) return current + step;
+		if (delta < -step) return current - step;
+		return proposed;
+	}
+
+	/**
+	 * Model-space hip position of a leg with the body's vertical offset removed — where the hip
+	 * would sit if the body were at rise zero. Taken from the last completed solve, so it carries
+	 * the spine bend and body attitude that actually moved it; the bind pose is the fallback for
+	 * the first frame only.
+	 */
+	private void hipBase(int index, Vector3f dest) {
+		if (hipsKnown) {
+			dest.set(hipAtLastSolve[index]).sub(0f, riseAtLastSolve, 0f);
+		} else {
+			dest.set(plan.legs[index].origin);
+		}
 	}
 
 	// -------------------------------------------------------------- spine / neck
@@ -572,7 +1204,7 @@ public final class CreatureAnimator {
 			boolean isDead = ctx.collapse >= 0.99f || ctx.activity == dev.jsz.primordia.entity.CreatureActivity.CARCASS;
 			float wave = isDead ? 0f : amplitude * (float) Math.sin(gaitPhase * Math.PI * 2.0 - along * 2.2);
 			float yaw = lateralBend / spineBones.length + wave;
-			float breathe = isDead ? 0f : 0.012f * (float) Math.sin(ctx.time * 1.7 + along);
+			float breathe = isDead ? 0f : 0.012f * idle(ctx, ctx.time * 1.7 + along);
 			// Weight the bend toward the middle of the back — the shoulders and hips are anchored
 			// by the limbs, so a hump-shaped curve is what a real spine does over a rise.
 			float bend = spinePitch * (0.6f + 0.8f * (float) Math.sin(Math.PI * (0.15f + 0.7f * along)));
@@ -634,7 +1266,7 @@ public final class CreatureAnimator {
 						: Math.max(0f, 1f - (p - 0.45f) / 0.30f);
 			}
 			// Chewing: a fast shallow cycle rather than a gape.
-			case GRAZE -> 0.18f + 0.14f * (float) Math.sin(ctx.time * 9.0);
+			case GRAZE -> 0.18f + 0.14f * idle(ctx, ctx.time * 9.0);
 			// Mouth shut through a charge or a stomp; an open jaw would read as a bite.
 			case RAM, STOMP -> 0f;
 			case CLAW, TAIL_SLAM -> 0.12f * strikeCurve(MathX.clamp01(ctx.activityProgress));
@@ -643,8 +1275,8 @@ public final class CreatureAnimator {
 
 		boolean isDead = ctx.collapse >= 0.99f || ctx.activity == dev.jsz.primordia.entity.CreatureActivity.CARCASS;
 		float ambient = isDead ? BodyPlan.JAW_REST_SLACK : (BodyPlan.JAW_REST_SLACK + (ctx.speed > IDLE_SPEED
-				? 0.10f + 0.07f * (float) Math.sin(ctx.time * 6.5)
-				: 0.02f + 0.02f * (float) Math.sin(ctx.time * 1.5)));
+				? 0.10f + 0.07f * idle(ctx, ctx.time * 6.5)
+				: 0.02f + 0.02f * idle(ctx, ctx.time * 1.5)));
 
 		// Snapping shut is far faster than opening — a jaw closes under muscle and gravity
 		// together, and easing both ways at one rate makes every bite look languid.
@@ -686,12 +1318,12 @@ public final class CreatureAnimator {
 			int bone = tailBones[i];
 			float along = (float) (i + 1) / tailBones.length;
 			// Amplitude grows toward the tip, so the tail whips and counterbalances dynamically.
-			float tailSine = isDead ? 0f : (0.14f * along * (float) Math.sin(ctx.time * 2.4 - along * 2.5));
+			float tailSine = isDead ? 0f : (0.14f * along * idle(ctx, ctx.time * 2.4 - along * 2.5));
 			float yaw = tailLag * along * 0.55f
 					+ (rollCounterbalance + stepSway) * along * 0.70f
 					+ tailSine
 					+ activityTailYaw * along * along;
-			float pitch = isDead ? 0f : (0.10f * along * (float) Math.sin(ctx.time * 1.9 - along * 2.0)
+			float pitch = isDead ? 0f : (0.10f * along * idle(ctx, ctx.time * 1.9 - along * 2.0)
 					- (ctx.speed > IDLE_SPEED ? 0.12f * along : 0f));
 
 			skeleton.bindDirection(bone, dir);
@@ -758,7 +1390,7 @@ public final class CreatureAnimator {
 		}
 
 		fabrik.solve(jointScratch, lengthScratch, n, v1, leg.poleDirection, leg.bendSigns,
-				IK_ITERATIONS);
+				leg.bindPerp, IK_ITERATIONS);
 		applyChain(leg.bones, n);
 	}
 
@@ -820,49 +1452,110 @@ public final class CreatureAnimator {
 
 	// ------------------------------------------------------------------ helpers
 
-	/** World-space position this leg's foot rests at when standing still. */
-	private void restFootWorld(AnimationContext ctx, LimbChain leg, Vector3f dest) {
-		toWorld(ctx, leg.restEffector, dest);
+	/**
+	 * One cycle of an idle oscillator, or nothing at all when the caller has asked for the gait
+	 * alone. See {@link AnimationContext#ambient}.
+	 */
+	private static float idle(AnimationContext ctx, double phase) {
+		return ctx.ambient ? (float) Math.sin(phase) : 0f;
 	}
 
-	/** Model space to world space: rotate by the body yaw, then translate to the entity. */
+	/** Growth scale, never zero. Model units times this are world units. */
+	private static float scale(AnimationContext ctx) {
+		return ctx.scale > 1e-3f ? ctx.scale : 1f;
+	}
+
+	/**
+	 * World-space position this leg's foot works about — the middle of its fore/aft travel, not the
+	 * point the limb was grown at.
+	 * <p>
+	 * Standing and stepping share this one neutral point deliberately. If the stride were centred
+	 * here while the stance settled back to the bind position, a creature would shuffle its feet
+	 * every time it started and stopped walking.
+	 */
+	private void restFootWorld(AnimationContext ctx, int index, LimbChain leg, Vector3f dest) {
+		v2.set(leg.restEffector);
+		v2.z += strideCentre[index];
+		toWorld(ctx, v2, dest);
+	}
+
+	/** Model space to world space: scale to the creature's size, rotate by body yaw, translate. */
 	private void toWorld(AnimationContext ctx, Vector3f model, Vector3f dest) {
+		float k = scale(ctx);
 		float c = (float) Math.cos(ctx.bodyYaw);
 		float s = (float) Math.sin(ctx.bodyYaw);
+		float mx = model.x * k, my = model.y * k, mz = model.z * k;
 		dest.set(
-				(float) (ctx.x + model.x * c - model.z * s),
-				(float) (ctx.y + model.y),
-				(float) (ctx.z + model.x * s + model.z * c));
+				(float) (ctx.x + mx * c - mz * s),
+				(float) (ctx.y + my),
+				(float) (ctx.z + mx * s + mz * c));
 	}
 
 	/** World space to model space: the exact inverse of {@link #toWorld}. */
 	private void toModel(AnimationContext ctx, double wx, double wy, double wz, Vector3f dest) {
+		float k = 1f / scale(ctx);
 		float c = (float) Math.cos(ctx.bodyYaw);
 		float s = (float) Math.sin(ctx.bodyYaw);
 		float dx = (float) (wx - ctx.x);
 		float dy = (float) (wy - ctx.y);
 		float dz = (float) (wz - ctx.z);
-		dest.set(dx * c + dz * s, dy, -dx * s + dz * c);
+		dest.set((dx * c + dz * s) * k, dy * k, (-dx * s + dz * c) * k);
 	}
 
 	/**
 	 * Ground height under a point. If the target sits over a hole, pit, or cliff edge,
 	 * searches adjacent ground candidates so feet land on nearby solid ground instead of floating over air.
+	 * <p>
+	 * How far down counts as reachable is the creature's own leg, not a constant. The fixed 1.25
+	 * blocks this used to allow was under half of a large animal's reach: a sauropod stepping off a
+	 * two-block ledge had the ground beneath its foot rejected as out of range and fell back to its
+	 * own foot level, which put the foot in mid-air over the drop with the leg pointing at it.
 	 */
 	private float groundAt(AnimationContext ctx, double x, double z) {
+		float limit = footDropLimit(ctx);
+		float low = (float) (ctx.y - limit);
+		float high = (float) (ctx.y + limit);
+
 		float y = ctx.ground.groundY(x, z, ctx.y);
-		if (!Float.isNaN(y) && Math.abs(y - ctx.y) < 1.25f) {
-			return y;
+		if (!Float.isNaN(y)) {
+			// A real surface. Reach toward it as far as the limb goes and no further: a foot at
+			// the lip of a drop it cannot follow stops where the leg runs out, which is honest.
+			//
+			// This used to fall through to the neighbour search when the surface was out of range,
+			// and that is what put creatures on top of lakes: a wading column answers with a height
+			// just under the water, a short-legged animal cannot reach it, and the search then found
+			// the bank it was standing on and lifted the foot to it. A column with an answer gets
+			// that answer — see GroundProbe's contract, which has said so all along.
+			return MathX.clamp(y, low, high);
 		}
-		double[] offsetsX = { 0.0, -0.35, 0.35, 0.0 };
-		double[] offsetsZ = { -0.35, 0.0, 0.0, 0.35 };
+
+		// No standable surface in this column at all: a hole, a pit, or open air past a cliff edge.
+		// Only now is looking next door the right thing to do.
+		float probe = 0.35f * scale(ctx);
+		double[] offsetsX = { 0.0, -probe, probe, 0.0 };
+		double[] offsetsZ = { -probe, 0.0, 0.0, probe };
 		for (int i = 0; i < 4; i++) {
-			float candidateY = ctx.ground.groundY(x + offsetsX[i], z + offsetsZ[i], ctx.y);
-			if (!Float.isNaN(candidateY) && Math.abs(candidateY - ctx.y) < 1.25f) {
-				return candidateY;
+			float candidate = ctx.ground.groundY(x + offsetsX[i], z + offsetsZ[i], ctx.y);
+			if (!Float.isNaN(candidate)) {
+				return MathX.clamp(candidate, low, high);
 			}
 		}
 		return (float) ctx.y;
+	}
+
+	/**
+	 * How far from its own feet level a creature may plant a foot, in world units.
+	 * <p>
+	 * Its own leg, and nothing else. The flat 1.25 blocks this used to be was wrong at both ends of
+	 * the size range: under half a large animal's reach, so a sauropod stepping off a two-block
+	 * ledge had the ground under its foot refused as out of range; and six times a small one's, so
+	 * an insectoid beside a one-block step was handed a target a body-length below itself and drew
+	 * the leg as a spike pointing down at it.
+	 */
+	private float footDropLimit(AnimationContext ctx) {
+		// The floor is a wading depth rather than a step: shallow water gives a surface a little
+		// under the creature's own level and every animal can put a foot in it, whatever its size.
+		return Math.max(0.4f, longestLeg * scale(ctx) * 1.15f);
 	}
 
 	private static int[] collect(BodyPlan plan, String prefix) {

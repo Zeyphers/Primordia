@@ -73,8 +73,7 @@ public final class MeshBaker {
 		SurfaceNets.Result net = SurfaceNets.extract(sdf, plan.boundsMin, plan.boundsMax,
 				cells, voxelSize, visibleGap);
 		// Cleared before anything else reads the field. Colouring asks featureAt which part of the
-		// body a vertex belongs to, and the teeth are placed against the jaw's true surface; both
-		// want the real shape, not the thickened one.
+		// body a vertex belongs to, and it wants the real shape, not the thickened one.
 		sdf.setInflate(0f);
 
 		int vertexCount = net.vertexCount();
@@ -91,6 +90,9 @@ public final class MeshBaker {
 		Noise noise = new Noise(plan.genome.seed());
 		Vector3f rgb = new Vector3f();
 		int[] vertexGroup = new int[vertexCount];
+		// What kind of surface each vertex is. The skinning needs it: a leg may drive leg surfaces
+		// and trunk flesh, and must not drive a frill that happens to hang beside it.
+		int[] vertexFeature = new int[vertexCount];
 		float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
 		float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
 
@@ -103,6 +105,7 @@ public final class MeshBaker {
 			// carries the group of the bone it hangs off — which is the only thing that knows a
 			// frill belongs to the body and not to the leg it happens to be dangling beside.
 			vertexGroup[v] = sdf.groupAt(x, y, z);
+			vertexFeature[v] = feature.ordinal();
 			emissive[v] = Pattern.colorAt(x, y, z, normals[p], normals[p + 1], normals[p + 2],
 					feature, plan.palette, noise, rgb);
 			colors[p] = rgb.x;
@@ -119,7 +122,8 @@ public final class MeshBaker {
 
 		int[] boneIndices = new int[vertexCount * SkinBinder.MAX_INFLUENCES];
 		float[] boneWeights = new float[vertexCount * SkinBinder.MAX_INFLUENCES];
-		SkinBinder.bind(plan, positions, vertexCount, vertexGroup, boneIndices, boneWeights);
+		SkinBinder.bind(plan, positions, vertexCount, vertexGroup, vertexFeature,
+				boneIndices, boneWeights);
 
 		// Accumulate area-weighted face normals across the quads sharing each vertex, then blend
 		// them with the SDF gradient.
@@ -172,37 +176,6 @@ public final class MeshBaker {
 		}
 
 		alignWindingToNormals(positions, normals, quads);
-
-		// Teeth are appended after everything above, not folded into it. They never went through
-		// the field, so they need none of the smoothing, skin binding or winding correction that
-		// the body's surface does — they are already exactly the shape and orientation they should
-		// be, and running them through any of it would only round them off again.
-		ToothMesher.Result teeth = ToothMesher.build(plan, sdf);
-		if (teeth.vertexCount() > 0) {
-			int base = vertexCount;
-			positions = concat(positions, teeth.positions());
-			normals = concat(normals, teeth.normals());
-			colors = concat(colors, teeth.colors());
-			emissive = concat(emissive, teeth.emissive());
-			boneWeights = concat(boneWeights, teeth.boneWeights());
-			boneIndices = concat(boneIndices, teeth.boneIndices());
-
-			int[] toothQuads = teeth.quads();
-			int[] merged = java.util.Arrays.copyOf(quads, quads.length + toothQuads.length);
-			for (int i = 0; i < toothQuads.length; i++) {
-				merged[quads.length + i] = toothQuads[i] + base;
-			}
-			quads = merged;
-
-			for (int i = 0; i < teeth.positions().length; i += 3) {
-				minX = Math.min(minX, teeth.positions()[i]);
-				maxX = Math.max(maxX, teeth.positions()[i]);
-				minY = Math.min(minY, teeth.positions()[i + 1]);
-				maxY = Math.max(maxY, teeth.positions()[i + 1]);
-				minZ = Math.min(minZ, teeth.positions()[i + 2]);
-				maxZ = Math.max(maxZ, teeth.positions()[i + 2]);
-			}
-		}
 
 		return new MeshData(positions, normals, colors, emissive, boneIndices, boneWeights, quads,
 				minX, minY, minZ, maxX, maxY, maxZ);
@@ -392,6 +365,24 @@ public final class MeshBaker {
 		if (plan.minLimbGap != Float.MAX_VALUE && plan.minLimbGap > 1e-5f) {
 			needed = Math.max(needed, (int) Math.ceil(span / (plan.minLimbGap * 0.5f)));
 		}
+		// Resolve the world's voxel, not just the creature's limbs.
+		//
+		// In voxel mode the lattice is a power-of-two multiple of the base voxel, so a grid even
+		// slightly coarser than the voxel is rounded all the way up to two voxels and every block
+		// on that animal comes out twice the size of the blocks on the one standing next to it.
+		// It is the large, thick-limbed genomes that land there: nothing about their limbs asks
+		// for a finer grid, so they keep the tier's own resolution, and past about five blocks of
+		// span that resolution is coarser than a pixel. Measured on the population it was 0.2% of
+		// creatures — rare, and unmissable when it happens, because uniform block size is the
+		// whole of what the mode claims.
+		//
+		// The ceiling below still bounds it: past roughly nine blocks of span even the raised grid
+		// cannot hold a pixel, and those creatures coarsen as before rather than costing a bake
+		// nobody budgeted for.
+		if (voxelSize > 0f) {
+			needed = Math.max(needed, (int) Math.ceil(span / voxelSize));
+		}
+
 		// Never below the tier's own resolution, never far above it, never past the ceiling.
 		int ceiling = Math.min(Math.round(requested * 1.8f), LodTier.maxResolution());
 		return Math.max(requested, Math.min(needed, ceiling));

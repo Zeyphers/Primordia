@@ -16,30 +16,30 @@ public enum Gene {
 	TORSO_LENGTH(0.45f, false, true),
 	TORSO_GIRTH(0.5f, false, true),
 	TORSO_TAPER(0.6f),
-	SPINE_SEGMENTS(0.25f),
+	SPINE_SEGMENTS(0.25f, 3, 8),
 	SPINE_ARCH(0.6f),
 	BLEND_SMOOTHNESS(0.5f, false, true),
 
 	// ---- neck & head ------------------------------------------------------
 	NECK_LENGTH(0.5f, false, true),
-	NECK_SEGMENTS(0.25f),
+	NECK_SEGMENTS(0.25f, 1, 4),
 	NECK_THICKNESS(0.5f),
 	HEAD_SIZE(0.4f, false, true),
 	HEAD_ELONGATION(0.6f),
 	JAW_SIZE(0.7f, false, true),
 	CRANIUM_BULGE(0.6f),
 	EYE_SIZE(0.7f),
-	EYE_COUNT(0.15f),
+	EYE_COUNT(0.15f, 0.85f),
 	EYE_SPACING(0.6f),
 
 	// ---- tail -------------------------------------------------------------
 	TAIL_LENGTH(0.6f),
-	TAIL_SEGMENTS(0.3f),
+	TAIL_SEGMENTS(0.3f, 1, 6),
 	TAIL_THICKNESS(0.6f),
 
 	// ---- legs -------------------------------------------------------------
-	LEG_PAIRS(0.12f),
-	LEG_SEGMENTS(0.2f),
+	LEG_PAIRS(0.12f, 1, 4),
+	LEG_SEGMENTS(0.2f, 2, 3),
 	LEG_LENGTH(0.5f, false, true),
 	LEG_THICKNESS(0.55f, false, true),
 	LEG_SPLAY(0.6f, false, true),
@@ -54,7 +54,7 @@ public enum Gene {
 	ARM_THICKNESS(0.55f, false, true),
 
 	// ---- ornament ---------------------------------------------------------
-	DORSAL_SPINES(0.5f),
+	DORSAL_SPINES(0.5f, 0.55f),
 	DORSAL_SPINE_LENGTH(0.6f),
 
 	// ---- ecology / behaviour (drives later milestones, drifts from day one) -
@@ -92,12 +92,12 @@ public enum Gene {
 	COUNTERSHADING(0.6f),
 
 	// ---- detailed anatomical options --------------------------------------
-	CLAWS(0.5f),
-	HAND_STYLE(0.5f, true),
+	CLAWS(0.5f, 0.35f),
+	HAND_STYLE(0.5f, true, 0.35f),
 	FOOT_TYPE(0.5f, true),
-	SPINE_STYLE(0.5f, true),
-	FUR_CREST(0.5f),
-	ARMOR_COVERAGE(0.5f),
+	SPINE_STYLE(0.5f, true, 0.40f),
+	FUR_CREST(0.5f, 0.45f),
+	ARMOR_COVERAGE(0.5f, 0.42f),
 	EYE_STYLE(0.5f, true),
 
 	// ---- cranial ornament -------------------------------------------------
@@ -105,25 +105,25 @@ public enum Gene {
 	// drifts fast, which is what lets sexual selection run away with it over generations.
 	HORN_TYPE(0.30f, true),
 	HORN_SIZE(0.65f),
-	HORN_PAIRS(0.18f),
+	HORN_PAIRS(0.18f, 0.74f),
 	EAR_TYPE(0.40f, true),
 	EAR_SIZE(0.6f),
-	FRILL(0.45f),
-	SNOUT_TYPE(0.35f, true),
-	TUSKS(0.4f),
+	FRILL(0.45f, 0.62f),
+	SNOUT_TYPE(0.35f, true, 0.68f),
+	TUSKS(0.4f, 0.62f),
 
 	// ---- tail shape -------------------------------------------------------
 	TAIL_SHAPE(0.30f, true),
 	TAIL_FIN_DEPTH(0.55f),
 
 	// ---- bioluminescence --------------------------------------------------
-	BIOLUMINESCENCE(0.45f, false, true),
+	BIOLUMINESCENCE(0.45f, false, true, 0.82f),
 	GLOW_REGION(0.55f, true),
 	GLOW_HUE(0.85f),
 
 	// ---- body architecture ------------------------------------------------
 	/** 0 = one continuous trunk, 1 = cephalothorax and abdomen joined by a narrow waist. */
-	BODY_SEGMENTATION(0.12f),
+	BODY_SEGMENTATION(0.12f, 0.62f),
 	ABDOMEN_SIZE(0.4f),
 	/** 0 = legs spread evenly along the spine, 1 = all pairs packed onto the front segment. */
 	LEG_CLUSTERING(0.18f),
@@ -187,15 +187,80 @@ public enum Gene {
 	 */
 	public final boolean constrained;
 
+	/**
+	 * Lowest and highest whole value this locus decodes to, or {@code -1} when it is a magnitude
+	 * rather than a count.
+	 * <p>
+	 * Declared here rather than at the call site so the number exists once. The editor draws a tick
+	 * per option and snaps the slider to them, and a tick that disagrees with the decode is worse
+	 * than no tick — it tells the player a lie they can act on. {@link Genome#discrete(Gene)} reads
+	 * these, so the control and the creature cannot come apart.
+	 */
+	public final int discreteLo;
+	public final int discreteHi;
+
+	/** Whether this locus decodes to a whole count with named options. */
+	public boolean isDiscrete() {
+		return discreteHi > discreteLo;
+	}
+
+	/**
+	 * The value at which a presence/absence trait switches on, or {@code -1} for a locus that has
+	 * no such boundary.
+	 * <p>
+	 * Thirteen loci are switches wearing a slider: below the cut there are no claws, no frill, no
+	 * second pair of eyes, and above it there are. The cut used to live at whichever call site
+	 * happened to test it, which made it invisible to anything trying to describe the locus — and a
+	 * boundary the player cannot see is a boundary they find by accident, after dragging a slider a
+	 * long way for no visible reason. Declared here it is drawn as a tick, and the tick and the
+	 * decode read the same number.
+	 * <p>
+	 * Where a locus drives more than one boundary this is the <b>first</b> one — the point where the
+	 * trait appears at all. {@code DORSAL_SPINES} grows its row of spines here and only counts as
+	 * armour higher up; {@code BIOLUMINESCENCE} starts glowing here and grows discrete photophores
+	 * higher still. Those stricter tests are separate questions asked by their own systems, and they
+	 * stay at their call sites rather than pretending to be the locus's own number.
+	 */
+	public final float threshold;
+
+	/** Whether this locus switches a trait on at a named value. */
+	public boolean hasThreshold() {
+		return threshold >= 0f;
+	}
+
+	Gene(float plasticity, int discreteLo, int discreteHi) {
+		this(plasticity, false, false, discreteLo, discreteHi, -1f);
+	}
+
 	Gene(float plasticity) {
 		this(plasticity, false, false);
+	}
+
+	Gene(float plasticity, float threshold) {
+		this(plasticity, false, false, -1, -1, threshold);
 	}
 
 	Gene(float plasticity, boolean categorical) {
 		this(plasticity, categorical, false);
 	}
 
+	Gene(float plasticity, boolean categorical, float threshold) {
+		this(plasticity, categorical, false, -1, -1, threshold);
+	}
+
 	Gene(float plasticity, boolean categorical, boolean constrained) {
+		this(plasticity, categorical, constrained, -1, -1, -1f);
+	}
+
+	Gene(float plasticity, boolean categorical, boolean constrained, float threshold) {
+		this(plasticity, categorical, constrained, -1, -1, threshold);
+	}
+
+	Gene(float plasticity, boolean categorical, boolean constrained,
+	     int discreteLo, int discreteHi, float threshold) {
+		this.discreteLo = discreteLo;
+		this.discreteHi = discreteHi;
+		this.threshold = threshold;
 		this.plasticity = plasticity;
 		this.categorical = categorical;
 		this.constrained = constrained;

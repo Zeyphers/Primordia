@@ -29,6 +29,17 @@ public final class AnimationContext {
 	public int tier;
 
 	/**
+	 * How far grown the creature is; the uniform scale the renderer draws the model at.
+	 * <p>
+	 * Everything the animator computes is in unscaled model space, but foot plants are world
+	 * positions and the world does not shrink for a juvenile. Without this the two frames disagree
+	 * by exactly the growth factor: a half-grown animal on a slope reached its feet only halfway to
+	 * the ground it was standing on, because a world-space height difference was being handed
+	 * straight to a model that the pose stack was about to scale down.
+	 */
+	public float scale = 1f;
+
+	/**
 	 * Where a controlling rider is steering, in radians relative to the body: negative for left,
 	 * positive for right, zero when nobody is driving.
 	 * <p>
@@ -54,6 +65,18 @@ public final class AnimationContext {
 	 */
 	public float collapse;
 	public boolean carcassSideways;
+
+	/**
+	 * Whether the free-running idle layer is drawn: breathing, tail sway, the jaw's resting motion,
+	 * the head's idle glances.
+	 * <p>
+	 * These run on {@link #time} at frequencies of their own, deliberately unrelated to the stride,
+	 * so that a standing animal is never perfectly still. That is right in the world and wrong for
+	 * anything that has to loop: a clip one gait cycle long cannot close while a tail is swinging at
+	 * 2.4 radians a second and a spine is breathing at 1.7. The editor's walk preview turns this off
+	 * and records the gait alone, which is what it is there to show anyway.
+	 */
+	public boolean ambient = true;
 
 	public GroundProbe ground = GroundProbe.flat(0f);
 

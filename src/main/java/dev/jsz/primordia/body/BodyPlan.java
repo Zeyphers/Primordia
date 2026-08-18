@@ -40,17 +40,10 @@ public final class BodyPlan {
 	 * Fraction of the baked gape a creature holds even at rest — animals close their jaws, they do
 	 * not clench them.
 	 * <p>
-	 * Lives here rather than in the animator because the mesher needs it too: it decides how long
-	 * a tooth can be without fouling the other jaw, and the pose it must check against is the
-	 * tightest one the creature ever actually adopts. Solving against a fully shut mouth instead
-	 * rejects teeth for colliding in a pose that never occurs.
+	 * A resting mouth is very slightly open, which reads as an animal rather than a carving, and
+	 * the animator holds this much gape even when nothing is driving the jaw.
 	 */
 	public static final float JAW_REST_SLACK = 0.06f;
-
-	/** The tightest the mouth ever closes, in radians of jaw rotation. */
-	public float tightestJawClosure() {
-		return jawRestAngle * (1f - JAW_REST_SLACK);
-	}
 
 	/** Bind-pose height of the hip above the ground plane (y = 0). */
 	public final float hipHeight;
@@ -84,18 +77,11 @@ public final class BodyPlan {
 	 */
 	public final float minLimbGap;
 
-	/**
-	 * Teeth, as geometry emitted outside the signed distance field entirely. See {@link ToothDef}.
-	 */
-	public final ToothDef[] teeth;
-
 	public BodyPlan(Genome genome, BoneDef[] bones, SdfBlob[] blobs, LimbChain[] legs, LimbChain[] arms,
 	                BodyPalette palette, float blendRadius, int rootBone, int headBone, int jawBone,
 	                float jawRestAngle, float hipHeight, Vector3f boundsMin, Vector3f boundsMax,
-	                ToothDef[] teeth,
 	                float bodyLength, float mass, float minLimbRadius, float minLimbGap) {
 		this.minLimbGap = minLimbGap;
-		this.teeth = teeth;
 		this.jawBone = jawBone;
 		this.jawRestAngle = jawRestAngle;
 		this.genome = genome;

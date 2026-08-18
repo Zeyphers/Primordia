@@ -51,6 +51,8 @@ public enum AttackStyle {
 		for (BoneDef bone : plan.bones) {
 			if (bone.name.startsWith("neck")) neckLength += bone.length();
 		}
+		// Past Gene.DORSAL_SPINES.threshold there are spines; this asks the harder question of whether
+		// the back is plated enough to charge behind, so it keeps its own cut.
 		boolean armoured = plan.genome.expresses(Gene.DORSAL_SPINES, 0.62f)
 				|| plan.genome.raw(Gene.ARMOR) > 0.65f;
 		if (neckLength < size * 0.18f && armoured) {

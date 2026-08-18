@@ -75,9 +75,38 @@ public final class Genome {
 		return MathX.clamp(v, lo, hi);
 	}
 
+	/**
+	 * Locus value quantised onto the range the gene itself declares.
+	 * <p>
+	 * Preferred over the explicit-bounds overload wherever the gene has a fixed domain, so that the
+	 * option count exists in one place and anything describing the locus to a player — the editor's
+	 * tick marks, the field guide — is describing what the decoder will actually do.
+	 */
+	public int discrete(Gene gene) {
+		if (!gene.isDiscrete()) {
+			throw new IllegalArgumentException(gene + " has no declared discrete range");
+		}
+		return discrete(gene, gene.discreteLo, gene.discreteHi);
+	}
+
 	/** True when the locus exceeds {@code threshold} — for presence/absence traits. */
 	public boolean expresses(Gene gene, float threshold) {
 		return values[gene.ordinal()] >= threshold;
+	}
+
+	/**
+	 * True when the locus is past the boundary the gene itself declares.
+	 * <p>
+	 * Preferred over the explicit-threshold overload wherever the cut is the locus's own — the one
+	 * the editor draws as a tick — so the control and the creature read the same number. A stricter
+	 * test layered on top of the same locus (armour worth counting, photophores rather than a bare
+	 * glow) is a different question and keeps its own value at its call site.
+	 */
+	public boolean expresses(Gene gene) {
+		if (!gene.hasThreshold()) {
+			throw new IllegalArgumentException(gene + " has no declared threshold");
+		}
+		return expresses(gene, gene.threshold);
 	}
 
 	public long seed() {

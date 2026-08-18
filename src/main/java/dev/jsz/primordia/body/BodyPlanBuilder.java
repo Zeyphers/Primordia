@@ -28,11 +28,41 @@ public final class BodyPlanBuilder {
 	/** Bones are made this much longer than the straight-line hip-to-foot distance, leaving bend room for IK. */
 	private static final float LIMB_SLACK = 1.10f;
 	/**
+	 * Most of its own length a limb may span in the bind pose.
+	 * <p>
+	 * Everything a leg can do while walking is what is left after standing still is paid for, so
+	 * this is the reach budget the gait gets to spend — at 1.0 there is none and the creature can
+	 * only stand. See the bow solver in {@link #buildLimb}.
+	 */
+	private static final float MAX_BIND_EXTENSION = 0.93f;
+	/** Attempts the bow solver makes before accepting whatever bend it has reached. */
+	private static final int BEND_SOLVE_STEPS = 8;
+	/**
 	 * How much a limb narrows from its root to its tip. Was 0.45, which tapered ankles down to
 	 * near-nothing; 0.66 keeps the far end substantial enough to survive meshing and to read as a
 	 * limb rather than a wire.
 	 */
+	/**
+	 * Default narrowing from the top of a limb to its tip. Kept as the midpoint of the range the
+	 * genome actually draws from, for the few places that have to reason about limbs without one.
+	 */
 	private static final float LIMB_TAPER = 0.66f;
+	/**
+	 * Range {@link Gene#LIMB_RATIO} draws the per-creature limb taper from.
+	 * <p>
+	 * It used to be the constant above for every creature alive, which is why heavy-legged animals
+	 * came out as plain cylinders: a fixed ratio is not a silhouette, it is the absence of one. The
+	 * bottom of this range is a limb that narrows to under half its width at the foot, the top is a
+	 * near column, and both are things real animals are.
+	 */
+	/**
+	 * How much of the fore/aft bend a two-paired creature keeps. The rest of its knee direction
+	 * comes from how far the leg sprawls, which is what makes four knees read as facing outward
+	 * rather than at each other.
+	 */
+	private static final float QUAD_FORE_AFT_SHARE = 0.40f;
+	private static final float LIMB_TAPER_MIN = 0.42f;
+	private static final float LIMB_TAPER_MAX = 0.88f;
 	/** Additional narrowing from ankle to toe tip, on top of {@link #LIMB_TAPER}. */
 	private static final float FOOT_TAPER = 0.8f;
 	/** How much of its base radius a tail retains at the tip. */
@@ -46,15 +76,6 @@ public final class BodyPlanBuilder {
 	 * out of the mesher as one welded lump and no amount of animation can part them.
 	 */
 	private static final float JAW_BIND_OPEN = 0.78f;
-
-	/**
-	 * How much of the opposing jaw's thickness a tooth may bury itself in once the mouth closes.
-	 * <p>
-	 * Under one, so the point always stops inside the other jaw rather than emerging from the far
-	 * side of it. Teeth interpenetrating the flesh they close against are invisible — both are
-	 * opaque — but a tooth that runs the whole way through stands out of the top of the skull.
-	 */
-	private static final float CLOSED_BITE_CLEARANCE = 0.15f;
 
 	/** Spine parameter the front-most pair of legs attaches at. */
 	private static final float FOREMOST_LEG_U = 0.88f;
@@ -127,7 +148,6 @@ public final class BodyPlanBuilder {
 		List<SdfBlob> blobs = new ArrayList<>();
 		List<LimbChain> legs = new ArrayList<>();
 		List<LimbChain> arms = new ArrayList<>();
-		List<ToothDef> teeth = new ArrayList<>();
 		// Group 0 is the trunk; each limb claims the next id as it is built.
 		int nextBlendGroup = BoneDef.AXIAL + 1;
 
@@ -145,7 +165,7 @@ public final class BodyPlanBuilder {
 		float torsoLength = size * g.range(Gene.TORSO_LENGTH, 0.45f, 1.7f);
 		float girth = size * g.range(Gene.TORSO_GIRTH, 0.10f, 0.38f);
 		float taper = g.range(Gene.TORSO_TAPER, 0.55f, 1.45f);
-		int spineSegments = g.discrete(Gene.SPINE_SEGMENTS, 3, 8);
+		int spineSegments = g.discrete(Gene.SPINE_SEGMENTS);
 		float arch = size * g.range(Gene.SPINE_ARCH, -0.10f, 0.22f);
 
 		// Hip height is a first-class trait: it decides stance, and the legs are fitted to it.
@@ -168,6 +188,19 @@ public final class BodyPlanBuilder {
 		float legThickness = Math.max(girth * g.range(Gene.LEG_THICKNESS, 0.42f, 1.0f), size * 0.060f);
 		float armThickness = Math.max(girth * g.range(Gene.ARM_THICKNESS, 0.26f, 0.6f), size * 0.040f);
 
+		// LIMB_RATIO was declared with the other leg loci and then never read by anything, so every
+		// limb in the game tapered by the same fixed ratio. It is the natural home for this.
+		float limbTaper = g.range(Gene.LIMB_RATIO, LIMB_TAPER_MIN, LIMB_TAPER_MAX);
+		// The floors above are on a limb's thickest end. What has to stay visible is its thinnest,
+		// which is that times the taper — so a limb that narrows harder starts thicker rather than
+		// finishing as a wire. Compensating here instead of clamping the taper is what lets the
+		// strongly tapered creatures actually look tapered: a broad shoulder over a narrow ankle is
+		// the silhouette, and holding the shoulder fixed while pulling the ankle in only ever yields
+		// a thinner limb.
+		float taperFloor = LIMB_TAPER / Math.max(1e-3f, limbTaper);
+		legThickness = Math.max(legThickness, size * 0.060f * taperFloor);
+		armThickness = Math.max(armThickness, size * 0.040f * taperFloor);
+
 		// ---- fit the legs into the room the body actually has -------------------
 		// Legs have to be spaced further apart along the body than they are thick. When they are
 		// not, their capsules genuinely intersect, and the union of two overlapping solids is one
@@ -181,7 +214,7 @@ public final class BodyPlanBuilder {
 		// torso would turn every spider into a centipede. Whatever crowding is left is then paid
 		// for by thinning the legs, which is what a real arachnid does: the reason a spider can
 		// carry eight legs on a body that short is that they are wire-thin.
-		int legPairs = g.discrete(Gene.LEG_PAIRS, 1, 4);
+		int legPairs = g.discrete(Gene.LEG_PAIRS);
 		// Read here rather than down with the rest of the foot geometry: the blend radius and the
 		// sampling resolution are both sized against the thinnest feature on the animal, which is
 		// usually a toe tip, and both are settled before a single foot has been built.
@@ -199,7 +232,9 @@ public final class BodyPlanBuilder {
 				// Floored against the hip height rather than against zero: past roughly this
 				// ratio a leg stops reading as a limb and reads as a wire, and ThinLimbTest
 				// holds the other end of the same trade.
-				legThickness = Math.max(span / (LEG_PITCH * gaps), hipHeight * 0.05f);
+				// Floored on the limb's *tip*, as above: this is the thinnest a leg is allowed to end
+				// up, and a hard taper reaches that floor well before the shoulder does.
+				legThickness = Math.max(span / (LEG_PITCH * gaps), hipHeight * 0.05f * taperFloor);
 			}
 		}
 		// ---- arms -------------------------------------------------------------
@@ -226,9 +261,9 @@ public final class BodyPlanBuilder {
 		// Must account for the narrowest geometry actually emitted, which is the toe bone's far
 		// radius — the leg's own taper times the foot's additional narrowing. Measuring against the
 		// untapered thickness would leave the blend radius wider than the thinnest real feature.
-		float toeFactor = footType.narrowestFactor(LIMB_TAPER, FOOT_TAPER);
+		float toeFactor = footType.narrowestFactor(limbTaper, FOOT_TAPER);
 		float thinnestLimb = armPairs > 0
-				? Math.min(legThickness * toeFactor, armThickness * LIMB_TAPER)
+				? Math.min(legThickness * toeFactor, armThickness * limbTaper)
 				: legThickness * toeFactor;
 
 		// Cap the smooth-union radius against the thinnest limb. A blend wider than the limb it is
@@ -257,7 +292,7 @@ public final class BodyPlanBuilder {
 
 		// ---- neck -------------------------------------------------------------
 		float neckLength = size * g.biased(Gene.NECK_LENGTH, 0.04f, 1.45f, 1.5f);
-		int neckSegments = neckLength < 0.12f * size ? 1 : g.discrete(Gene.NECK_SEGMENTS, 1, 4);
+		int neckSegments = neckLength < 0.12f * size ? 1 : g.discrete(Gene.NECK_SEGMENTS);
 		float neckRadius = girth * g.range(Gene.NECK_THICKNESS, 0.22f, 0.78f);
 		// Long necks rear up; short thick necks stay level with the spine.
 		float neckPitch = MathX.remap(neckLength / size, 0.04f, 1.45f, 0.08f, 0.95f);
@@ -359,18 +394,12 @@ public final class BodyPlanBuilder {
 						headSize * 0.13f * jawMass),
 				Feature.JAW, false));
 
-		addTeeth(g, teeth, headBone, jawBone, cursor, headTail, headRight, headUp,
-				jawHinge, jawTail, headSize, jawWidth,
-				headSize * 0.42f, headSize * 0.22f,
-				Math.max(headSize * 0.21f * jawMass, headSize * 0.115f * jawMass * jawDepth),
-				Math.max(headSize * 0.085f * jawMass, headSize * 0.115f * jawMass * jawDepth));
-
 		// ---- abdomen ----------------------------------------------------------
 		// A high BODY_SEGMENTATION splits the trunk into a cephalothorax and a separate abdomen
 		// joined by a narrow waist. This is the structural difference between "an animal that
 		// happens to have eight legs" and a spider: the mass sits *behind* the legs rather than
 		// being strung out between them, and the legs all hang off the front segment.
-		boolean segmented = g.expresses(Gene.BODY_SEGMENTATION, 0.62f);
+		boolean segmented = g.expresses(Gene.BODY_SEGMENTATION);
 		int abdomenBone = -1;
 		Vector3f abdomenRear = null;
 		if (segmented) {
@@ -397,7 +426,7 @@ public final class BodyPlanBuilder {
 		float tailLength = size * g.biased(Gene.TAIL_LENGTH, 0f, 2.0f, 1.3f);
 		TailShape tailShape = TailShape.of(g);
 		if (tailLength > 0.08f * size) {
-			int tailSegments = g.discrete(Gene.TAIL_SEGMENTS, 1, 6);
+			int tailSegments = g.discrete(Gene.TAIL_SEGMENTS);
 			// Floored like the limbs. A tail is long and finely tapered, so it is the geometry most
 			// prone to thinning into an invisible thread — and unlike a leg, nothing about the
 			// creature standing up forces it to stay substantial.
@@ -437,7 +466,7 @@ public final class BodyPlanBuilder {
 		// ---- legs -------------------------------------------------------------
 		// legPairs and rearmostU are settled earlier, alongside leg thickness: the three are
 		// mutually constrained and have to be reconciled before the blend radius is derived.
-		int legSegments = g.discrete(Gene.LEG_SEGMENTS, 2, 3);
+		int legSegments = g.discrete(Gene.LEG_SEGMENTS);
 		float splay = g.range(Gene.LEG_SPLAY, 0.05f, 0.70f);
 		float footSize = size * g.range(Gene.FOOT_SIZE, 0.04f, 0.17f);
 		float digitigrade = g.raw(Gene.DIGITIGRADE);
@@ -495,7 +524,15 @@ public final class BodyPlanBuilder {
 				// Arched limbs stand wider. A leg that tents up over the body has to put its foot
 				// further out to reach the ground at all, and the sprawl is half of what makes an
 				// arachnid read as one — the same span on straight legs is just a tall animal.
-				float stance = splay * (1f + 0.85f * legArch) * sizeNarrowing;
+				//
+				// Many-legged creatures widen further still, because on them the arch is extreme: an
+				// arachnid's leg measures 2.4 times its own hip height while the hip-to-foot line it has
+				// to cover is 1.5, so the limb folds to under two thirds of its length before it has
+				// taken a step. A leg folded that hard puts its knee out at an angle that reads as a
+				// broken joint rather than a sprawl, and it leaves the limb almost no room to extend.
+				// Giving the foot somewhere further out to stand spends the length on span instead.
+				float archRoom = legArch * (legPairs > 2 ? 1.7f : 0.85f);
+				float stance = splay * (1f + archRoom) * sizeNarrowing;
 				Vector3f hip = new Vector3f(s * rAt * 0.85f, spineAt.y - rAt * 0.35f, spineAt.z);
 				Vector3f foot = new Vector3f(hip.x + s * (rAt * 0.25f + hipHeight * stance), 0f,
 						hip.z + fanBias * fanReach);
@@ -513,9 +550,30 @@ public final class BodyPlanBuilder {
 				// versus knee" is a fact about quadrupeds, and a creature with six or eight legs
 				// has no forelimbs and hindlimbs, just legs. Those always radiate.
 				boolean front = pair < legPairs / 2f;
-				float radial = Math.max(MathX.clamp01(legArch), legPairs > 2 ? 0.75f : 0f);
-				float poleZ = MathX.lerp(front ? -1f : 1f, fanBias, radial);
-				Vector3f pole = new Vector3f(s * (0.2f + 0.7f * legArch), legArch * 1.5f, poleZ);
+				// Past two pairs the opposed convention is not merely unhelpful, it is undefined: the
+				// middle pair of a hexapod has no fan to radiate along, so any surviving fraction of
+				// "elbow versus knee" becomes the *only* term deciding its bend, and it bows backward
+				// while the pair in front of it bows forward. Measured on a flat-legged insectoid: front
+				// pair poleZ +0.92 with the foot fanned forward, middle pair -0.77 with the foot square
+				// out to the side. Neighbouring legs bending opposite ways, for no reason in the
+				// geometry. Many-legged creatures radiate and nothing else.
+				float radial = legPairs > 2 ? 1f : MathX.clamp01(legArch);
+				// Damped on a quadruped, where the opposed convention is anatomically right and visually
+				// loud. A real elbow does point back and a real stifle does point forward, but at full
+				// strength the two read as knees aimed at each other across the belly rather than as a
+				// leg with a joint in it. Keeping the sign preserves the opposition — a digitigrade hock
+				// still bends against its own knee — while letting the lateral term below carry the
+				// silhouette, so all four knees read as facing outward.
+				float poleZ = MathX.lerp(front ? -1f : 1f, fanBias, radial)
+						* (legPairs > 2 ? 1f : QUAD_FORE_AFT_SHARE);
+				// How far out to the side this leg already stands, per unit of its own drop. A limb that
+				// sprawls has to bend out over its own foot, and pointing its knee fore or aft instead is
+				// what makes a long-legged creature look broken-jointed rather than sprawling.
+				float sprawl = MathX.clamp01(Math.abs(foot.x - hip.x) / Math.max(1e-4f, hip.y - foot.y));
+				Vector3f pole = new Vector3f(
+						s * (0.2f + 0.7f * legArch + 0.9f * sprawl),
+						legArch * 1.5f,
+						poleZ);
 				// A pole that has collapsed to nothing gives the solver no bend hint at all.
 				if (pole.lengthSquared() < 1e-6f) pole.set(s * 0.2f, 0f, front ? -1f : 1f);
 				pole.normalize();
@@ -527,14 +585,14 @@ public final class BodyPlanBuilder {
 				LimbChain chain = buildLimb(bones, "leg" + pair + (s > 0 ? "R" : "L"), attach, hip, foot, pole,
 						legSegments, legThickness,
 						legSegments >= 3 ? digitigrade : 0f, s, pair, phase, true, group,
-						1f + 2.4f * legArch);
+						1f + 2.4f * legArch, limbTaper);
 				legs.add(chain);
 
 				// Toes, parented to the last leg bone. Kept close to the ankle's own thickness so
 				// the foot reads as a foot rather than a pin. See FootType.
 				int ankleBone = chain.bones[chain.bones.length - 1];
 				growFoot(bones, footType, "foot" + pair + (s > 0 ? "R" : "L"), ankleBone,
-						foot, footSize, legThickness, hipHeight, footRoom, group);
+						foot, footSize, legThickness, hipHeight, footRoom, group, limbTaper);
 			}
 		}
 
@@ -568,13 +626,13 @@ public final class BodyPlanBuilder {
 							shoulder.y - armLength * 0.8f, shoulder.z + armLength * 0.45f);
 					Vector3f pole = new Vector3f(s * 0.25f, 0f, -1f).normalize();
 					arms.add(buildLimb(bones, "arm" + pair + (s > 0 ? "R" : "L"), attach, shoulder, hand, pole,
-							2, armThickness, 0f, s, pair, 0f, false, nextBlendGroup++, 1f));
+							2, armThickness, 0f, s, pair, 0f, false, nextBlendGroup++, 1f, limbTaper));
 				}
 			}
 		}
 
 		// ---- dorsal ornament & armour plates ----------------------------------
-		if (g.expresses(Gene.DORSAL_SPINES, 0.55f) || g.expresses(Gene.SPINE_STYLE, 0.40f)) {
+		if (g.expresses(Gene.DORSAL_SPINES) || g.expresses(Gene.SPINE_STYLE)) {
 			float spineLen = size * g.range(Gene.DORSAL_SPINE_LENGTH, 0.05f, 0.45f);
 			Feature spineFeat = g.raw(Gene.SPINE_STYLE) > 0.5f ? Feature.SPINE : Feature.PLATE;
 			for (int i = 1; i < spineSegments; i++) {
@@ -587,7 +645,7 @@ public final class BodyPlanBuilder {
 			}
 		}
 
-		if (g.expresses(Gene.ARMOR_COVERAGE, 0.42f)) {
+		if (g.expresses(Gene.ARMOR_COVERAGE)) {
 			// A continuous armoured back rather than a row of discs. Three things make the
 			// difference: one blob per spine segment instead of every other one, each long enough
 			// along Z to overlap its neighbours, and centres sunk most of the way into the body so
@@ -631,8 +689,8 @@ public final class BodyPlanBuilder {
 		}
 
 		// ---- claws & hands ----------------------------------------------------
-		boolean hasClaws = g.expresses(Gene.CLAWS, 0.35f);
-		boolean hasHands = g.expresses(Gene.HAND_STYLE, 0.35f);
+		boolean hasClaws = g.expresses(Gene.CLAWS);
+		boolean hasHands = g.expresses(Gene.HAND_STYLE);
 
 		for (LimbChain leg : legs) {
 			if (hasClaws && leg.bones.length > 0) {
@@ -738,12 +796,6 @@ public final class BodyPlanBuilder {
 				Vector3f r = new Vector3f(old.radii()).mul(scale);
 				blobArray[i] = new SdfBlob(old.bone(), c, r, old.feature(), old.subtract());
 			}
-			for (int i = 0; i < teeth.size(); i++) {
-				ToothDef old = teeth.get(i);
-				teeth.set(i, new ToothDef(old.bone(), new Vector3f(old.root()).mul(scale),
-						old.direction(), old.protrusion() * scale, old.maxProtrusion() * scale,
-						old.radius() * scale, old.blunt()));
-			}
 			for (LimbChain leg : legs) {
 				leg.origin.mul(scale);
 				leg.restEffector.mul(scale);
@@ -758,7 +810,6 @@ public final class BodyPlanBuilder {
 				legs.toArray(new LimbChain[0]), arms.toArray(new LimbChain[0]),
 				new BodyPalette(g), blendRadius, rootBone, headBone, jawBone,
 				(float) Math.atan(JAW_BIND_OPEN) * 0.88f, hipHeight, min, max,
-				teeth.toArray(new ToothDef[0]),
 				bodyLength, mass, minLimbRadius, minLimbGap);
 	}
 
@@ -809,9 +860,9 @@ public final class BodyPlanBuilder {
 	 */
 	private static void growFoot(List<BoneDef> bones, FootType type, String name, int ankle,
 	                             Vector3f foot, float footSize, float legThickness,
-	                             float hipHeight, float maxReach, int group) {
+	                             float hipHeight, float maxReach, int group, float taper) {
 		float reach = Math.min(footSize * type.reach, maxReach);
-		float thickness = legThickness * LIMB_TAPER * type.girth;
+		float thickness = legThickness * taper * type.girth;
 		// Bluntness is the far radius as a share of the near one: a hoof keeps its width to the
 		// ground, a talon comes to a point.
 		float tipRadius = Math.max(thickness * FOOT_TAPER, thickness * type.bluntness);
@@ -897,7 +948,7 @@ public final class BodyPlanBuilder {
 	                                   Vector3f origin, Vector3f effector, Vector3f pole,
 	                                   int segments, float thickness, float sCurve,
 	                                   int side, int pairIndex, float phase, boolean weightBearing,
-	                                   int blendGroup, float bendScale) {
+	                                   int blendGroup, float bendScale, float taper) {
 		float reach = origin.distance(effector);
 		// The default bulge is only enough to give IK somewhere to bend. An arachnid leg needs
 		// far more than that — the mid joint has to clear the hip, not merely bow slightly
@@ -905,23 +956,58 @@ public final class BodyPlanBuilder {
 		// tilting the pole, which on its own moves the joint by a few percent of the reach.
 		float bend = reach * (LIMB_SLACK - 1f) * 2.2f * bendScale;
 
-		Vector3f c1 = new Vector3f(origin).fma(bend, pole);
-		Vector3f c2 = new Vector3f(effector).fma(bend * (1f - 2f * sCurve), pole);
-
+		// Then bowed further until the limb is measurably longer than the straight line it spans.
+		//
+		// LIMB_SLACK says bones are made ten per cent longer than the hip-to-foot distance, and for
+		// a plain C-curve they are. An S-curve is a different matter: `1 - 2 * sCurve` puts the
+		// second control point on the far side of the axis, and at the half-way value it lands
+		// exactly on the axis, so the two halves of the bow cancel and the limb comes out all but
+		// straight however large `bend` is. Measured across the archetypes, bind-pose extension ran
+		// from 0.86 up to 0.99 of the limb's own length — an insectoid's legs were 99% straight
+		// standing still, with nothing left over to take a step with.
+		//
+		// The gait's whole stride envelope is what remains after the standing pose is paid for
+		// (CreatureAnimator.buildEnvelope), so a limb grown straight is a limb that cannot walk. The
+		// bow is therefore not a fixed proportion but a target: bulge it until the arc is long
+		// enough, whatever curve shape the genome asked for.
+		// Solved rather than stepped, and this matters more than it looks. Arc length is monotonic
+		// in the bow, so growing the bow by a fixed factor until the limb is long enough does
+		// converge — but it overshoots, by up to that whole factor. A quadruped's front and hind
+		// limbs bow *toward* each other by convention (elbow back, knee forward), so an overshot
+		// bow closes the gap between them from both sides at once, and a first attempt that grew
+		// the bend in steps of 1.6 duly meshed a sixth of every saurian's same-side leg pairs into
+		// each other. Bisection lands on the target and takes not one millimetre more than it needs.
 		Vector3f[] joints = new Vector3f[segments + 1];
-		for (int i = 0; i <= segments; i++) {
-			joints[i] = cubicBezier(origin, c1, c2, effector, (float) i / segments);
+		if (extensionOf(origin, effector, pole, bend, sCurve, segments, joints) > MAX_BIND_EXTENSION) {
+			float lo = bend;
+			float hi = Math.max(bend, reach * 0.05f);
+			for (int i = 0; i < BEND_SOLVE_STEPS; i++) {
+				hi *= 2f;
+				if (extensionOf(origin, effector, pole, hi, sCurve, segments, joints)
+						<= MAX_BIND_EXTENSION) {
+					break;
+				}
+				lo = hi;
+			}
+			for (int i = 0; i < BEND_SOLVE_STEPS; i++) {
+				float mid = 0.5f * (lo + hi);
+				if (extensionOf(origin, effector, pole, mid, sCurve, segments, joints)
+						> MAX_BIND_EXTENSION) {
+					lo = mid;
+				} else {
+					hi = mid;
+				}
+			}
+			bend = hi;
 		}
-		// Pin the endpoints exactly: the hip must meet the body and the foot must touch y = 0.
-		joints[0] = new Vector3f(origin);
-		joints[segments] = new Vector3f(effector);
+		layLimb(origin, effector, pole, bend, sCurve, segments, joints);
 
 		int[] indices = new int[segments];
 		float total = 0f;
 		int parent = attach;
 		for (int i = 0; i < segments; i++) {
-			float r0 = thickness * MathX.lerp(1f, LIMB_TAPER, (float) i / segments);
-			float r1 = thickness * MathX.lerp(1f, LIMB_TAPER, (float) (i + 1) / segments);
+			float r0 = thickness * MathX.lerp(1f, taper, (float) i / segments);
+			float r1 = thickness * MathX.lerp(1f, taper, (float) (i + 1) / segments);
 			bones.add(new BoneDef(name + "_" + i, parent, joints[i], joints[i + 1], r0, r1,
 					Feature.LIMB, true, blendGroup));
 			parent = bones.size() - 1;
@@ -934,11 +1020,15 @@ public final class BodyPlanBuilder {
 		// from collapsing onto the same side or flipping between frames.
 		Vector3f limbAxis = new Vector3f(effector).sub(origin);
 		float[] bendSigns = new float[Math.max(0, segments - 1)];
+		// Kept, not just used: the solver needs this exact vector to re-anchor its own bend plane,
+		// which otherwise rotates with the foot until it disagrees about which side is which.
+		Vector3f bindPerp = new Vector3f();
 		if (limbAxis.lengthSquared() > 1e-10f) {
 			limbAxis.normalize();
 			Vector3f perp = new Vector3f(pole).fma(-pole.dot(limbAxis), limbAxis);
 			if (perp.lengthSquared() > 1e-8f) {
 				perp.normalize();
+				bindPerp.set(perp);
 				for (int i = 1; i < segments; i++) {
 					float along = new Vector3f(joints[i]).sub(origin).dot(perp);
 					// Exactly-on-axis joints get +1 rather than 0, so the sign is always decisive.
@@ -948,7 +1038,34 @@ public final class BodyPlanBuilder {
 		}
 
 		return new LimbChain(indices, new Vector3f(origin), new Vector3f(effector), new Vector3f(pole),
-				side, pairIndex, phase, total, weightBearing, bendSigns);
+				side, pairIndex, phase, total, weightBearing, bendSigns, bindPerp);
+	}
+
+	/**
+	 * Fraction of its own bone length the limb would span with this bow — the quantity
+	 * {@link #MAX_BIND_EXTENSION} bounds. Leaves its working layout in {@code joints}.
+	 */
+	private static float extensionOf(Vector3f origin, Vector3f effector, Vector3f pole,
+	                                 float bend, float sCurve, int segments, Vector3f[] joints) {
+		layLimb(origin, effector, pole, bend, sCurve, segments, joints);
+		float arc = 0f;
+		for (int i = 0; i < segments; i++) arc += joints[i].distance(joints[i + 1]);
+		return arc < MathX.EPS ? 0f : origin.distance(effector) / arc;
+	}
+
+	/**
+	 * Samples the limb's Bezier into {@code joints}, endpoints pinned exactly: the hip must meet
+	 * the body and the foot must touch y = 0.
+	 */
+	private static void layLimb(Vector3f origin, Vector3f effector, Vector3f pole,
+	                            float bend, float sCurve, int segments, Vector3f[] joints) {
+		Vector3f c1 = new Vector3f(origin).fma(bend, pole);
+		Vector3f c2 = new Vector3f(effector).fma(bend * (1f - 2f * sCurve), pole);
+		for (int i = 0; i <= segments; i++) {
+			joints[i] = cubicBezier(origin, c1, c2, effector, (float) i / segments);
+		}
+		joints[0] = new Vector3f(origin);
+		joints[segments] = new Vector3f(effector);
 	}
 
 	private static Vector3f cubicBezier(Vector3f p0, Vector3f p1, Vector3f p2, Vector3f p3, float t) {
@@ -1015,7 +1132,7 @@ public final class BodyPlanBuilder {
 				Feature.HEAD, false));
 
 		// Head Crest / Hair Tufts
-		if (g.expresses(Gene.FUR_CREST, 0.45f)) {
+		if (g.expresses(Gene.FUR_CREST)) {
 			float hairSize = headSize * g.range(Gene.FUR_CREST, 0.25f, 0.65f);
 			Vector3f crestPos = new Vector3f(headStart).fma(headSize * 0.4f, trueUp);
 			blobs.add(new SdfBlob(headBone, crestPos,
@@ -1066,93 +1183,11 @@ public final class BodyPlanBuilder {
 		}
 	}
 
-	/**
-	 * Teeth along both jaw lines: the upper row pinned to the skull, the lower to the mandible, so
-	 * they part when the mouth opens.
-	 * <p>
-	 * These are {@link ToothDef}s, not blobs in the signed distance field, and that is the whole
-	 * point. Anything in the field goes through the smooth union that fairs limbs into hips, which
-	 * rounds a tooth off and melts it into the lip — a mouth of them came out as white lumps. They
-	 * are also finer than one sampling cell, so most did not survive the mesher at all.
-	 * <p>
-	 * Each is rooted <i>inside</i> the gum and protrudes from it. The buried part is simply hidden
-	 * by the flesh drawn over it, which costs nothing and means no seam can show at the gum line
-	 * however the body around it happens to be meshed.
-	 * <p>
-	 * Diet drives the shape, and it is the one cue that says what an animal eats before it does
-	 * anything: a carnivore gets a few long points, a herbivore a dense row of short blunt
-	 * grinders, and an omnivore the mixed dentition that actually distinguishes one — grabbing
-	 * teeth at the front and crushing ones behind.
-	 */
-	private static void addTeeth(Genome g, List<ToothDef> teeth, int headBone, int jawBone,
-	                             Vector3f headStart, Vector3f headEnd, Vector3f right, Vector3f up,
-	                             Vector3f jawHinge, Vector3f jawTail, float headSize,
-	                             float jawWidth, float skullR0, float skullR1,
-	                             float jawR0, float jawR1) {
-		float diet = g.raw(Gene.DIET);
-		boolean carnivore = diet > 0.65f;
-		boolean herbivore = diet < 0.35f;
-
-		int count = herbivore ? 5 : (carnivore ? 3 : 4);
-		// The row is splayed by tilting each tooth outward, not by moving its root out to the
-		// cheek. A root offset sideways sits outside a narrow mandible entirely and the tooth
-		// floats free of the face; on the bone's own axis it is buried whatever the jaw's girth,
-		// and the mesher walks outward from there to wherever the flesh actually ends.
-		//
-		// Only enough tilt to clear the jaw's own width. At 0.42 the lateral component was
-		// outrunning the vertical one and the teeth lay along the lip rather than standing on it.
-		float splay = 0.16f * Math.min(jawWidth, 1.6f);
-		// How far the point stands clear of the gum. The mesher measures this outward from the
-		// flesh itself, not from the bone axis: the skull and the mandible carry different depths
-		// of it, and an offset from the axis left one whole row buried inside the lip.
-		float reach = headSize * (herbivore ? 0.10f : (carnivore ? 0.28f : 0.17f));
-		float radius = headSize * (herbivore ? 0.045f : (carnivore ? 0.042f : 0.038f));
-
-		for (int i = 0; i < count; i++) {
-			// Stopped short of the snout tip: that is where the skull is thinnest, so it is where
-			// a tooth from the other jaw has least to bury itself in.
-			float along = MathX.lerp(0.40f, 0.80f, (i + 0.5f) / count);
-			// An omnivore's front teeth grab and its back teeth crush; that gradient is the tell.
-			float front = 1f - (i / (float) Math.max(1, count - 1));
-			float grow = herbivore ? 1f : MathX.lerp(0.7f, 1.25f, front);
-			boolean blunt = herbivore || (!carnivore && front < 0.5f);
-
-			// A tooth is bone and the jaw it closes against is opaque, so a tip that stops inside
-			// the opposing flesh is invisible and fine. One that runs all the way through and out
-			// the far side is not: that is teeth standing out of the top of the skull and poking
-			// through the underside of the chin. Cap each row against what it closes into.
-			//
-			// Measured, not assumed: at the previous lengths better than a third of all teeth came
-			// out through the other jaw once the mouth shut, worst on thin mandibles where a long
-			// upper fang had barely a centimetre of bone to bury itself in.
-			float skullHalf = MathX.lerp(skullR0, skullR1, along);
-			float jawHalf = MathX.lerp(jawR0, jawR1, along);
-			// Past the gum, an upper tooth has only the mandible's thickness to bury itself in
-			// before it comes out the underside; a lower one has the skull's.
-			float upperAllowance = CLOSED_BITE_CLEARANCE * 2f * jawHalf;
-			float lowerAllowance = CLOSED_BITE_CLEARANCE * 2f * skullHalf;
-
-			for (int s = -1; s <= 1; s += 2) {
-				// Upper row: rooted on the skull's axis, growing down and out into the mouth.
-				Vector3f upperRoot = new Vector3f(headStart).lerp(headEnd, along);
-				Vector3f downOut = new Vector3f(up).negate().fma(s * splay, right).normalize();
-				teeth.add(new ToothDef(headBone, upperRoot, downOut, reach * grow,
-						upperAllowance, radius, blunt));
-
-				// Lower row: rooted on the mandible's axis, growing up and out to meet it.
-				Vector3f lowerRoot = new Vector3f(jawHinge).lerp(jawTail, along);
-				Vector3f upOut = new Vector3f(up).fma(s * splay, right).normalize();
-				teeth.add(new ToothDef(jawBone, lowerRoot, upOut, reach * grow,
-						lowerAllowance, radius, blunt));
-			}
-		}
-	}
-
 	/** Beak sheath and tusks — the two ways a jaw can advertise what it eats. */
 	private static void addSnoutDetail(Genome g, List<SdfBlob> blobs, int headBone,
 	                                   Vector3f headStart, Vector3f headEnd, Vector3f headDir,
 	                                   Vector3f right, Vector3f trueUp, float headSize) {
-		if (g.expresses(Gene.SNOUT_TYPE, 0.68f)) {
+		if (g.expresses(Gene.SNOUT_TYPE)) {
 			float beak = headSize * g.range(Gene.SNOUT_TYPE, 0.50f, 1.05f);
 			// Two beads: the base takes the width of the jaw, the tip pinches down to a point.
 			blobs.add(new SdfBlob(headBone, new Vector3f(headEnd).fma(beak * 0.18f, headDir),
@@ -1162,7 +1197,7 @@ public final class BodyPlanBuilder {
 					new Vector3f(headSize * 0.10f, headSize * 0.11f, beak * 0.26f), Feature.BEAK, false));
 		}
 
-		if (g.expresses(Gene.TUSKS, 0.62f)) {
+		if (g.expresses(Gene.TUSKS)) {
 			float tuskLength = headSize * g.range(Gene.TUSKS, 0.40f, 1.05f);
 			float tuskRadius = headSize * 0.105f;
 			for (int s = -1; s <= 1; s += 2) {
@@ -1185,7 +1220,7 @@ public final class BodyPlanBuilder {
 	/** A neck frill: a thin disc standing up behind the skull. */
 	private static void addFrill(Genome g, List<SdfBlob> blobs, int headBone, Vector3f headStart,
 	                             Vector3f headDir, Vector3f trueUp, float headSize) {
-		if (!g.expresses(Gene.FRILL, 0.62f)) return;
+		if (!g.expresses(Gene.FRILL)) return;
 		float frill = headSize * g.range(Gene.FRILL, 1.15f, 2.50f);
 		Vector3f pos = new Vector3f(headStart)
 				.fma(-headSize * 0.12f, headDir)
@@ -1274,7 +1309,7 @@ public final class BodyPlanBuilder {
 		}
 
 		// Paired types. A second, smaller pair behind the first is uncommon but striking.
-		int pairs = g.expresses(Gene.HORN_PAIRS, 0.74f) ? 2 : 1;
+		int pairs = g.expresses(Gene.HORN_PAIRS) ? 2 : 1;
 		for (int pair = 0; pair < pairs; pair++) {
 			float along = type == HornType.BROW ? 0.42f - pair * 0.15f : 0.16f + pair * 0.19f;
 			float lateral = type == HornType.BROW ? 0.40f : 0.36f;
@@ -1352,7 +1387,7 @@ public final class BodyPlanBuilder {
 
 		// Every other style can still run to a second pair, which is how a six-eyed creature
 		// that is not an arachnid happens.
-		int eyePairs = g.expresses(Gene.EYE_COUNT, 0.85f) ? 2 : 1;
+		int eyePairs = g.expresses(Gene.EYE_COUNT) ? 2 : 1;
 		for (int i = 0; i < eyePairs; i++) {
 			float along = 0.30f + i * 0.16f;
 			Vector3f base = new Vector3f(headStart).lerp(headEnd, along).fma(headSize * 0.18f, trueUp);

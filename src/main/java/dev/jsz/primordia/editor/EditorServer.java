@@ -8,9 +8,11 @@ import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BodyPlanBuilder;
 import dev.jsz.primordia.body.SkeletonPlan;
 import dev.jsz.primordia.body.BoneDef;
+import dev.jsz.primordia.body.GeneOptions;
 import dev.jsz.primordia.body.LimbChain;
 import dev.jsz.primordia.genome.Archetype;
 import dev.jsz.primordia.genome.Gene;
+import dev.jsz.primordia.genome.GeneDoc;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.mesh.LodTier;
 import dev.jsz.primordia.mesh.MeshBaker;
@@ -29,6 +31,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
+import dev.jsz.primordia.sound.CallType;
+import dev.jsz.primordia.sound.VoiceProfile;
+import dev.jsz.primordia.sound.VoiceSynth;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.Executors;
@@ -58,8 +65,9 @@ import java.util.concurrent.Executors;
  * <ul>
  *   <li>{@code GET /} — the page itself, read from disk on every request so editing the HTML needs
  *       no rebuild.</li>
- *   <li>{@code GET /api/meta} — archetype names, gene names and their defaults; lets the page build
- *       its controls from the real {@link Gene} enum rather than a copy that can rot.</li>
+ *   <li>{@code GET /api/meta} — archetype names, and per gene its description, the value any
+ *       presence/absence trait switches on at, and the named options it decodes to; lets the page
+ *       build its controls from the real {@link Gene} enum rather than a copy that can rot.</li>
  *   <li>{@code GET /api/bake} — bakes one creature and returns geometry, skin weights and the
  *       bind-pose skeleton.</li>
  * </ul>
@@ -95,6 +103,8 @@ public final class EditorServer {
 		server.createContext("/api/solve", EditorServer::handleSolve);
 		server.createContext("/api/reach", EditorServer::handleReach);
 		server.createContext("/api/anim", EditorServer::handleAnim);
+		server.createContext("/api/voice", EditorServer::handleVoice);
+		server.createContext("/api/voice.wav", EditorServer::handleVoiceWav);
 		server.createContext("/assets/", EditorServer::handleAsset);
 		server.createContext("/", EditorServer::handlePage);
 		// Single thread: bakes are serialised anyway (see BAKE_LOCK) and this keeps the ordering of
@@ -181,8 +191,17 @@ public final class EditorServer {
 		}
 	}
 
+	/**
+	 * Everything the page needs to build its controls: the archetype list, and per gene the prose,
+	 * the boundaries and the named options.
+	 * <p>
+	 * The page draws whatever it is told and knows nothing about genetics. Descriptions come from
+	 * {@link GeneDoc}, option labels and their boundaries from {@link GeneOptions} — read off the
+	 * real enums and the real decoding rule — so the tick under the slider and the creature that
+	 * comes back from a bake cannot disagree.
+	 */
 	private static void handleMeta(HttpExchange ex) throws IOException {
-		StringBuilder b = new StringBuilder(4096);
+		StringBuilder b = new StringBuilder(16384);
 		b.append("{\"archetypes\":[");
 		Archetype[] archetypes = Archetype.values();
 		for (int i = 0; i < archetypes.length; i++) {
@@ -192,8 +211,25 @@ public final class EditorServer {
 		b.append("],\"genes\":[");
 		Gene[] genes = Gene.values();
 		for (int i = 0; i < genes.length; i++) {
+			Gene gene = genes[i];
 			if (i > 0) b.append(',');
-			b.append("{\"name\":\"").append(genes[i].name()).append("\"}");
+			b.append("{\"name\":\"").append(gene.name()).append('"')
+					.append(",\"description\":\"").append(escape(GeneDoc.describe(gene))).append('"')
+					.append(",\"categorical\":").append(gene.categorical);
+			if (gene.hasThreshold()) {
+				b.append(",\"threshold\":").append(gene.threshold);
+			}
+			List<GeneOptions.Option> options = GeneOptions.of(gene);
+			if (!options.isEmpty()) {
+				b.append(",\"ticks\":[");
+				for (int k = 0; k < options.size(); k++) {
+					if (k > 0) b.append(',');
+					b.append("{\"label\":\"").append(escape(options.get(k).label())).append('"')
+							.append(",\"at\":").append(options.get(k).start()).append('}');
+				}
+				b.append(']');
+			}
+			b.append('}');
 		}
 		b.append("],\"tiers\":[\"NEAR\",\"MID\",\"FAR\",\"DISTANT\"]}");
 		send(ex, 200, "application/json", b.toString().getBytes(StandardCharsets.UTF_8));
@@ -252,6 +288,116 @@ public final class EditorServer {
 	 * locus and nothing else. Rolling from the seed each time instead would re-randomise the whole
 	 * animal on every drag.
 	 */
+	/**
+	 * The creature's vocal apparatus, as numbers. What the audio tab shows next to the play buttons.
+	 * <p>
+	 * Served separately from the waveform so the page can describe a voice without rendering one:
+	 * the interesting question when tuning a genome is usually "what kind of animal is this" rather
+	 * than "what does this exact syllable sound like", and the family and the fundamental answer it.
+	 */
+	private static void handleVoice(HttpExchange ex) throws IOException {
+		try {
+			Map<String, String> q = query(ex);
+			long seed = parseLong(q.get("seed"), 1L);
+			Genome genome = resolveGenome(q, seed);
+			BodyPlan plan = BodyPlanBuilder.build(genome);
+			VoiceProfile v = VoiceProfile.of(genome, plan);
+
+			StringBuilder b = new StringBuilder(512);
+			b.append("{\"family\":\"").append(v.family().label()).append('"');
+			b.append(",\"f0\":").append(fmt(v.f0()));
+			b.append(",\"formants\":[");
+			for (int i = 0; i < v.formantHz().length; i++) {
+				if (i > 0) b.append(',');
+				b.append(fmt(v.formantHz()[i]));
+			}
+			b.append(']');
+			b.append(",\"chaos\":").append(fmt(v.chaos()));
+			b.append(",\"subharmonic\":").append(fmt(v.subharmonic()));
+			b.append(",\"biphonation\":").append(fmt(v.biphonation()));
+			b.append(",\"aspiration\":").append(fmt(v.aspiration()));
+			b.append(",\"jitter\":").append(fmt(v.jitter()));
+			b.append(",\"stridulation\":").append(fmt(v.stridulation()));
+			b.append(",\"syllables\":").append(v.syllables());
+			b.append(",\"syllableLen\":").append(fmt(v.syllableLen()));
+			b.append(",\"vibratoRate\":").append(fmt(v.vibratoRate()));
+			b.append(",\"volume\":").append(fmt(v.volume()));
+			b.append(",\"calls\":[");
+			for (int i = 0; i < CallType.VALUES.length; i++) {
+				if (i > 0) b.append(',');
+				b.append('"').append(CallType.VALUES[i].name().toLowerCase(Locale.ROOT)).append('"');
+			}
+			b.append("]}");
+			send(ex, 200, "application/json", b.toString().getBytes(StandardCharsets.UTF_8));
+		} catch (Exception e) {
+			send(ex, 500, "application/json",
+					("{\"error\":\"" + escape(String.valueOf(e)) + "\"}")
+							.getBytes(StandardCharsets.UTF_8));
+		}
+	}
+
+	/**
+	 * One call, rendered by the game's own synthesiser and wrapped in a WAV header.
+	 * <p>
+	 * The header is the only thing added. Reimplementing any part of the voice for the editor would
+	 * put a second synthesiser in the project, and a preview that does not match the game is worse
+	 * than no preview — the same rule that made the walk clip come from {@link CreatureAnimator}.
+	 */
+	private static void handleVoiceWav(HttpExchange ex) throws IOException {
+		try {
+			Map<String, String> q = query(ex);
+			long seed = parseLong(q.get("seed"), 1L);
+			int variant = clamp(parseInt(q.get("variant"), 0), 0, 64);
+			CallType call = CallType.AMBIENT;
+			String want = q.get("call");
+			if (want != null) {
+				for (CallType c : CallType.VALUES) {
+					if (c.name().equalsIgnoreCase(want)) call = c;
+				}
+			}
+			Genome genome = resolveGenome(q, seed);
+			BodyPlan plan = BodyPlanBuilder.build(genome);
+			byte[] pcm = VoiceSynth.render(VoiceProfile.of(genome, plan), call, variant);
+			send(ex, 200, "audio/wav", wav(pcm));
+		} catch (Exception e) {
+			send(ex, 500, "application/json",
+					("{\"error\":\"" + escape(String.valueOf(e)) + "\"}")
+							.getBytes(StandardCharsets.UTF_8));
+		}
+	}
+
+	/** Minimal 16-bit mono WAV container around the raw PCM the synthesiser emits. */
+	private static byte[] wav(byte[] pcm) throws IOException {
+		int sr = VoiceSynth.SAMPLE_RATE;
+		java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream(pcm.length + 44);
+		o.write("RIFF".getBytes(StandardCharsets.US_ASCII));
+		le32(o, 36 + pcm.length);
+		o.write("WAVEfmt ".getBytes(StandardCharsets.US_ASCII));
+		le32(o, 16);
+		le16(o, 1);
+		le16(o, 1);
+		le32(o, sr);
+		le32(o, sr * 2);
+		le16(o, 2);
+		le16(o, 16);
+		o.write("data".getBytes(StandardCharsets.US_ASCII));
+		le32(o, pcm.length);
+		o.write(pcm);
+		return o.toByteArray();
+	}
+
+	private static void le32(java.io.ByteArrayOutputStream o, int v) {
+		o.write(v & 0xFF);
+		o.write((v >> 8) & 0xFF);
+		o.write((v >> 16) & 0xFF);
+		o.write((v >> 24) & 0xFF);
+	}
+
+	private static void le16(java.io.ByteArrayOutputStream o, int v) {
+		o.write(v & 0xFF);
+		o.write((v >> 8) & 0xFF);
+	}
+
 	private static Genome resolveGenome(Map<String, String> q, long seed) {
 		String packed = q.get("genes");
 		if (packed != null && !packed.isEmpty()) {
@@ -549,8 +695,16 @@ public final class EditorServer {
 	 */
 	private static final float LOCALITY_WEIGHT = 2.5f;
 
-	/** Gait cycles run before recording, so the captured frames are periodic rather than settling. */
-	private static final int WARMUP_CYCLES = 8;
+	/**
+	 * Gait cycles run before recording, so the captured frames are periodic rather than settling.
+	 * <p>
+	 * Raised from eight when the body's ride height gained a rate limit: the torso now approaches
+	 * its steady height at a bounded speed rather than damping straight to it, and a leggy creature
+	 * takes about thirty cycles to stop drifting. Measured across the archetypes, eight cycles left
+	 * a sprinter 0.017 out of place at the loop point and thirty-two leaves every one of them at
+	 * zero to four decimal places.
+	 */
+	private static final int WARMUP_CYCLES = 40;
 
 	/** How many of the 88 loci the descent is allowed to search. */
 	private static final int CANDIDATE_GENES = 6;
@@ -640,14 +794,13 @@ public final class EditorServer {
 
 			// The clip is exactly one gait cycle long, so playback loops without a hitch.
 			//
-			// The cadence formula is duplicated from CreatureAnimator.updateGait because gaitPhase is
-			// private. Duplication is normally how two copies of a rule drift apart, but this one
-			// fails loudly rather than silently: get it wrong and the loop visibly jumps, which is
-			// the first thing anyone watching a walk cycle notices.
-			float strideLength = Math.max(0.25f, plan.hipHeight * 1.35f);
-			float minFreq = clamp(0.25f / Math.max(0.5f, plan.hipHeight * 0.35f), 0.18f, 0.45f);
-			float stepFrequency = clamp(speed / strideLength, minFreq, 3.2f);
-			seconds = 1f / Math.max(0.01f, stepFrequency);
+			// Asked of the animator rather than recomputed here. This used to be a copy of the cadence
+			// formula, carrying a comment arguing that a copy was safe because it would fail loudly.
+			// It did fail loudly, in exactly the way described, the moment the stride stopped being a
+			// multiple of hip height and started coming from the legs' reach envelope — the copy went
+			// on dividing by hipHeight * 1.35 and the clip stopped being a whole cycle. Failing loudly
+			// is not the same as not failing; there is one implementation now.
+			seconds = Math.max(0.01f, animator.gaitCycleSeconds(speed, 1f));
 
 			StringBuilder b = new StringBuilder(1 << 18);
 			b.append("{\"frames\":").append(frames)
@@ -670,6 +823,7 @@ public final class EditorServer {
 				warm.z = warm.time * speed;
 				warm.speed = speed;
 				warm.tier = LodTier.NEAR;
+				warm.ambient = false;
 				animator.update(warm);
 			}
 			float warmEnd = dt * WARMUP_CYCLES * frames;
@@ -686,6 +840,7 @@ public final class EditorServer {
 				ctx.z = ctx.time * speed;
 				ctx.speed = speed;
 				ctx.tier = LodTier.NEAR;
+				ctx.ambient = false;
 				animator.update(ctx);
 				for (int i = 0; i < plan.bones.length; i++) {
 					skeleton.skinMatrix(i).get(scratch);
@@ -761,7 +916,6 @@ public final class EditorServer {
 				.append(",\"minLimbRadius\":").append(fmt(plan.minLimbRadius))
 				.append(",\"legs\":").append(plan.legs.length)
 				.append(",\"arms\":").append(plan.arms.length)
-				.append(",\"teeth\":").append(plan.teeth.length)
 				.append(",\"rootBone\":").append(plan.rootBone)
 				.append(",\"headBone\":").append(plan.headBone)
 				.append(",\"jawBone\":").append(plan.jawBone)

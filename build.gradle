@@ -151,6 +151,13 @@ tasks.register('editor', JavaExec) {
 //
 // Test source set, not main: unlike the editor it has no in-game counterpart, so there is no
 // reason for any of it to be in the jar.
+tasks.register('voiceDiversityReport', JavaExec) {
+	group = 'primordia'
+	description = 'Measures how many distinguishable voices the synthesiser produces'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.sound.VoiceDiversityReport'
+}
+
 tasks.register('voiceLab', JavaExec) {
 	group = 'primordia'
 	description = 'Serves the creature voice lab on http://127.0.0.1:8091/'
@@ -167,6 +174,63 @@ tasks.register('voiceLab', JavaExec) {
 // of by guesswork is the whole reason it exists.
 //
 // `gradle diversityReport --args="20000"` for a larger sample.
+// Walks every archetype over blocky terrain and reports what the legs actually did. The walk cycle
+// is the other property that cannot be eyeballed: a leg is either reaching a target it can hold or
+// pointing straight at one it cannot, and only the second reads as broken — from a still frame the
+// two look identical. Same reasoning as diversityReport, and the same shape of tool.
+//
+// `gradle gaitReport --args="<seed>"`.
+tasks.register('gaitReport', JavaExec) {
+	group = 'primordia'
+	description = 'Reports leg extension, foot contact and body attitude over generated terrain'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.anim.GaitReport'
+}
+
+// Frame-by-frame trace of a single leg, for when a gaitReport number does not make sense.
+// `gradle gaitTrace --args="INSECTOID FLAT 5.0 0"`.
+tasks.register('gaitTrace', JavaExec) {
+	group = 'primordia'
+	description = 'Traces one leg of one specimen frame by frame'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.anim.GaitTrace'
+}
+
+tasks.register('loopProbe', JavaExec) {
+	group = 'primordia'
+	description = 'Measures how closely the walk repeats over one gait cycle'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.anim.LoopProbe'
+}
+
+tasks.register('skinProbe', JavaExec) {
+	group = 'primordia'
+	description = 'Which surfaces limb bones are driving, by feature'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.mesh.SkinProbe'
+}
+
+tasks.register('voxelProbe', JavaExec) {
+	group = 'primordia'
+	description = 'Prints the voxel size each archetype is actually built from'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.anim.VoxelProbe'
+}
+
+tasks.register('kneeProbe', JavaExec) {
+	group = 'primordia'
+	description = 'Reports the bend hint, sprawl and pole of every leg'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.anim.KneeProbe'
+}
+
+tasks.register('strideProbe', JavaExec) {
+	group = 'primordia'
+	description = 'Prints the fastest each archetype can walk, from its stride'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.anim.StrideProbe'
+}
+
 tasks.register('diversityReport', JavaExec) {
 	group = 'primordia'
 	description = 'Reports creature variety over a sample of founder genomes'

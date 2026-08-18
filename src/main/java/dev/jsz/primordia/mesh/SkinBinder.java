@@ -2,6 +2,7 @@ package dev.jsz.primordia.mesh;
 
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BoneDef;
+import dev.jsz.primordia.body.Feature;
 import dev.jsz.primordia.util.MathX;
 
 /**
@@ -44,6 +45,16 @@ import dev.jsz.primordia.util.MathX;
  * spider's legs apart and the skinning tied them back together — a vertex weighted to two limbs is
  * driven by both, follows neither, and drags a stretched face across the gap as the gait swings
  * them apart. Seen in play as toes sticking together between the legs.
+ * <p>
+ * <b>Finally, a limb may only drive surfaces a limb is entitled to drive.</b> The two rules above
+ * both reason about the skeleton, and the remaining fault is about the surface: a frill hangs off a
+ * spine bone but sits, in space, right beside a thigh, so the thigh is the nearest capsule and the
+ * frill vertex is "owned" by it. Ownership then overrode the group rule — deliberately, because a
+ * splayed foot's outer toe reads as trunk by group and welding it to the spine was worse. Measured,
+ * that escape was letting a limb drive 26% of all frill vertices (at up to 0.98 weight), 7% of ears
+ * and a scatter of plates, horns and light organs; every single one of them was a vertex the field
+ * says belongs to the body. So the escape now applies only where the surface really is limb —
+ * {@link #limbSurface} — which is exactly the toe case it was added for and none of the ornament.
  */
 public final class SkinBinder {
 	public static final int MAX_INFLUENCES = 4;
@@ -67,17 +78,63 @@ public final class SkinBinder {
 	 */
 	private static final int MAX_HOPS = 3;
 
+	private static final Feature[] FEATURES = Feature.values();
+
+	/** Flags every bone belonging to a leg or an arm chain. */
+	private static boolean[] limbBones(BodyPlan plan) {
+		boolean[] out = new boolean[plan.bones.length];
+		for (dev.jsz.primordia.body.LimbChain leg : plan.legs) {
+			for (int bone : leg.bones) out[bone] = true;
+		}
+		for (dev.jsz.primordia.body.LimbChain arm : plan.arms) {
+			for (int bone : arm.bones) out[bone] = true;
+		}
+		return out;
+	}
+
+	/**
+	 * Whether a surface of this kind is part of a limb, and so may be driven by one.
+	 * <p>
+	 * Everything else — a frill, an ear, a plate, a horn, a light organ, the abdomen — belongs to
+	 * the body however close a leg happens to swing past it, and is left to the trunk and to its
+	 * own limb group.
+	 */
+	private static boolean limbSurface(Feature feature) {
+		return switch (feature) {
+			case LIMB, FOOT, CLAWS, HAND -> true;
+			default -> false;
+		};
+	}
+
+	/*
+	 * Trunk flesh is deliberately *not* on that list, and the temptation to add it was measured
+	 * rather than argued about. Admitting limb bones to body surfaces so a leg could soften the hip
+	 * it grows from put 21% of all trunk vertices on a leg at up to 0.59 of their weight — a hip
+	 * that swings with the thigh, which is a worse fault than the crease it was meant to smooth,
+	 * and more limb influence on the body than the generator has ever had. The join is already
+	 * carried by the leg root's own surface: the flesh around a hip reads as LIMB out of the field,
+	 * so it is limb-driven by the rule above and the transition happens there. Trunk vertices took
+	 * no visible limb weight before this change and take none after it.
+	 */
+
 	private SkinBinder() {
 	}
 
 	/**
-	 * @param outIndices 4 ints per vertex
-	 * @param outWeights 4 floats per vertex, normalised to sum to 1
+	 * @param vertexGroup   blend group of the surface each vertex came off, or null when unknown
+	 * @param vertexFeature {@link Feature} ordinal of that surface, or null when unknown
+	 * @param outIndices    4 ints per vertex
+	 * @param outWeights    4 floats per vertex, normalised to sum to 1
 	 */
 	public static void bind(BodyPlan plan, float[] positions, int vertexCount,
-	                        int[] vertexGroup, int[] outIndices, float[] outWeights) {
+	                        int[] vertexGroup, int[] vertexFeature,
+	                        int[] outIndices, float[] outWeights) {
 		BoneDef[] bones = plan.bones;
 		int[][] hops = hopDistances(bones);
+		// Which bones are part of a leg or an arm. Not the same as "has a blend group": the jaw
+		// carries one too, and treating it as a limb cost it ownership of its own surface — a jaw
+		// vertex then anchored the hop filter on the skull and picked up weight from the spine.
+		boolean[] limbBone = limbBones(plan);
 
 		float[] dist = new float[bones.length];
 		float[] bestWeight = new float[MAX_INFLUENCES];
@@ -107,6 +164,11 @@ public final class SkinBinder {
 			// own leg and are unaffected, which is the distinction nearest-bone could not draw.
 			int limbGroup = vertexGroup != null ? vertexGroup[v] : BoneDef.AXIAL;
 			boolean groupKnown = vertexGroup != null;
+			// Whether this surface is part of a limb at all. Without the field to ask, assume it
+			// is: that restores the old nearest-bone behaviour rather than silently tightening it
+			// for callers that bind a mesh they did not bake.
+			boolean limbSurface = vertexFeature == null
+					|| limbSurface(FEATURES[vertexFeature[v]]);
 			float limbDist = Float.MAX_VALUE;
 			for (int b = 0; b < bones.length; b++) {
 				BoneDef bone = bones[b];
@@ -126,7 +188,11 @@ public final class SkinBinder {
 
 				float d = Math.max(0f, (float) Math.sqrt(dx * dx + dy * dy + dz * dz) - radius);
 				dist[b] = d;
-				if (d < ownerDist) {
+				// The owner anchors the hop filter, so it has to be a bone this surface is allowed
+				// to be driven by. Letting a frill be owned by the thigh it dangles past would
+				// measure every candidate's hops from the wrong branch of the skeleton.
+				boolean eligible = !limbBone[b] || limbSurface || bone.blendGroup == limbGroup;
+				if (d < ownerDist && eligible) {
 					ownerDist = d;
 					owner = b;
 				}
@@ -161,6 +227,9 @@ public final class SkinBinder {
 					// than one that follows the wrong one: it left a splayed foot's outer toe
 					// welded rigidly to the spine.
 					int group = bones[b].blendGroup;
+					// A limb drives limbs. Ornament, plating, the abdomen and the trunk are the
+					// body's, however close a leg swings past them in the bind pose.
+					if (limbBone[b] && !limbSurface && group != limbGroup) continue;
 					if (group != BoneDef.AXIAL && group != limbGroup && group != ownerGroup) continue;
 
 					float w = 1f / ((dist[b] + SOFTNESS) * (dist[b] + SOFTNESS));

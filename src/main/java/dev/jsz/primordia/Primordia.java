@@ -67,6 +67,8 @@ public class Primordia implements ModInitializer {
 		NameLineagePayload.register();
 		SpawnSpeciesPayload.register();
 		dev.jsz.primordia.lab.GuideDataSyncPayload.register();
+		dev.jsz.primordia.splice.SpliceSyncPayload.register();
+		dev.jsz.primordia.splice.SpliceRequestPayload.register();
 		dev.jsz.primordia.sound.CreatureVoicePayload.register();
 		EcologyTicker.register();
 		VanillaInteractions.register();
@@ -81,6 +83,8 @@ public class Primordia implements ModInitializer {
 			net.minecraft.nbt.CompoundTag payloadData = new net.minecraft.nbt.CompoundTag();
 			data.writeInto(payloadData);
 			sender.sendPacket(new dev.jsz.primordia.lab.GuideDataSyncPayload(payloadData));
+			// After the guide, because the slot count is derived from it and `refresh` trims to it.
+			dev.jsz.primordia.splice.Splicing.refresh(player);
 
 			if (firstJoin) {
 				net.minecraft.world.item.ItemStack guide =
@@ -97,6 +101,9 @@ public class Primordia implements ModInitializer {
 			net.minecraft.nbt.CompoundTag payloadData = new net.minecraft.nbt.CompoundTag();
 			data.writeInto(payloadData);
 			net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(newPlayer, new dev.jsz.primordia.lab.GuideDataSyncPayload(payloadData));
+			// Attribute modifiers do not survive a respawn, so a loadout that is merely saved is a
+			// loadout that quietly stops working the first time the player dies.
+			dev.jsz.primordia.splice.Splicing.refresh(newPlayer);
 
 			var inv = newPlayer.getInventory();
 			boolean hasGuide = false;

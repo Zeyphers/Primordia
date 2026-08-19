@@ -12,6 +12,7 @@ import dev.jsz.primordia.lab.Phylogeny;
 import dev.jsz.primordia.util.MathX;
 import dev.jsz.primordia.entity.TamingPreference;
 import dev.jsz.primordia.client.render.CreaturePreview;
+import dev.jsz.primordia.splice.SpliceBranch;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
@@ -23,6 +24,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.ChatFormatting;
 import dev.jsz.primordia.Primordia;
 import net.minecraft.resources.Identifier;
@@ -172,8 +174,20 @@ public class FieldGuideScreen extends Screen {
 	private double dragDistance;
 
 	public FieldGuideScreen(ItemStack guide) {
+		this(guide, 0);
+	}
+
+	/**
+	 * Opens the book at a chosen tab.
+	 * <p>
+	 * Used by the splicing bench, which opens the guide at Self: standing at the machine and being
+	 * handed the page you plan from is the whole interaction, and making the player find the tab
+	 * themselves every time would be a worse book.
+	 */
+	public FieldGuideScreen(ItemStack guide, int openAt) {
 		super(Component.literal("Primordia Field Guide"));
 		this.guide = guide;
+		this.section = Math.max(0, Math.min(openAt, GuideChapters.SECTIONS.size() - 1));
 	}
 
 	@Override
@@ -293,6 +307,7 @@ public class FieldGuideScreen extends Screen {
 		nameBuffer = "";
 		if (section == GuideChapters.REFERENCE_TAB) buildReference();
 		if (section == GuideChapters.LINEAGE_TAB) buildLineages();
+		if (section == GuideChapters.SELF_TAB) buildSelf(data);
 
 		markSectionViewed(section, data);
 	}
@@ -750,6 +765,213 @@ public class FieldGuideScreen extends Screen {
 	}
 
 	/** Wrap to an arbitrary width, for the plate's narrower left column. */
+	// ------------------------------------------------------------------ the self tab
+
+	/** Where on the body each branch is drawn as attaching, so a callout has something to point at. */
+	private record Anchor(SpliceBranch branch, int x, int y, boolean left) {
+	}
+
+	private final List<Anchor> selfAnchors = new ArrayList<>();
+	private SpliceBranch selfHover;
+
+	private static final int FIGURE_X = 160;
+
+	/**
+	 * The splice tree as an anatomy plate.
+	 * <p>
+	 * This replaced seven pages of ruled text, which were accurate and unreadable. A tech tree only
+	 * does its job if the player can take it in at a glance, and six branches with three depths each
+	 * is small enough to draw all at once — so it is drawn all at once, around a figure, with a line
+	 * from each branch to the part of the body it changes. What was a list you paged through is a
+	 * diagram you look at.
+	 * <p>
+	 * The figure is a drawn silhouette rather than the player's own model. Nothing in this version
+	 * hands a GUI an entity to render, and building that path was more than the picture was worth;
+	 * the anatomy is schematic anyway, which is what a plate in a naturalist's journal would be.
+	 */
+	private void buildSelf(GuideData data) {
+		// One page, drawn rather than written. The empty line list keeps the pager at 1/1.
+		pages.add(new ArrayList<>());
+
+		selfAnchors.clear();
+		int top = TAB_H + 46;
+		// Left column reads down the body, right column likewise, so the eye tracks head to foot.
+		selfAnchors.add(new Anchor(SpliceBranch.DISPOSITION, FIGURE_X - 11, top + 8, true));
+		selfAnchors.add(new Anchor(SpliceBranch.LIGHT, FIGURE_X - 12, top + 34, true));
+		selfAnchors.add(new Anchor(SpliceBranch.PHYSIOLOGY, FIGURE_X - 9, top + 74, true));
+		selfAnchors.add(new Anchor(SpliceBranch.CLIMATE, FIGURE_X + 12, top + 32, false));
+		selfAnchors.add(new Anchor(SpliceBranch.HABIT, FIGURE_X + 22, top + 46, false));
+		selfAnchors.add(new Anchor(SpliceBranch.COLOUR, FIGURE_X + 12, top + 66, false));
+	}
+
+	/** Draws the figure, the callouts and the leader lines between them. */
+	private void drawSelf(GuiGraphicsExtractor context, int bodyTop, double mx, double my) {
+		GuideData data = dev.jsz.primordia.PrimordiaClient.getClientGuideData();
+		var splices = dev.jsz.primordia.PrimordiaClient.getClientSplices();
+		selfHover = null;
+
+		int slots = dev.jsz.primordia.splice.SpliceTree.slots(data);
+		Component header = Component.literal("Gene slots " + splices.used() + " / " + slots);
+		context.text(font, header, PANEL_W - MARGIN - font.width(header), bodyTop + 8, INK_FAINT, false);
+
+		int leftY = bodyTop + 24;
+		int rightY = bodyTop + 24;
+		for (Anchor anchor : selfAnchors) {
+			int boxW = 96;
+			int boxH = 30;
+			int boxX = anchor.left() ? MARGIN : PANEL_W - MARGIN - boxW;
+			int boxY = anchor.left() ? leftY : rightY;
+			if (anchor.left()) leftY += boxH + 6; else rightY += boxH + 6;
+			drawCallout(context, data, splices, anchor, boxX, boxY, boxW, boxH, mx, my);
+		}
+	}
+
+	/**
+	 * The recess the player is drawn into, in panel coordinates.
+	 * <p>
+	 * The figure used to be a sketch of rectangles, on the grounds that nothing here handed a GUI an
+	 * entity to render. That was wrong — {@code InventoryScreen} has done exactly that for years —
+	 * and a plate about what <i>you</i> are becoming should show you. The callout anchors are
+	 * unchanged, because the model occupies the same block of the page the sketch did.
+	 */
+	private static final int FIGURE_W = 52;
+	private static final int FIGURE_H = 86;
+	/** Roughly half the recess height, which is what the helper wants to fill it. */
+	private static final int FIGURE_SCALE = 38;
+
+	private void box(GuiGraphicsExtractor context, int x, int y, int w, int h, int fill, int edge) {
+		context.fill(x, y, x + w, y + h, edge);
+		context.fill(x + 1, y + 1, x + w - 1, y + h - 1, fill);
+	}
+
+	/**
+	 * One branch's card, and the line tying it to the body.
+	 * <p>
+	 * A card says three things and no more: what the branch is, how deep the player has taken it,
+	 * and what is either carried or still wanted. Anything further is what the bench and the hover
+	 * tooltip are for — the plate's job is to be readable in one pass.
+	 */
+	private void drawCallout(GuiGraphicsExtractor context, GuideData data,
+	                         dev.jsz.primordia.splice.SpliceLoadout splices, Anchor anchor,
+	                         int x, int y, int w, int h, double mx, double my) {
+		SpliceBranch branch = anchor.branch();
+		var reached = dev.jsz.primordia.splice.SpliceTree.reached(data, branch);
+		var worn = splices.inBranch(branch);
+		boolean open = reached != null;
+		boolean hovered = mx >= x && mx < x + w && my >= y && my < y + h;
+		if (hovered) selfHover = branch;
+
+		// The leader line: out of the card's inner edge, then straight to the body.
+		int fromX = anchor.left() ? x + w : x;
+		int fromY = y + h / 2;
+		int lineColour = worn != null ? 0xFF3F7D4F : open ? 0xFF8A7F66 : 0xFFB9AF97;
+		int midX = anchor.left() ? (fromX + anchor.x()) / 2 : (anchor.x() + fromX) / 2;
+		hLine(context, Math.min(fromX, midX), Math.max(fromX, midX), fromY, lineColour);
+		vLine(context, midX, Math.min(fromY, anchor.y()), Math.max(fromY, anchor.y()), lineColour);
+		hLine(context, Math.min(midX, anchor.x()), Math.max(midX, anchor.x()), anchor.y(), lineColour);
+		context.fill(anchor.x() - 1, anchor.y() - 1, anchor.x() + 2, anchor.y() + 2, lineColour);
+
+		int edge = hovered ? 0xFF6B6250 : 0xFFB0A68D;
+		box(context, x, y, w, h, hovered ? 0xFFE6DFC9 : 0xFFDBD3BC, edge);
+
+		context.text(font, Component.literal(branch.title), x + 4, y + 4,
+				open ? INK_TITLE : INK_FAINT, false);
+
+		StringBuilder pips = new StringBuilder();
+		for (var depth : dev.jsz.primordia.splice.SpliceDepth.VALUES) {
+			pips.append(dev.jsz.primordia.splice.SpliceTree.unlocked(data, branch, depth) ? "●" : "○");
+		}
+		context.text(font, Component.literal(pips.toString()), x + w - 4 - font.width(pips.toString()),
+				y + 4, open ? 0xFF3F7D4F : INK_FAINT, false);
+
+		String note;
+		if (worn != null) {
+			note = "carrying " + worn.label();
+		} else if (open) {
+			var best = dev.jsz.primordia.splice.SpliceTree.bestDonor(data, branch);
+			note = best == null ? "no donor on file"
+					: String.format("%s %.2f", best.label(), Math.min(best.potency(), reached.cap));
+		} else {
+			var first = dev.jsz.primordia.splice.SpliceDepth.VALUES[0];
+			note = dev.jsz.primordia.splice.SpliceTree.progress(data, branch, first)
+					+ " of " + first.required + " studied";
+		}
+		for (String line : wrapTo(note, w - 8)) {
+			context.text(font, Component.literal(line), x + 4, y + 16,
+					worn != null ? 0xFF3F7D4F : open ? INK : INK_FAINT, false);
+			break;
+		}
+	}
+
+	private void hLine(GuiGraphicsExtractor context, int x0, int x1, int y, int colour) {
+		context.fill(x0, y, x1 + 1, y + 1, colour);
+	}
+
+	private void vLine(GuiGraphicsExtractor context, int x, int y0, int y1, int colour) {
+		context.fill(x, y0, x + 1, y1 + 1, colour);
+	}
+
+	/**
+	 * The reader, drawn into the middle of their own plate and turning to follow the cursor.
+	 * <p>
+	 * Called outside the panel's translated matrix, like the tooltips, because the helper works in
+	 * real screen coordinates and rotates the model against the true cursor position — handing it
+	 * panel-local coordinates would have it staring at a point somewhere off the page.
+	 */
+	private void drawSelfFigure(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+		if (minecraft == null || minecraft.player == null) return;
+		int cx = left + FIGURE_X;
+		int cy = top + TAB_H + 46;
+		net.minecraft.client.gui.screens.inventory.InventoryScreen.extractEntityInInventoryFollowsMouse(
+				context,
+				cx - FIGURE_W / 2, cy - 4, cx + FIGURE_W / 2, cy + FIGURE_H - 4,
+				FIGURE_SCALE, 0.0625f, mouseX, mouseY, minecraft.player);
+	}
+
+	/** The hovered branch's package, so the plate can be read in depth without leaving it. */
+	private void selfTooltip(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+		if (selfHover == null) return;
+		GuideData data = dev.jsz.primordia.PrimordiaClient.getClientGuideData();
+		var splices = dev.jsz.primordia.PrimordiaClient.getClientSplices();
+		var reached = dev.jsz.primordia.splice.SpliceTree.reached(data, selfHover);
+		var worn = splices.inBranch(selfHover);
+
+		List<Component> lines = new ArrayList<>();
+		lines.add(Component.literal(selfHover.title).withStyle(ChatFormatting.WHITE));
+		lines.add(Component.literal(selfHover.blurb).withStyle(ChatFormatting.GRAY));
+		lines.add(Component.empty());
+
+		for (var depth : dev.jsz.primordia.splice.SpliceDepth.VALUES) {
+			boolean unlocked = dev.jsz.primordia.splice.SpliceTree.unlocked(data, selfHover, depth);
+			int have = dev.jsz.primordia.splice.SpliceTree.progress(data, selfHover, depth);
+			lines.add(Component.literal((unlocked ? "● " : "○ ") + depth.title
+							+ "  to " + String.format("%.2f", depth.cap)
+							+ (unlocked ? "" : "   " + Math.min(have, depth.required) + "/" + depth.required))
+					.withStyle(unlocked ? ChatFormatting.GREEN : ChatFormatting.DARK_GRAY));
+		}
+
+		if (worn != null || reached != null) {
+			lines.add(Component.empty());
+			var best = dev.jsz.primordia.splice.SpliceTree.bestDonor(data, selfHover);
+			float cap = reached == null ? 0f : reached.cap;
+			for (var row : dev.jsz.primordia.splice.SpliceEffects.rowsFor(selfHover)) {
+				float value = worn != null ? worn.valueOf(row.gene())
+						: best == null || best.genome() == null ? 0f
+								: Math.min(best.genome().raw(row.gene()), cap);
+				lines.add(Component.literal("  "
+								+ dev.jsz.primordia.splice.SpliceEffects.render(row, value) + "  "
+								+ row.summary())
+						.withStyle(row.beneficial(value) ? ChatFormatting.DARK_GREEN : ChatFormatting.RED));
+			}
+		}
+		if (worn == null) {
+			lines.add(Component.empty());
+			lines.add(Component.literal("Isolate it at a splicing bench.")
+					.withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
+		}
+		context.setComponentTooltipForNextFrame(font, lines, mouseX, mouseY);
+	}
+
 	private List<String> wrapTo(String paragraph, int width) {
 		List<String> out = new ArrayList<>();
 		for (var part : font.getSplitter()
@@ -1110,6 +1332,9 @@ public class FieldGuideScreen extends Screen {
 			hoveredNode = null;
 			drawTree(context, bodyTop, mx, my);
 		}
+		if (section == GuideChapters.SELF_TAB) {
+			drawSelf(context, bodyTop, mx, my);
+		}
 		if (!pages.isEmpty()) {
 			int shown = Math.min(page, pages.size() - 1);
 			List<Component> lines = pages.get(shown);
@@ -1132,6 +1357,11 @@ public class FieldGuideScreen extends Screen {
 			}
 		}
 		context.pose().popMatrix();
+
+		if (section == GuideChapters.SELF_TAB) {
+			drawSelfFigure(context, mouseX, mouseY);
+			selfTooltip(context, mouseX, mouseY);
+		}
 
 		// Tooltips are drawn outside the translated matrix, in real screen coordinates.
 		int tab = tabAt(mx, my);

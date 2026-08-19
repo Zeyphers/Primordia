@@ -32,10 +32,12 @@ public final class PrimordiaItemGroup {
 
 			entries.accept(PrimordiaBlocks.BASIC_GENE_LAB);
 			entries.accept(PrimordiaBlocks.SAMPLE_COOLER);
+			entries.accept(PrimordiaBlocks.SPLICER);
 
 			entries.accept(PrimordiaItems.TISSUE_SAMPLE);
 			entries.accept(PrimordiaItems.SEQUENCE_DATA);
 			entries.accept(PrimordiaItems.GENOME_REPORT);
+			entries.accept(PrimordiaItems.SPLICE_SERUM);
 		});
 	}
 }

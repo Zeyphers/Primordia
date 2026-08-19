@@ -18,6 +18,10 @@ public final class PrimordiaScreenHandlers {
 			Registry.register(BuiltInRegistries.MENU, Primordia.id("sample_cooler"),
 					new MenuType<>(SampleCoolerScreenHandler::new, FeatureFlags.VANILLA_SET));
 
+	public static final MenuType<dev.jsz.primordia.screen.SplicerMenu> SPLICER =
+			Registry.register(BuiltInRegistries.MENU, Primordia.id("splicer"),
+					new MenuType<>(dev.jsz.primordia.screen.SplicerMenu::new, FeatureFlags.VANILLA_SET));
+
 	private PrimordiaScreenHandlers() {
 	}
 

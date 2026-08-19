@@ -327,13 +327,23 @@ public final class GuideChapters {
 			new Section("The valley", "minecraft:grass_block", THE_VALLEY),
 			new Section("Doubts", "minecraft:ender_eye", DOUBTS),
 			new Section("Specimens", "primordia:genome_report", List.of()),
-			new Section("Bloodlines", "minecraft:oak_sapling", List.of())
+			new Section("Bloodlines", "minecraft:oak_sapling", List.of()),
+			new Section("Self", "minecraft:spider_eye", List.of())
 	);
 
 	/** Index of the tab that lists filed species; it renders specimen plates rather than prose. */
 	public static final int REFERENCE_TAB = 5;
 	/** Index of the tab that draws the inferred family tree. */
 	public static final int LINEAGE_TAB = 6;
+	/**
+	 * Index of the tab that draws the splice tree — what the reader could become.
+	 * <p>
+	 * Generated from their own records like the two before it, and for the reason
+	 * {@code MD/SPLICING.md} §9 gives: a list of what you could become, mostly empty, is already a
+	 * reason to go outside. It is the shopping list, and it is what turns a guide the player reads
+	 * into a guide the player plans from.
+	 */
+	public static final int SELF_TAB = 7;
 
 	/** Every entry, flat, in the order they were written. */
 	public static final List<Chapter> CHAPTERS = List.of(

@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "building",
+  "pattern": [
+    "IGI",
+    "RLR",
+    "IDI"
+  ],
+  "key": {
+    "I": "minecraft:iron_ingot",
+    "G": "minecraft:glass_pane",
+    "R": "minecraft:redstone",
+    "L": "primordia:basic_gene_lab",
+    "D": "minecraft:diamond"
+  },
+  "result": { "id": "primordia:splicer", "count": 1 }
+}

@@ -37,6 +37,29 @@ public class PrimordiaClient implements ClientModInitializer {
 		return clientGuideData;
 	}
 
+	/**
+	 * What this player is carrying, for the guide's Self tab to draw.
+	 * <p>
+	 * The tree beside it is not synced — {@link dev.jsz.primordia.splice.SpliceTree} derives every
+	 * node, condition and donor from the guide data above, which the client already has.
+	 */
+	private static dev.jsz.primordia.splice.SpliceLoadout clientSplices =
+			new dev.jsz.primordia.splice.SpliceLoadout();
+
+	public static dev.jsz.primordia.splice.SpliceLoadout getClientSplices() {
+		return clientSplices;
+	}
+
+	/** The guide in the player's inventory, or null. Same first-match rule the screen itself uses. */
+	private static net.minecraft.world.item.ItemStack findGuide(net.minecraft.world.entity.player.Player player) {
+		var inventory = player.getInventory();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			net.minecraft.world.item.ItemStack candidate = inventory.getItem(slot);
+			if (candidate.is(PrimordiaItems.FIELD_GUIDE)) return candidate;
+		}
+		return null;
+	}
+
 	@Override
 	public void onInitializeClient() {
 		// The editor's HTTP listener runs on a thread the JDK creates itself and does not mark as a
@@ -52,8 +75,16 @@ public class PrimordiaClient implements ClientModInitializer {
 				})
 		);
 
+		net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(
+				dev.jsz.primordia.splice.SpliceSyncPayload.TYPE,
+				(payload, context) -> context.client().execute(() -> {
+					clientSplices = dev.jsz.primordia.splice.SpliceLoadout.fromNbt(payload.data());
+				})
+		);
+
 		net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
 			clientGuideData = dev.jsz.primordia.lab.GuideData.empty();
+			clientSplices = new dev.jsz.primordia.splice.SpliceLoadout();
 		});
 
 		// Creature calls are synthesised on this side from the genome the client already has, so the
@@ -68,9 +99,28 @@ public class PrimordiaClient implements ClientModInitializer {
 		// DynamicLightsCompat is not touched from here: it is a `lambdynlights:initializer` entrypoint,
 		// so LambDynamicLights loads and calls it itself, and naming the class here would drag it in
 		// even when the mod is absent.
-		MenuScreens.register(PrimordiaScreenHandlers.GENE_LAB, GeneLabScreen::new);
-		MenuScreens.register(PrimordiaScreenHandlers.SAMPLE_COOLER, SampleCoolerScreen::new);
+		net.fabricmc.fabric.api.client.rendering.v1.BlockEntityRendererRegistry.register(
+				dev.jsz.primordia.registry.PrimordiaBlockEntities.SPLICER,
+				dev.jsz.primordia.client.render.SplicerRenderer::new);
+		// A resource reload may bring an edited model, and the renderer caches the parsed one.
+		net.fabricmc.fabric.api.resource.ResourceManagerHelper.get(
+						net.minecraft.server.packs.PackType.CLIENT_RESOURCES)
+				.registerReloadListener(new net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener() {
+					@Override
+					public net.minecraft.resources.Identifier getFabricId() {
+						return dev.jsz.primordia.Primordia.id("splicer_geometry");
+					}
 
+					@Override
+					public void onResourceManagerReload(net.minecraft.server.packs.resources.ResourceManager manager) {
+						dev.jsz.primordia.client.render.SplicerRenderer.forgetGeometry();
+					}
+				});
+
+		MenuScreens.register(PrimordiaScreenHandlers.GENE_LAB, GeneLabScreen::new);
+		MenuScreens.register(PrimordiaScreenHandlers.SPLICER,
+				dev.jsz.primordia.client.screen.SplicerScreen::new);
+		MenuScreens.register(PrimordiaScreenHandlers.SAMPLE_COOLER, SampleCoolerScreen::new);
 		UseItemCallback.EVENT.register((player, world, hand) -> {
 			net.minecraft.world.item.ItemStack stack = player.getItemInHand(hand);
 			if (world.isClientSide() && stack.is(PrimordiaItems.FIELD_GUIDE)) {

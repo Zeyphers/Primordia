@@ -4,6 +4,7 @@ import dev.jsz.primordia.Primordia;
 import dev.jsz.primordia.block.GeneLabBlockEntity;
 import dev.jsz.primordia.block.LabMachineBlock;
 import dev.jsz.primordia.block.SampleCoolerBlock;
+import dev.jsz.primordia.block.SplicerBlock;
 import dev.jsz.primordia.item.SampleCoolerBlockItem;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -64,6 +65,19 @@ public final class PrimordiaBlocks {
 					.noOcclusion()
 					.strength(0.5f, 6.0f));
 
+	/**
+	 * The splicing bench: where a characterised genome becomes something the player is.
+	 * <p>
+	 * Lit only while it is running, like the lab, because the one thing worth telling the room is
+	 * whether the machine is busy. Non-opaque for the usual reason — the body stops a pixel short of
+	 * the top of its block and the gantry stands proud of it.
+	 */
+	public static final Block SPLICER = register("splicer",
+			SplicerBlock::new,
+			Block.Properties.ofFullCopy(Blocks.BLAST_FURNACE)
+					.noOcclusion()
+					.lightLevel(state -> state.getValue(SplicerBlock.RUNNING) ? 10 : 0));
+
 	private PrimordiaBlocks() {
 	}
 
@@ -85,6 +99,7 @@ public final class PrimordiaBlocks {
 	 */
 	public static void register() {
 		registerItem("basic_gene_lab", BASIC_GENE_LAB);
+		registerItem("splicer", SPLICER);
 		registerCoolerItem();
 	}
 

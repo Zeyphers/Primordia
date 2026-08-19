@@ -57,6 +57,20 @@ public final class PrimordiaItems {
 	 * One per player, in practice. It stacks to one because two guides would split a record that
 	 * only means anything whole — filing half your specimens into each is worse than either.
 	 */
+	/**
+	 * One trait, bottled by the splicing bench.
+	 * <p>
+	 * Drinkable, and it stacks to one: a serum carries a specific bloodline's block at a specific
+	 * strength, so two of them are never the same item and must never merge into a pile that has
+	 * forgotten which was which.
+	 */
+	public static final Item SPLICE_SERUM = register("splice_serum",
+			properties -> new dev.jsz.primordia.item.SpliceSerumItem(properties),
+			new Item.Properties()
+					.stacksTo(1)
+					.component(net.minecraft.core.component.DataComponents.CONSUMABLE,
+							net.minecraft.world.item.component.Consumables.DEFAULT_DRINK));
+
 	public static final Item FIELD_GUIDE = register("field_guide",
 			FieldGuideItem::new, new Item.Properties().stacksTo(1));
 

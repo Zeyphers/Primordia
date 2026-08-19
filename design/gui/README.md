@@ -88,3 +88,40 @@ reads the markers, checks each is a solid rectangle, and prints the Java constan
 `design/export_guide.py` writes every field-guide entry to
 `~/Downloads/primordia_field_guide.json` — titles, paragraphs, unlock conditions and the tab
 structure, parsed out of the source so it cannot drift. Edit that file and hand it back.
+
+---
+
+## `splicer_layout.png` — the Splicing Bench's screen
+
+**248×256, and the canvas size *is* the screen size.** Make the image bigger and the GUI gets
+bigger; nothing in code hardcodes the dimensions.
+
+This one is a layout file, not art. Move the coloured blocks so each covers the thing it names, save,
+and run:
+
+```bash
+python design/gui/splicer_layout.py
+```
+
+It prints every element's position and complains if a marker is missing or the wrong size. Hand the
+png back once it reads the way you want and the screen gets rebuilt from it.
+
+| Marker | Colour | What it is | Size |
+|---|---|---|---|
+| `ROW1`–`ROW6` | magenta → green | the six trait rows, top to bottom | any |
+| `RAIL` | cyan | the track the progress line runs down, rows → output | any |
+| `OUTPUT` | blue | the slot the finished serum appears in | **16×16** |
+| `INV` | spring green | the player's 3×9 inventory block | **162×54** |
+| `HOTBAR` | azure | the player's hotbar | **162×18** |
+| `TITLE` | violet | top-left of where the screen title is drawn | **8×8** |
+
+Three rules:
+
+- **Nothing but a marker may use those exact colours.** The reader finds elements by colour alone.
+- **Each marker stays a solid rectangle.** It is measured by its bounding box, so a stray pixel of
+  the same colour in a corner silently stretches it across the screen.
+- **The four sized markers must keep their size.** Slots are 16×16 and the inventory grid is fixed
+  by vanilla's spacing; the reader will tell you if one has drifted.
+
+The rows may be any height and the rail any width — those are free, and the rail is what the
+progress line follows from each row down to the output slot.

@@ -3,6 +3,7 @@
 	"package": "dev.jsz.primordia.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
+		"PlayerExhaustionMixin",
 		"ProjectileUtilMixin"
 	],
 	"client": [

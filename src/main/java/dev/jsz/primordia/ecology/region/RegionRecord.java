@@ -39,6 +39,14 @@ public final class RegionRecord {
 	 * and {@link dev.jsz.primordia.genome.Gene#HUMIDITY_PREFERENCE}. Selection pulls a lineage's
 	 * preference loci toward these, which is what makes a region's fauna come to fit it.
 	 */
+	/**
+	 * Biome path the region was founded from, or empty for a region saved before it was recorded.
+	 * <p>
+	 * Stored as the name rather than as a colour so the colour table stays in one place and a
+	 * retune of it reaches existing worlds.
+	 */
+	public String biome = "";
+
 	public float temperature = 0.5f;
 	public float humidity = 0.5f;
 	/**
@@ -125,12 +133,25 @@ public final class RegionRecord {
 
 	// ---------------------------------------------------------------------- nbt
 
+	/**
+	 * The colour this region's ground is, and so the colour selection favours on its animals.
+	 * <p>
+	 * Falls back to the climate when the biome was never recorded, which is every region in a world
+	 * saved before this existed. See {@link dev.jsz.primordia.genome.Camouflage#forClimate}.
+	 */
+	public dev.jsz.primordia.genome.Camouflage camouflage() {
+		return biome.isEmpty()
+				? dev.jsz.primordia.genome.Camouflage.forClimate(temperature, humidity)
+				: dev.jsz.primordia.genome.Camouflage.forBiome(biome);
+	}
+
 	public CompoundTag writeNbt() {
 		CompoundTag nbt = new CompoundTag();
 		nbt.putLong("Seed", seed);
 		nbt.putLong("LastStep", lastStep);
 		nbt.putFloat("Vegetation", vegetation);
 		nbt.putFloat("Productivity", productivity);
+		nbt.putString("Biome", biome);
 		nbt.putFloat("Temperature", temperature);
 		nbt.putFloat("Humidity", humidity);
 		nbt.putFloat("CaveRichness", caveRichness);
@@ -150,6 +171,7 @@ public final class RegionRecord {
 		record.lastStep = nbt.getLongOr("LastStep", 0L);
 		record.vegetation = nbt.getFloatOr("Vegetation", 0f);
 		record.productivity = nbt.getFloatOr("Productivity", 0f);
+		record.biome = nbt.getStringOr("Biome", "");
 		record.temperature = nbt.contains("Temperature") ? nbt.getFloatOr("Temperature", 0f) : 0.5f;
 		record.humidity = nbt.contains("Humidity") ? nbt.getFloatOr("Humidity", 0f) : 0.5f;
 		record.caveRichness = nbt.contains("CaveRichness") ? nbt.getFloatOr("CaveRichness", 0f) : 0.18f;

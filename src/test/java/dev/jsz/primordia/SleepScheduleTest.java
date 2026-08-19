@@ -1,6 +1,9 @@
 package dev.jsz.primordia;
 
 import dev.jsz.primordia.ecology.EnergyBudget;
+import dev.jsz.primordia.genome.Archetype;
+import dev.jsz.primordia.genome.Gene;
+import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.entity.goal.RestGoal;
 import org.junit.jupiter.api.Test;
 
@@ -121,5 +124,33 @@ class SleepScheduleTest {
 				"only creatures too full to hunt could sleep");
 		assertTrue(EnergyBudget.WAKE_HUNGRY > EnergyBudget.STARVING,
 				"a creature would sleep until it starved to death");
+	}
+
+	/**
+	 * How much of the world is awake when the player is.
+	 * <p>
+	 * {@link dev.jsz.primordia.genome.Gene#NOCTURNALITY} reads as a magnitude and behaves as a
+	 * switch, so where its cut sits decides the balance of the whole world's activity rather than
+	 * one animal's habits. At the midpoint the draw split the population in half and half of
+	 * everything alive was asleep through the daylight a player spends their time in. The cut is
+	 * set from the fraction wanted, so this checks the fraction rather than the cut — the number in
+	 * the enum is free to be retuned, the balance it buys is not.
+	 */
+	@Test
+	void mostOfAPopulationKeepsToTheDay() {
+		Random random = new Random(31337);
+		int trials = 20000;
+		int nocturnal = 0;
+
+		for (int i = 0; i < trials; i++) {
+			Genome genome = Archetype.randomSurface(random).create(random);
+			// Asked the way the goal asks it, rather than against a literal of this test's own.
+			if (!RestGoal.isRestingHour(NIGHT, genome.raw(Gene.NOCTURNALITY), genome.seed())) nocturnal++;
+		}
+
+		float share = (float) nocturnal / trials;
+		assertTrue(share > 0.13f && share < 0.28f,
+				String.format("%.1f%% of a surface population is nocturnal — the world is meant to be "
+						+ "roughly a fifth night shift, and mostly awake in daylight", share * 100f));
 	}
 }

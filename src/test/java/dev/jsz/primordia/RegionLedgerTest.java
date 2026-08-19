@@ -9,6 +9,7 @@ import dev.jsz.primordia.ecology.region.RegionPos;
 import dev.jsz.primordia.ecology.region.RegionRecord;
 import dev.jsz.primordia.ecology.region.RegionSimulation;
 import dev.jsz.primordia.genome.Archetype;
+import dev.jsz.primordia.genome.Camouflage;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
 import org.junit.jupiter.api.Test;
@@ -491,6 +492,59 @@ class RegionLedgerTest {
 	}
 
 	// ------------------------------------------------------------------ helpers
+
+	// ------------------------------------------------------------------ crypsis
+
+	/**
+	 * A region's animals are still the colour of its ground after a long pre-history.
+	 * <p>
+	 * Founding them camouflaged was never the hard part and was already being done. Keeping them
+	 * that way was: colour was set once and then left to neutral drift on {@link Gene#HUE}, the most
+	 * plastic locus there is, for every step of a region's pre-history with nothing pulling back. A
+	 * walk that long ends at uniform, and a player walking into a mesa was met by green and slate
+	 * animals standing on orange clay.
+	 * <p>
+	 * So this measures what the player sees — individuals drawn out of the ledger, not the lineage
+	 * means they are drawn from — and it measures it after five hundred days rather than at
+	 * founding, because at founding it always passed.
+	 */
+	@Test
+	void aRegionsAnimalsStayTheColourOfItsGround() {
+		for (String biome : new String[]{"badlands", "forest", "plains", "swamp"}) {
+			Camouflage target = Camouflage.forBiome(biome);
+			Random random = new Random(7);
+			int matched = 0, total = 0;
+
+			for (int trial = 0; trial < 40; trial++) {
+				FakeWorld world = new FakeWorld();
+				RegionPos pos = new RegionPos(trial * 13, trial * 7);
+				RegionRecord record = world.create(pos, pos.seed(555L));
+				RegionFounder.found(world, record,
+						new RegionFounder.Climate(0.5f, 0.5f, 0.7f, 0.18f), biome, 0);
+
+				Random step = new Random(record.seed);
+				for (int day = 0; day < 500; day++) RegionSimulation.step(world, record, step);
+
+				for (LineageRecord lineage : record.lineages) {
+					// Cave fauna is hiding from nothing and is founded outside the biome table.
+					if (Archetype.isSubterranean(lineage.meanGenome())) continue;
+					for (int k = 0; k < 8; k++) {
+						float hue = lineage.sample(step).raw(Gene.HUE);
+						float d = Math.abs(hue - target.hue());
+						total++;
+						// A circle: a creature at 0.98 is close to a target at 0.05, not far from it.
+						if (Math.min(d, 1f - d) <= 0.15f) matched++;
+					}
+				}
+			}
+
+			assertTrue(total > 0, "no surface fauna was founded in " + biome + " to check");
+			float share = (float) matched / total;
+			assertTrue(share > 0.75f, String.format(
+					"only %.0f%% of %s animals are within sight of the ground colour after 500 days — "
+							+ "drift has washed the camouflage out again", share * 100f, biome));
+		}
+	}
 
 	private static RegionRecord seededRegion(int trial) {
 		RegionPos pos = new RegionPos(trial, trial * 3);

@@ -266,32 +266,10 @@ public final class Genome {
 			return new Genome(v, g.seed(), g.lineage(), 0);
 		}
 
-		String cat = biomeCategory == null ? "" : biomeCategory.toLowerCase();
-		if (cat.contains("cave") || cat.contains("deep") || cat.contains("dripstone") || cat.contains("lush")) {
-			// Cave dwellers: Albino White, Slate Grey, or Dark Obsidian with low saturation
-			v[Gene.HUE.ordinal()] = random.nextFloat();
-			v[Gene.SATURATION.ordinal()] = 0.0f + random.nextFloat() * 0.15f;
-			v[Gene.BRIGHTNESS.ordinal()] = random.nextBoolean() ? 0.85f + random.nextFloat() * 0.15f : 0.10f + random.nextFloat() * 0.20f;
-		} else if (cat.contains("desert") || cat.contains("badlands") || cat.contains("beach") || cat.contains("sand")) {
-			v[Gene.HUE.ordinal()] = 0.08f + random.nextFloat() * 0.06f;
-			v[Gene.SATURATION.ordinal()] = 0.28f + random.nextFloat() * 0.24f;
-			v[Gene.BRIGHTNESS.ordinal()] = 0.70f + random.nextFloat() * 0.25f;
-		} else if (cat.contains("snow") || cat.contains("ice") || cat.contains("frozen")) {
-			v[Gene.SATURATION.ordinal()] = 0.02f + random.nextFloat() * 0.10f;
-			v[Gene.BRIGHTNESS.ordinal()] = 0.82f + random.nextFloat() * 0.16f;
-		} else if (cat.contains("swamp")) {
-			v[Gene.HUE.ordinal()] = 0.18f + random.nextFloat() * 0.08f;
-			v[Gene.SATURATION.ordinal()] = 0.24f + random.nextFloat() * 0.24f;
-			v[Gene.BRIGHTNESS.ordinal()] = 0.22f + random.nextFloat() * 0.25f;
-		} else if (cat.contains("jungle") || cat.contains("forest") || cat.contains("taiga")) {
-			// Woodland camouflage is olive, moss and bark, not parrot green. This band was the
-			// most saturated in the table and forest fauna came out luminous because of it.
-			v[Gene.HUE.ordinal()] = 0.22f + random.nextFloat() * 0.14f;
-			v[Gene.SATURATION.ordinal()] = 0.26f + random.nextFloat() * 0.26f;
-		} else {
-			v[Gene.HUE.ordinal()] = 0.10f + random.nextFloat() * 0.11f;
-			v[Gene.SATURATION.ordinal()] = 0.28f + random.nextFloat() * 0.28f;
-		}
+		// One table, in Camouflage, rather than a chain of bands here. The region ledger has to
+		// reach the same answer to go on selecting for it long after this draw is forgotten, and
+		// two copies of a colour table are two colour tables that will disagree.
+		Camouflage.forBiome(biomeCategory).apply(v, random);
 
 		return new Genome(v, g.seed(), g.lineage(), 0);
 	}

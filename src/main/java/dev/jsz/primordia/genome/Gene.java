@@ -67,7 +67,21 @@ public enum Gene {
 	FEAR(0.5f),
 	CURIOSITY(0.5f),
 	TERRITORIALITY(0.45f),
-	NOCTURNALITY(0.4f),
+	/**
+	 * Which half of the day this animal is awake for, cut at 0.72 rather than at the midpoint.
+	 * <p>
+	 * A locus like this reads as a magnitude and behaves as a switch, and where the switch sits is
+	 * what sets the balance of the whole world's activity. At the midpoint the draw split the
+	 * population very nearly in half, so half of everything alive was asleep in daylight and the
+	 * surface a player actually walks around in was half empty — the animals existed, they were
+	 * just never on. The cut is a population parameter wearing a gene, so it is set from the
+	 * fraction wanted rather than from where the number looks tidy: against the founder draw, 0.72
+	 * puts roughly one animal in five on the night shift and leaves the day to the rest.
+	 * <p>
+	 * Mutation still walks a lineage across it in either direction, which is the point — a
+	 * nocturnal branch of a diurnal lineage is a thing that should be able to happen.
+	 */
+	NOCTURNALITY(0.4f, 0.72f),
 	TEMP_PREFERENCE(0.3f, false, true),
 	HUMIDITY_PREFERENCE(0.3f, false, true),
 	ARMOR(0.4f),

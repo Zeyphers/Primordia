@@ -33,3 +33,6 @@ check_api*.ps1
 
 # macOS
 .DS_Store
+
+# python bytecode from the design scripts
+__pycache__/

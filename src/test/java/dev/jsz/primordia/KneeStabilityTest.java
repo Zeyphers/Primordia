@@ -116,6 +116,34 @@ class KneeStabilityTest {
 				"a joint jumped " + worst + " in one frame at step " + worstStep + " — that is a visible pop");
 	}
 
+	/**
+	 * A four-legged animal gets two bones per leg, whatever {@code LEG_SEGMENTS} rolled.
+	 * <p>
+	 * A third joint only reads as an ankle with enough legs around it to sell an arthropod. On four
+	 * it has no such context and no strong pole to commit it, so the solver folds it whichever way
+	 * the step happens to favour and the ankle visibly snaps in or out mid-stride. The gene is left
+	 * free to roll — it still means something on every other leg count — and the constraint is
+	 * applied where the leg is built.
+	 */
+	@Test
+	void quadrupedsNeverGrowAThirdLegSegment() {
+		Random random = new Random(20260819);
+		int checked = 0;
+
+		for (int trial = 0; trial < 400 && checked < 60; trial++) {
+			// Pinned to the top of the range, so a quadruped that could take a third segment does.
+			Genome genome = Genome.random(random).with(Gene.LEG_SEGMENTS, 1f);
+			BodyPlan plan = BodyPlanBuilder.build(genome);
+			if (plan.legs.length != 4) continue;
+			checked++;
+			for (LimbChain leg : plan.legs) {
+				assertEquals(2, leg.bones.length,
+						"a quadruped grew a " + leg.bones.length + "-bone leg — the extra ankle pops");
+			}
+		}
+		assertTrue(checked > 0, "no quadrupeds were generated to check");
+	}
+
 	@Test
 	void generatedThreeSegmentLegsAllCarryBendSigns() {
 		Random random = new Random(7777);

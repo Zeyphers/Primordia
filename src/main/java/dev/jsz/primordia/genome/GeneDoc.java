@@ -105,7 +105,7 @@ public final class GeneDoc {
 				+ "what alarm calls converge on because a pure tone is hard to place.");
 		put(Gene.CURIOSITY, "How far it will go to investigate something new.");
 		put(Gene.TERRITORIALITY, "How hard it defends ground against its own kind.");
-		put(Gene.NOCTURNALITY, "Whether it keeps to the night or the day.");
+		put(Gene.NOCTURNALITY, "Whether it keeps to the night or the day. Past the tick, the night — most animals sit below it.");
 		put(Gene.TEMP_PREFERENCE, "The temperature band it can settle in. A founder drawn at the "
 				+ "wrong end simply never takes hold where it was born.");
 		put(Gene.HUMIDITY_PREFERENCE, "The moisture band it can settle in.");

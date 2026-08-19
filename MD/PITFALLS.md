@@ -59,6 +59,14 @@ cellSize ≈ span / resolutionFor(tier)
 `MeshBaker.resolutionFor` raises resolution until cells are smaller than `plan.minLimbRadius`, so a
 new small feature must either be included in that figure or be big enough without it.
 
+Ornament takes the second option, and has to. A frill membrane runs about a fifth of a cell across
+and sampling five times finer to see it costs resolution *squared* on every creature that has one,
+so `BodyPlanBuilder` floors the thin axis of `FRILL`, `FIN`, `SPINE` and `PLATE` blobs instead
+(`ORNAMENT_REFERENCE_CELLS`). Two thirds of them were under one cell before that, which is why every
+frill and every row of spines in the game had holes in it — the membrane surfaced only in the
+patches where a sample happened to land inside it. The failure looks like a *hole*, not like an
+absence, which is why it read as a mesh bug rather than as this.
+
 ---
 
 ## 4. Two overlapping solids are one solid

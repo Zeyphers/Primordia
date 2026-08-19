@@ -54,6 +54,11 @@ public final class DynamicLightsCompat implements DynamicLightsInitializer {
 
 	private static void onRegister(EntityLightSourceManager.RegisterContext context) {
 		context.register(PrimordiaEntities.CREATURE, Bioluminescence.INSTANCE);
+		// A player carrying a Light splice lights the cave for the same reason the animal it came
+		// from did. Registered against the same manager and reading the same glow number, so the
+		// one branch of the splice tree with a rendering path already built gets it for free.
+		context.register(net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
+				.getValue(net.minecraft.resources.Identifier.parse("minecraft:player")), SplicedGlow.INSTANCE);
 		// Announced from here rather than from the entrypoint above, because reaching the entrypoint
 		// only proves the two mods found each other; this proves the creature is in the light table.
 		// Once, not once per resource reload.
@@ -97,6 +102,40 @@ public final class DynamicLightsCompat implements DynamicLightsInitializer {
 	 * sensitive — real bioluminescence mostly lives in the sea — so this deliberately skips
 	 * {@code WaterSensitiveEntityLuminance}.
 	 */
+	/**
+	 * How brightly a spliced player lights the ground, 0 to 15.
+	 * <p>
+	 * Deliberately dimmer than the animal it was taken from: a player is a light source that goes
+	 * where the player goes, and one bright enough to suppress spawning everywhere they walked would
+	 * be a torch that cannot be put down. The depth cap already limits how much of a bright donor
+	 * can be carried, so an early Trace splice is a glimmer and a Dominant one is a real lamp.
+	 */
+	static int playerLuminanceOf(Entity entity) {
+		if (!(entity instanceof net.minecraft.world.entity.player.Player player)) return 0;
+		if (!PrimordiaConfig.get().emissiveGlow) return 0;
+		float strength = player.level().isClientSide()
+				? dev.jsz.primordia.PrimordiaClient.getClientSplices().glowStrength()
+				: 0f;
+		if (strength <= 0.01f) return 0;
+		return Math.round(MathX.clamp(strength * MAX_LIGHT, MIN_LIGHT, MAX_LIGHT));
+	}
+
+	/** The player's own glow, as a luminance. See {@link Bioluminescence} for why it is a type. */
+	private static final class SplicedGlow implements EntityLuminance {
+		static final SplicedGlow INSTANCE = new SplicedGlow();
+		static final Type TYPE = Type.registerSimple(Primordia.id("spliced_glow"), INSTANCE);
+
+		@Override
+		public Type type() {
+			return TYPE;
+		}
+
+		@Override
+		public int getLuminance(ItemLightSourceManager itemLightSourceManager, Entity entity) {
+			return playerLuminanceOf(entity);
+		}
+	}
+
 	private static final class Bioluminescence implements EntityLuminance {
 		static final Bioluminescence INSTANCE = new Bioluminescence();
 		/** Declared after {@link #INSTANCE} so the unit codec has something to hold. */

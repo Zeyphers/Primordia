@@ -202,6 +202,21 @@ public final class LineageRecord {
 	private static final float KIND_SPREAD = 0.5f;
 
 	/**
+	 * How much of the jitter {@link Gene#HUE} keeps.
+	 * <p>
+	 * The one display locus that is not display. Everything else {@link #ORNAMENT_SPREAD} opens up
+	 * — horn size, marking scale, contrast, brightness — varies between real siblings and reads as
+	 * a herd of individuals. Base hue does not: a species has a colour, and the animals wearing it
+	 * differ in shade and pattern, not in where they sit on the wheel.
+	 * <p>
+	 * At full ornament spread the jitter on hue ran to about a tenth of a turn either side, which
+	 * is tan to green. Every lineage in the ledger was correctly the colour of its biome and the
+	 * animals drawn out of it still came in a third of the spectrum, so the camouflage was right in
+	 * the ledger and invisible in the world — which is where it was reported from.
+	 */
+	private static final float HIDE_SPREAD = 0.40f;
+
+	/**
 	 * Draws an individual out of the population: the mean, jittered by the variance.
 	 * <p>
 	 * Per-gene plasticity scales the jitter, for the same reason it scales mutation — a lineage
@@ -222,8 +237,14 @@ public final class LineageRecord {
 			float scale = gene.categorical
 					? gene.plasticity * KIND_SPREAD
 					: ORNAMENT_SPREAD * (float) Math.pow(gene.plasticity, 1.6);
+			if (gene == Gene.HUE) scale *= HIDE_SPREAD;
 			float jitter = (float) random.nextGaussian() * variance * scale;
-			values[i] = MathX.clamp01(mean[i] + jitter);
+			// Hue is a circle and every other locus is a line. Clamping it puts the siblings of a
+			// lineage sitting near deep red into a heap against 0, which is not a colour they were
+			// selected for — it is the edge of the array showing through.
+			values[i] = gene == Gene.HUE
+					? (float) (((mean[i] + jitter) % 1f + 1f) % 1f)
+					: MathX.clamp01(mean[i] + jitter);
 		}
 		return new Genome(values, random.nextLong(), id, generation);
 	}

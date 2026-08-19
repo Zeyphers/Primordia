@@ -66,7 +66,8 @@ public final class RegionFounder {
 	 * Founds a region and runs its pre-history. Does nothing if it is already founded.
 	 *
 	 * @param climate   normalised temperature and humidity, and productivity, sampled from the biome
-	 * @param biomeName the biome path name, used only for colouring the founding stock
+	 * @param biomeName the biome path name; colours the founding stock and is kept on the record so
+	 *                  selection can go on favouring that colouring long afterwards
 	 */
 	/**
 	 * Generation of the ecology this class writes. Bump when adding something that founding does
@@ -111,6 +112,9 @@ public final class RegionFounder {
 		if (record.founded) return;
 
 		record.productivity = MathX.clamp01(climate.productivity());
+		// Kept rather than used and dropped: RegionSimulation selects for crypsis against it every
+		// step, which is what stops neutral drift washing the founding colours out again.
+		record.biome = biomeName == null ? "" : biomeName;
 		record.temperature = MathX.clamp01(climate.temperature());
 		record.humidity = MathX.clamp01(climate.humidity());
 		record.vegetation = record.productivity * 0.9f;

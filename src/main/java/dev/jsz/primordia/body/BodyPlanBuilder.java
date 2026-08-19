@@ -111,6 +111,29 @@ public final class BodyPlanBuilder {
 	private static final float MAX_LEG_SPAN = 0.45f;
 
 	/**
+	 * Cells along the longest axis assumed when flooring ornament thickness.
+	 * <p>
+	 * Tracks {@code LodTier}'s near-tier resolution, deliberately as a copy rather than a
+	 * reference: the mesh package depends on this one and must not be depended on back. It is a
+	 * floor on visibility at the tier a creature is looked at closely from, so the two only need
+	 * to agree in order of magnitude — if the near tier is retuned, ornament comes out slightly
+	 * thicker or thinner than it needs to be, not perforated.
+	 */
+	private static final float ORNAMENT_REFERENCE_CELLS = 40f;
+
+	/**
+	 * Features built as sheets or blades, whose thin axis the sampling grid cannot see by default.
+	 * <p>
+	 * Deliberately not every surface detail. An eye, a claw or a tusk is a rounded solid that is
+	 * about as thick as it is long, so it already survives the grid and flooring it would only
+	 * distort it; these four are the ones that are thin <i>by design</i>.
+	 */
+	private static boolean isThinOrnament(Feature feature) {
+		return feature == Feature.FRILL || feature == Feature.FIN
+				|| feature == Feature.SPINE || feature == Feature.PLATE;
+	}
+
+	/**
 	 * Tallest a creature may stand, in blocks. Anything past it is scaled down whole.
 	 * <p>
 	 * A ceiling is necessary — an unbounded body plan eventually produces something that cannot
@@ -466,7 +489,12 @@ public final class BodyPlanBuilder {
 		// ---- legs -------------------------------------------------------------
 		// legPairs and rearmostU are settled earlier, alongside leg thickness: the three are
 		// mutually constrained and have to be reconciled before the blend radius is derived.
-		int legSegments = g.discrete(Gene.LEG_SEGMENTS);
+		// Quadrupeds are held to two segments. A third joint only reads as an ankle when there are
+		// enough legs around it to sell the arthropod silhouette; on four legs the extra joint has no
+		// such context, so the IK solver is free to fold it whichever way the pole vector happens to
+		// favour on that step, and the ankle visibly snaps in or out mid-stride. Two segments give the
+		// solver a single unambiguous bend and the gait stays clean.
+		int legSegments = legPairs == 2 ? 2 : g.discrete(Gene.LEG_SEGMENTS);
 		float splay = g.range(Gene.LEG_SPLAY, 0.05f, 0.70f);
 		float footSize = size * g.range(Gene.FOOT_SIZE, 0.04f, 0.17f);
 		float digitigrade = g.raw(Gene.DIGITIGRADE);
@@ -740,6 +768,35 @@ public final class BodyPlanBuilder {
 		min.y = Math.min(min.y, -pad);
 
 		float bodyLength = max.z - min.z;
+
+		// Thin ornament — a frill's membrane, a dorsal spine's blade — is floored against the
+		// sampling cell that will have to resolve it.
+		//
+		// PITFALLS §3: anything narrower than one cell falls between samples and is absent, not
+		// coarse. The mesher answers that for limbs by raising resolution until cells are finer
+		// than `minLimbRadius`, but ornament cannot join that figure — a frill membrane runs a
+		// fifth of a cell across, and sampling five times finer to see it costs resolution
+		// squared on every creature that has one. So it takes the other half of the rule the
+		// pitfall states, and is made big enough to be seen at the resolution already being paid
+		// for. Measured over the population, two thirds of frill and spine blobs were under one
+		// cell on their thin axis, which is what perforated them: the membrane surfaced in the
+		// patches where a sample happened to land inside it and simply had no geometry between.
+		//
+		// Only the thin axis moves, and never past the blob's own longest one — a spine that
+		// cannot be thickened without becoming a ball stays as thin as it is, and the sheet stays
+		// a sheet rather than fattening into a lump.
+		float ornamentFloor = Math.max(max.x - min.x, Math.max(max.y - min.y, max.z - min.z))
+				/ ORNAMENT_REFERENCE_CELLS;
+		for (int i = 0; i < blobArray.length; i++) {
+			SdfBlob blob = blobArray[i];
+			if (blob.subtract() || !isThinOrnament(blob.feature())) continue;
+			Vector3f r = blob.radii();
+			float floor = Math.min(ornamentFloor, blob.maxRadius());
+			if (r.x >= floor && r.y >= floor && r.z >= floor) continue;
+			blobArray[i] = new SdfBlob(blob.bone(), blob.center(),
+					new Vector3f(Math.max(r.x, floor), Math.max(r.y, floor), Math.max(r.z, floor)),
+					blob.feature(), blob.subtract());
+		}
 
 		// Thinnest slender feature present — limbs, feet and tails alike. This is what the mesher
 		// must be able to resolve, and a tapered tail tip is frequently the narrowest thing on the

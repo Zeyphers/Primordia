@@ -132,14 +132,16 @@ public class RestGoal extends Goal {
 	 * does not read as animals sleeping, it reads as the game having frozen them.
 	 *
 	 * @param timeOfDay    world time; only its position within the day matters
-	 * @param nocturnality {@link Gene#NOCTURNALITY}, above 0.5 meaning awake at night
+	 * @param nocturnality {@link Gene#NOCTURNALITY}, above its own threshold meaning awake at night
 	 * @param seed         the individual's structural seed, so siblings stagger
 	 */
 	public static boolean isRestingHour(long timeOfDay, float nocturnality, long seed) {
 		long time = Math.floorMod(timeOfDay, DAY);
 		int offset = (int) Math.floorMod(seed >> 12, SCHEDULE_JITTER * 2L) - SCHEDULE_JITTER;
 		boolean night = time >= DUSK + offset && time < DAWN + offset;
-		return (nocturnality > 0.5f) != night;
+		// The locus's declared cut, not a literal. It sits well above the midpoint so that most
+		// animals keep to the day, and the editor draws its tick from the same number.
+		return (nocturnality > Gene.NOCTURNALITY.threshold) != night;
 	}
 
 	/**

@@ -2,13 +2,16 @@ package dev.jsz.primordia;
 
 import dev.jsz.primordia.body.BodyPlan;
 import dev.jsz.primordia.body.BodyPlanBuilder;
+import dev.jsz.primordia.body.Feature;
 import dev.jsz.primordia.body.LimbChain;
+import dev.jsz.primordia.body.SdfBlob;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Genome;
 import dev.jsz.primordia.mesh.LodTier;
 import dev.jsz.primordia.mesh.MeshBaker;
 import dev.jsz.primordia.mesh.MeshData;
 import dev.jsz.primordia.util.MathX;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 import java.util.Random;
@@ -115,5 +118,46 @@ class ThinLimbTest {
 		assertTrue(worstQuads < 60_000,
 				"near-tier mesh reached " + worstQuads + " quads (" + worst + "), beyond what the LOD budget assumes");
 		System.out.println("[ThinLimbTest] worst near-tier mesh: " + worstQuads + " quads (" + worst + ")");
+	}
+
+	/**
+	 * The same rule applied to the ornament that is thin on purpose.
+	 * <p>
+	 * A frill and a dorsal spine are sheets, and a sheet under one cell across does not come out
+	 * coarse — it comes out perforated, surfacing only in the patches where a sample happened to
+	 * land inside it. Two thirds of them were under that line, which is what put holes in every
+	 * frill and every spine in the game. Limbs answer this by raising resolution; ornament cannot
+	 * afford to, so {@code BodyPlanBuilder} floors its thin axis instead, and this holds that floor.
+	 */
+	@Test
+	void thinOrnamentSurvivesTheSamplingGrid() {
+		Random random = new Random(99);
+		int checked = 0;
+
+		for (int trial = 0; trial < 120; trial++) {
+			Genome genome = Genome.random(random)
+					.with(Gene.FRILL, 1f)
+					.with(Gene.DORSAL_SPINES, 1f)
+					.with(Gene.SPINE_STYLE, 0.9f);
+			BodyPlan plan = BodyPlanBuilder.build(genome);
+			float span = Math.max(plan.boundsMax.x - plan.boundsMin.x,
+					Math.max(plan.boundsMax.y - plan.boundsMin.y, plan.boundsMax.z - plan.boundsMin.z));
+			float cell = span / LodTier.resolutionFor(LodTier.NEAR);
+
+			for (SdfBlob blob : plan.blobs) {
+				if (blob.subtract()) continue;
+				if (blob.feature() != Feature.FRILL && blob.feature() != Feature.SPINE
+						&& blob.feature() != Feature.PLATE && blob.feature() != Feature.FIN) continue;
+				Vector3f r = blob.radii();
+				float thin = Math.min(r.x, Math.min(r.y, r.z));
+				// A blob whose longest axis is itself under a cell is too small to rescue without
+				// turning it into a ball, and is deliberately left alone.
+				if (blob.maxRadius() < cell) continue;
+				checked++;
+				assertTrue(thin >= cell * 0.999f, blob.feature() + " blob is " + (thin / cell)
+						+ " of a cell on its thin axis — it will mesh with holes in it");
+			}
+		}
+		assertTrue(checked > 0, "no thin ornament was generated to check");
 	}
 }

@@ -2,6 +2,7 @@ package dev.jsz.primordia.ecology.region;
 
 import dev.jsz.primordia.ecology.EnergyBudget;
 import dev.jsz.primordia.genome.Archetype;
+import dev.jsz.primordia.genome.Camouflage;
 import dev.jsz.primordia.genome.Gene;
 import dev.jsz.primordia.genome.Mutation;
 import dev.jsz.primordia.util.MathX;
@@ -189,6 +190,12 @@ public final class RegionSimulation {
 		}
 
 		// --- births, deaths, selection ---------------------------------------
+		// The colour of the ground each half of the fauna is standing on. A cave animal is not
+		// hiding against the biome overhead, so it gets the cave's own answer — which is no opinion
+		// about hue or brightness at all, and a strong one about staying pale.
+		Camouflage surfaceCamo = record.camouflage();
+		Camouflage caveCamo = Camouflage.forBiome("cave");
+
 		float grazed = 0f;
 		for (int i = 0; i < n; i++) {
 			LineageRecord l = lineages.get(i);
@@ -245,7 +252,8 @@ public final class RegionSimulation {
 			l.held = 0f;
 
 			float predationPressure = pop[i] <= 0f ? 0f : MathX.clamp01(losses[i] / pop[i] * 4f);
-			select(l, record, satisfaction, plantRatio, meatRatio[i], predationPressure);
+			select(l, record, subterranean ? caveCamo : surfaceCamo,
+					satisfaction, plantRatio, meatRatio[i], predationPressure);
 			drift(l, random);
 			l.ageMass();
 			if (births > 0.5f) l.generation++;
@@ -282,8 +290,9 @@ public final class RegionSimulation {
 	 * cosmetic ones move fast. That is what keeps a clade recognisable while it adapts, and it is
 	 * the same rule {@link Mutation} applies to individuals.
 	 */
-	private static void select(LineageRecord l, RegionRecord record, float satisfaction,
-	                           float plantRatio, float meatRatio, float predationPressure) {
+	private static void select(LineageRecord l, RegionRecord record, Camouflage camouflage,
+	                           float satisfaction, float plantRatio, float meatRatio,
+	                           float predationPressure) {
 		float hunger = 1f - satisfaction;
 
 		// Every trait here is pushed from both sides. A one-way push is not selection, it is a
@@ -318,11 +327,70 @@ public final class RegionSimulation {
 		// Climate matching: the region pulls its inhabitants toward fitting it.
 		nudge(l, Gene.TEMP_PREFERENCE, record.temperature - l.meanOf(Gene.TEMP_PREFERENCE));
 		nudge(l, Gene.HUMIDITY_PREFERENCE, record.humidity - l.meanOf(Gene.HUMIDITY_PREFERENCE));
+
+		// Crypsis: the region pulls its inhabitants toward the colour of its own ground.
+		//
+		// The same restoring shape as climate matching above, and added for the same reason it was.
+		// Colour was set once at founding and never afterwards, which left HUE — the most plastic
+		// locus in the enum — random-walking under `drift` for the whole of a region's pre-history
+		// with nothing opposing it. A walk that long on an unopposed locus ends at uniform, so a
+		// mesa founded terracotta was handing the player green and slate-grey animals standing on
+		// orange clay by the time they arrived. The founding draw was never the problem; forgetting
+		// it was.
+		//
+		// Weighted by how much of a herbivore the lineage is. A grazer's whole defence is not being
+		// seen, and it is under exactly the predation this loop is already measuring; a predator is
+		// the thing doing the looking, and can afford to be conspicuous. So the pull runs at full
+		// strength on a pure plant-eater and a third of it on a pure carnivore, and it is stronger
+		// still where something is actually hunting them.
+		float herbivory = 1f - l.meanOf(Gene.DIET);
+		float crypsis = (0.34f + 0.66f * herbivory) * (0.7f + 0.6f * predationPressure);
+		for (Gene gene : COLOUR_LOCI) {
+			float target = camouflage.targetFor(gene);
+			// -1 is the biome declining to have an opinion: a cave has no daylight for hue to
+			// matter in, and pulling toward the middle of the range would only invent a colour.
+			if (target < 0f) continue;
+			float delta = colourDelta(gene, target, l.meanOf(gene)) * crypsis;
+			if (gene == Gene.HUE) nudgeHue(l, delta); else nudge(l, gene, delta);
+		}
 	}
 
 	private static void nudge(LineageRecord l, Gene gene, float direction) {
 		int i = gene.ordinal();
 		l.mean[i] = MathX.clamp01(l.mean[i] + direction * SELECTION_RATE * gene.plasticity);
+	}
+
+	/** The loci a biome has a colour opinion about. */
+	private static final Gene[] COLOUR_LOCI = {Gene.HUE, Gene.SATURATION, Gene.BRIGHTNESS};
+
+	/**
+	 * How far a locus is from its target, and which way is shorter.
+	 * <p>
+	 * {@link Gene#HUE} is a circle, and subtracting on a circle is how a lineage sitting just past
+	 * the wrap gets marched the long way round the entire wheel to reach a target a hundredth of a
+	 * turn away — every colour in the spectrum, in order, on its way to hiding in a desert. The
+	 * other two loci are ordinary lines and take the plain difference.
+	 */
+	private static float colourDelta(Gene gene, float target, float current) {
+		float delta = target - current;
+		if (gene != Gene.HUE) return delta;
+		if (delta > 0.5f) delta -= 1f;
+		if (delta < -0.5f) delta += 1f;
+		return delta;
+	}
+
+	/**
+	 * {@link #nudge} for the one locus that is a circle rather than a line.
+	 * <p>
+	 * The ordinary nudge clamps to [0,1], which on a circle is a wall across the wheel at deep red.
+	 * A lineage sitting at 0.98 with a target of 0.075 is a twentieth of a turn away going forward,
+	 * and clamping pins it against 1.0 and holds it there permanently — the shortest route to the
+	 * target being precisely the one direction the clamp forbids.
+	 */
+	private static void nudgeHue(LineageRecord l, float delta) {
+		int i = Gene.HUE.ordinal();
+		float moved = l.mean[i] + delta * SELECTION_RATE * Gene.HUE.plasticity;
+		l.mean[i] = (moved % 1f + 1f) % 1f;
 	}
 
 	/**

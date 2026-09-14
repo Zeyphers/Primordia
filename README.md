@@ -1,5 +1,9 @@
 ![Primordia](https://cdn.modrinth.com/data/cached_images/5b3d6c167245848de481471729e64fb9cb9a7e2f.png)
 
+<p align="center">
+  <img src="https://cdn.modrinth.com/data/cached_images/73bbccd5af9c5ad6aa465922fd8cb4d38321b5ed.gif" alt="Creatures generated live in the creature editor" width="480">
+</p>
+
 ---
 
 **Every creature in this mod is grown from a genome at runtime. There are no models, no textures,

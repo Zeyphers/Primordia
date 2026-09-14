@@ -66,10 +66,19 @@ public final class CreatureVoices {
 		// obviously replaying a recording.
 		final float wobble = 0.97f + creature.getRandom().nextFloat() * 0.06f;
 
+		// Profile volume carries the useful size difference, but handing values above one straight to
+		// OpenAL made the largest animals both louder and audible from farther away. Square-root
+		// compression keeps that size cue without letting it dominate the mix; the call scale then
+		// leaves common ambient and sleep noises below the urgent ones.
+		final float setting = Mth.clamp(config.creatureVoiceVolume, 0, 100) / 100f;
+		final float volume = Mth.clamp(
+				(float) Math.sqrt(Math.max(0f, profile.volume())) * 0.62f * call.volumeScale * setting,
+				0f, 0.82f);
+
 		Minecraft.getInstance().getSoundManager().play(new ProceduralVoiceInstance(
 				sound, call,
 				creature.getX(), creature.getEyeY(), creature.getZ(),
-				profile.volume() * (config.creatureVoiceVolume / 100f),
+				volume,
 				Mth.clamp(profile.playbackPitch() * youth * wobble, 0.5f, 2.0f)));
 	}
 }

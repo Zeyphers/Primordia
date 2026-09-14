@@ -13,6 +13,10 @@ public final class LoopProbe {
 	private static final int FRAMES = 48;
 
 	public static void main(String[] args) {
+		if (args.length > 0 && args[0].equals("sweep")) {
+			sweep();
+			return;
+		}
 		int[] warmups = {2, 8, 16, 32, 64, 128};
 		System.out.printf("%-13s %8s |", "archetype", "cycle");
 		for (int w : warmups) System.out.printf(" %8d", w);
@@ -33,6 +37,35 @@ public final class LoopProbe {
 			}
 			System.out.println();
 		}
+	}
+
+	/**
+	 * {@code gradle loopProbe --args=sweep}. The same check {@code EditorClipLoopTest} makes, over
+	 * ten specimens per archetype rather than one, with the test's 40-cycle warmup and 0.01 bar.
+	 * One seed passing says little about a gait change; the editor loops every creature's walk.
+	 */
+	private static void sweep() {
+		int bad = 0, total = 0;
+		float worstAll = 0f;
+		for (Archetype a : Archetype.VALUES) {
+			for (int k = 0; k < 10; k++) {
+				BodyPlan plan = BodyPlanBuilder.build(
+						a.create(new Random(4242L + a.ordinal() * 7919L + k * 104729L)));
+				float cycle = new CreatureAnimator(plan).gaitCycleSeconds(SPEED, 1f);
+				float[] first = poseAt(plan, cycle, 40 * FRAMES);
+				float[] later = poseAt(plan, cycle, 40 * FRAMES + FRAMES);
+				float worst = 0f;
+				for (int i = 0; i < first.length; i++) worst = Math.max(worst, Math.abs(first[i] - later[i]));
+				total++;
+				worstAll = Math.max(worstAll, worst);
+				if (worst > 0.01f) {
+					bad++;
+					System.out.printf("%-13s #%d legs=%d  differs %.4f (cycle %.3fs)%n",
+							a, k, plan.legs.length, worst, cycle);
+				}
+			}
+		}
+		System.out.printf("%d of %d specimens fail to loop; worst %.4f%n", bad, total, worstAll);
 	}
 
 	private static float[] poseAt(BodyPlan plan, float cycle, int steps) {

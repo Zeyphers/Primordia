@@ -25,16 +25,17 @@ public class Primordia implements ModInitializer {
 	/**
 	 * Whether the developer tools are available — everything under {@code /primordia debug}.
 	 * <p>
-	 * <b>Set this to false before a public release.</b> It is one constant on purpose: anything that
-	 * exists to test the mod rather than to play it goes behind this subcommand, so switching the
-	 * whole lot off is a one-line change and never a hunt through the command tree. When it is off
-	 * the node is not registered at all, so it does not appear in tab completion either.
+	 * <b>Off unless asked for.</b> It is one constant on purpose: anything that exists to test the
+	 * mod rather than to play it goes behind this subcommand, so switching the whole lot off is a
+	 * one-line change and never a hunt through the command tree. When it is off the node is not
+	 * registered at all, so it does not appear in tab completion either.
 	 * <p>
-	 * Overridable at launch with {@code -Dprimordia.debug=false}, which is there so both states can
-	 * be checked without a rebuild.
+	 * Launch with {@code -Dprimordia.debug=true} to get them; the dev run configurations in
+	 * {@code build.gradle} do. It used to default to on with a note to flip it before release, and
+	 * every release shipped with it on — a default that has to be remembered is not a default.
 	 */
 	public static final boolean DEBUG_TOOLS =
-			Boolean.parseBoolean(System.getProperty("primordia.debug", "true"));
+			Boolean.parseBoolean(System.getProperty("primordia.debug", "false"));
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
 	public static Identifier id(String path) {

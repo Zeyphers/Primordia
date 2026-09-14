@@ -642,7 +642,50 @@ function geneForBone(name) {
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
-const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
+
+// ---------------------------------------------------------------- capture mode
+// `?capture=1` turns the editor into a headless turntable for scripts/capture.mjs, which drives it
+// with Playwright to make the Modrinth gallery clip. Nothing here is a second renderer: capture mode
+// only strips the chrome, pins the settings, and hands the frame clock to the caller instead of the
+// browser's. Every pixel still comes out of the same bake, the same skinning palette and the same
+// render() below, which is the point — the gallery has to show what the editor shows.
+const CAP = (() => {
+  const q = new URLSearchParams(location.search);
+  if (q.get('capture') !== '1') return null;
+  return {
+    bg: q.get('bg') || '#0e1013',           // 'transparent' or any #rrggbb
+    margin: parseFloat(q.get('margin') || '1.15'),
+    pitch: parseFloat(q.get('pitch') || '0.22'),
+    // Metres per second for the gait. Anything at or below CreatureAnimator's IDLE_SPEED (0.05)
+    // makes it stand and breathe instead.
+    walk: parseFloat(q.get('walk') || '1.4'),
+    archetype: q.get('archetype') || 'CHAOS',
+    // The Minecraft GUI frame around the viewport; 'none' captures a bare canvas instead.
+    border: q.get('border') !== 'none',
+    // Modrinth's dark-mode page background. The outermost ring is painted in it so the clip's edge
+    // dissolves into the store page instead of ending on a visible rectangle.
+    // How much closer the camera sits than the fit distance. 1.15 fills 15% more of the frame.
+    zoom: Math.max(0.1, parseFloat(q.get('zoom') || '1')),
+    // CSS pixels per Minecraft "pixel" of the frame. The driver sizes this from the capture and
+    // output widths so a GUI pixel lands on a whole number of pixels in the finished clip — at 2 CSS
+    // pixels and a 3x downscale the bevels come out thinner than a pixel and smear into grey.
+    borderPx: Math.max(1, parseInt(q.get('bordersize') || '6', 10)),
+    borderPx: parseFloat(q.get('bordersize') || '4')
+  };
+})();
+const EXPOSURE = CAP ? parseFloat(new URLSearchParams(location.search).get('exposure') || '0.6') : 1.0;
+const CAP_CLEAR = !CAP ? [0.055, 0.063, 0.075, 1]
+  : CAP.bg === 'transparent' ? [0, 0, 0, 0]
+  : [parseInt(CAP.bg.slice(1, 3), 16) / 255, parseInt(CAP.bg.slice(3, 5), 16) / 255,
+     parseInt(CAP.bg.slice(5, 7), 16) / 255, 1];
+
+const gl = canvas.getContext('webgl2', {
+  antialias: true,
+  alpha: !!CAP && CAP.bg === 'transparent',
+  // The capture driver screenshots between explicit draw() calls rather than inside a rAF, so the
+  // drawing buffer has to survive the composite that took the previous shot.
+  preserveDrawingBuffer: !!CAP
+});
 if (!gl) { $('err').style.display = 'block'; $('err').textContent = 'WebGL2 unavailable.'; }
 
 // ---------------------------------------------------------------- shaders
@@ -699,6 +742,10 @@ in vec3 vNrm; in vec3 vCol; in float vEmi; in vec4 vWgt; in vec4 vIdx;
 in vec3 vFaceCol; in vec3 vWorld;
 uniform int uColorBy; uniform int uEmissiveOn; uniform int uSelected;
 uniform vec3 uFlatColor; uniform int uSharp; uniform int uFlatFaceColour;
+// 1.0 for the editor itself. Capture mode pulls it down: the gallery clip is viewed against a
+// bright web page rather than a dark tool window, and the key light plus the sRGB encode below run
+// the brighter hides up into white there.
+uniform float uExposure;
 out vec4 frag;
 vec3 groupTint(float g) {
   float h = fract(g * 0.6180339887);
@@ -733,7 +780,7 @@ void main() {
   float amb = 0.34 + 0.16 * (nn.y * 0.5 + 0.5);
   vec3 lit = base * (amb + key * 0.72 + fill * 0.18);
   if (uEmissiveOn == 1) lit = mix(lit, base * 1.35, vEmi);
-  frag = vec4(pow(lit, vec3(0.4545)), 1.0);
+  frag = vec4(pow(lit * uExposure, vec3(0.4545)), 1.0);
 }`);
 
 // Flat coloured lines/points, used for bones, joints, gizmo, grid and normals.
@@ -1090,14 +1137,14 @@ function render(now) {
   const w = canvas.clientWidth * devicePixelRatio, h = canvas.clientHeight * devicePixelRatio;
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.clearColor(0.055, 0.063, 0.075, 1);
+  gl.clearColor(CAP_CLEAR[0], CAP_CLEAR[1], CAP_CLEAR[2], CAP_CLEAR[3]);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.DEPTH_TEST);
   gl.disable(gl.CULL_FACE);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-  if (!S.data) { requestAnimationFrame(render); return; }
+  if (!S.data) { if (!CAP) requestAnimationFrame(render); return; }
   updatePose();
   const { vp, eye } = viewProj();
   const ov = buildOverlay(eye);
@@ -1117,6 +1164,7 @@ function render(now) {
     gl.uniform3f(gl.getUniformLocation(meshProg, 'uFlatColor'), 0.62, 0.64, 0.68);
     gl.uniform1i(gl.getUniformLocation(meshProg, 'uSharp'), $('sharpShade').checked ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(meshProg, 'uFlatFaceColour'), $('flatFaceCol').checked ? 1 : 0);
+    gl.uniform1f(gl.getUniformLocation(meshProg, 'uExposure'), EXPOSURE);
     gl.bindVertexArray(G.vao);
     gl.drawArrays(gl.TRIANGLES, 0, G.count);
   }
@@ -1128,6 +1176,7 @@ function render(now) {
     gl.uniform3f(gl.getUniformLocation(meshProg, 'uFlatColor'), 1.0, 0.16, 0.12);
     gl.uniform1i(gl.getUniformLocation(meshProg, 'uEmissiveOn'), 0);
     gl.uniform1i(gl.getUniformLocation(meshProg, 'uSharp'), 0);
+    gl.uniform1f(gl.getUniformLocation(meshProg, 'uExposure'), EXPOSURE);
     gl.disable(gl.DEPTH_TEST);
     gl.bindVertexArray(G.crossVao);
     gl.drawArrays(gl.TRIANGLES, 0, G.crossCount);
@@ -1151,6 +1200,7 @@ function render(now) {
     gl.uniform1i(gl.getUniformLocation(meshProg, 'uSharp'), 0);
     gl.uniform1i(gl.getUniformLocation(meshProg, 'uEmissiveOn'), 0);
     gl.uniform3f(gl.getUniformLocation(meshProg, 'uFlatColor'), 0.15, 0.95, 0.75);
+    gl.uniform1f(gl.getUniformLocation(meshProg, 'uExposure'), EXPOSURE);
     gl.bindVertexArray(G.wireVao);
     gl.drawArrays(gl.LINES, 0, G.wireCount);
     gl.useProgram(lineProg);
@@ -1192,9 +1242,12 @@ function render(now) {
 
   // Held on the current frame when the OS asks for reduced motion; the cycle can still be stepped
   // by pressing play again, it just does not run on its own.
-  if (S.playing && S.anim && !REDUCED_MOTION.matches) {
+  // In capture mode the clock belongs to the driver: it sets animT per frame index so the pose is a
+  // pure function of the frame number, and it calls render() itself rather than letting rAF run.
+  if (S.playing && S.anim && !REDUCED_MOTION.matches && !CAP) {
     S.animT = (S.animT + 1 / 60 / S.anim.seconds) % 1;
   }
+  if (CAP) { gl.finish(); return; }
   hud();
   updateFps(now);
   requestAnimationFrame(render);
@@ -1559,10 +1612,17 @@ $('voiceVariant').addEventListener('input', e => {
 });
 
 // ---------------------------------------------------------------- animation
-async function loadAnim() {
+/**
+ * @param speedOverride metres per second to animate at, or undefined for the speed slider.
+ *   Zero is the interesting one: CreatureAnimator treats anything at or below IDLE_SPEED as
+ *   standing, so a clip requested at 0 is the game's idle — breathing, jaw slack, tail sway — with
+ *   no gait at all. That is what capture mode plays, and it is why the pose reads as a portrait.
+ */
+async function loadAnim(speedOverride, frames) {
   const p = new URLSearchParams({
     seed: $('seed').value || '1', archetype: $('archetype').value,
-    speed: $('animSpeed').value, frames: '48', seconds: '2'
+    speed: String(speedOverride !== undefined ? speedOverride : $('animSpeed').value),
+    frames: String(frames || 48), seconds: '2'
   });
   if (S.genes) p.set('genes', S.genes.map(v => v.toFixed(5)).join(','));
   const r = await (await fetch('/api/anim?' + p.toString())).json();
@@ -2392,6 +2452,141 @@ function loadSettings() {
   }
 }
 
+// ---------------------------------------------------------------- capture hook
+// The contract scripts/capture.mjs drives. Everything is awaited or synchronous — there is no
+// sleeping on the wall clock anywhere in the pipeline, because a frame that catches a half-baked
+// mesh is invisible until the GIF is on the store page.
+/**
+ * Frames the creature for a full revolution rather than for the pose it happens to be in.
+ * <p>
+ * frame() above fits the bounding box as seen from wherever the camera already is, which is right
+ * for a viewport you can drag but wrong for a turntable: a long animal fits head-on and then swings
+ * out of shot a quarter turn later. What has to fit is the cylinder the creature sweeps — radius R
+ * about the spin axis, height H — so this solves the distance that contains it both ways and takes
+ * the larger. The result is that every creature fills the frame to the same margin no matter how
+ * differently shaped it is, which is what stops the clip from pulsing as the genome re-rolls.
+ */
+function frameTurntable() {
+  const m = S.data.meta;
+  const lo = m.boundsMin.map(Number), hi = m.boundsMax.map(Number);
+  const c = [(lo[0]+hi[0])/2, (lo[1]+hi[1])/2, (lo[2]+hi[2])/2];
+  S.cam.target = c;
+  const R = Math.max(0.05, Math.hypot((hi[0]-lo[0]) / 2, (hi[2]-lo[2]) / 2));
+  const H = Math.max(0.05, hi[1] - lo[1]);
+  const aspect = (canvas.width || canvas.clientWidth) / Math.max(1, canvas.height || canvas.clientHeight);
+  const tanY = Math.tan(Math.PI / 8);          // half of the 45° vertical FOV render() uses
+  const tanX = tanY * aspect;
+  // R is added because the near side of the cylinder is that much closer than its axis.
+  S.cam.dist = Math.max(R + (H / 2) / tanY, R + R / tanX) * CAP.margin / CAP.zoom;
+}
+
+function installCaptureHook() {
+  // Chrome off. The panel and the resizer are laid out by #app's grid, so they are removed from
+  // flow rather than hidden, which is what lets the viewport take the whole window.
+  for (const id of ['side', 'resizer', 'guideOverlay', 'guideHighlight', 'guideTooltip']) {
+    const el = $(id); if (el) el.style.display = 'none';
+  }
+  for (const el of document.querySelectorAll('.overlay, .skip')) el.style.display = 'none';
+  document.documentElement.style.background = document.body.style.background =
+    CAP.bg === 'transparent' ? 'transparent' : CAP.bg;
+
+  // A Minecraft GUI frame, built the way the game builds every panel: a black outline, a raised
+  // two-tone bevel around a flat grey face, then the viewport sunk into it with the bevel reversed.
+  // Same tokens as the rest of this page — the border is the editor's own chrome, not a picture of
+  // one — and no radius or gradient anywhere, because either would stop it reading as Minecraft.
+  if (CAP.border) {
+    // One Minecraft "pixel" of frame. Sized for what survives the downscale to gallery width, not
+    // for what looks right in the browser: at 2x device scale and a 480px GIF, a 4px unit lands at
+    // roughly 2 pixels a ring, which is the smallest that still reads as a bevel rather than a line.
+    const P = CAP.borderPx;
+    // No outer ring: the GUI frame runs right off the edge of the clip, the way a Minecraft screen
+    // meets the edge of the window rather than floating on a mat.
+    $('app').style.cssText += `;background:var(--edge-dark);padding:0;`;
+    $('view').style.cssText += `
+      ;background:var(--panel)
+      ;border:${P}px solid var(--edge-dark)
+      ;padding:${P * 3}px
+      ;box-shadow: inset ${P}px ${P}px 0 0 var(--edge-lit),
+                   inset -${P}px -${P}px 0 0 var(--edge-dark);`;
+    canvas.style.cssText += `
+      ;border-width:${P}px;border-style:solid
+      ;border-color:var(--edge-dark) var(--edge-lit) var(--edge-lit) var(--edge-dark);`;
+  }
+  window.__captureTarget = CAP.border ? '#app' : '#gl';
+
+  // Settings pinned rather than restored: whatever is in localStorage is the last human's session.
+  $('tier').value = '0';                      // NEAR — the highest tier, never anything coarser
+  $('archetype').value = CAP.archetype;
+  $('voxel').value = '0.0625';
+  $('smoothing').value = '0.75';
+  $('colorBy').value = 'vertex';
+  for (const id of ['showStats', 'showFps', 'showBones', 'showJoints', 'showHandles',
+                    'showWire', 'showCross', 'showNormals', 'showGrid']) $(id).checked = false;
+  for (const id of ['showMesh', 'sharpShade', 'flatFaceCol']) $(id).checked = true;
+  // Emissive is a 1.35x boost on the glowing loci. In the editor it is information; in a gallery
+  // clip it is the thing that pushes a pale hide to white.
+  $('emissive').checked = false;
+  S.selected = -1;
+  S.cam.pitch = CAP.pitch;
+
+  window.__capture = {
+    /** Re-roll to a fresh animal and wait until it is fully baked, skinned and framed. */
+    async setSeed(seed) {
+      $('seed').value = String(seed);
+      S.genes = null;                          // roll the whole genome from the seed, not one locus
+      S.anim = null;
+      await bake();
+      if (!S.data) throw new Error('bake produced nothing for seed ' + seed);
+      frameTurntable();
+      // One full gait cycle at CAP.walk, 240 frames of it, so sampling it at any capture rate lands
+      // close to a recorded frame rather than between two of them.
+      await loadAnim(CAP.walk, 240);
+      setPlaying(true);
+      return {
+        seed: Number(seed),
+        verts: S.data.meta.vertexCount,
+        bones: S.data.meta.boneCount,
+        bodyLength: +S.data.meta.bodyLength,
+        tier: Number($('tier').value)
+      };
+    },
+    /**
+     * Measures a candidate without adopting it, so the driver can skip the animals it does not
+     * want. Baked at the coarsest tier because only the body plan's dimensions are being read, and
+     * those do not depend on the mesh resolution.
+     */
+    async probe(seed) {
+      const p = new URLSearchParams({ seed: String(seed), archetype: $('archetype').value, tier: '3' });
+      const d = await (await fetch('/api/bake?' + p.toString())).json();
+      if (d.error) throw new Error(d.error);
+      const lo = d.meta.boundsMin.map(Number), hi = d.meta.boundsMax.map(Number);
+      return {
+        seed: Number(seed),
+        bodyLength: +d.meta.bodyLength,
+        hipHeight: +d.meta.hipHeight,
+        height: hi[1] - lo[1],
+        legs: d.meta.legs
+      };
+    },
+    /** Turntable angle. Frame index is the only input the driver feeds this. */
+    setAngle(rad) { S.cam.yaw = rad; },
+    /** Idle-clip phase in seconds; wraps inside the clip so any duration is playable. */
+    setTime(seconds) {
+      if (S.anim) S.animT = ((seconds / S.anim.seconds) % 1 + 1) % 1;
+    },
+    /** Resolves once no bake is in flight and the uploaded mesh matches the current payload. */
+    async waitForBake() {
+      while (inFlight || queued) await new Promise(r => setTimeout(r, 8));
+      if (!S.data || !G.count) throw new Error('no mesh uploaded');
+      // Two rAFs: the first lets any pending layout land, the second guarantees the canvas has been
+      // sized to its final client box before we draw into it.
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    },
+    /** One deterministic frame. Returns after gl.finish(), so the buffer is complete. */
+    draw() { render(0); }
+  };
+}
+
 (async function init() {
   S.meta = await (await fetch('/api/meta')).json();
   const sel = $('archetype');
@@ -2399,6 +2594,13 @@ function loadSettings() {
     const o = document.createElement('option');
     o.value = a; o.textContent = a;
     sel.appendChild(o);
+  }
+
+  if (CAP) {
+    buildGeneUI();
+    installCaptureHook();
+    window.__captureReady = true;
+    return;                 // no bake, no rAF loop, no guide: the driver asks for everything
   }
 
   const restored = loadSettings();

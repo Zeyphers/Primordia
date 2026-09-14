@@ -22,6 +22,9 @@
 		],
 		"lambdynlights:initializer": [
 			"dev.jsz.primordia.client.DynamicLightsCompat"
+		],
+		"controlify": [
+			"dev.jsz.primordia.compat.controlify.PrimordiaControlify"
 		]
 	},
 	"accessWidener": "primordia.accesswidener",
@@ -36,6 +39,7 @@
 	},
 	"suggests": {
 		"modmenu": "*",
-		"lambdynlights": ">=4.0.0"
+		"lambdynlights": ">=4.0.0",
+		"controlify": ">=3.2.1"
 	}
 }

@@ -14,6 +14,7 @@ import dev.jsz.primordia.entity.TamingPreference;
 import dev.jsz.primordia.client.render.CreaturePreview;
 import dev.jsz.primordia.splice.SpliceBranch;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
@@ -167,6 +168,17 @@ public class FieldGuideScreen extends Screen {
 	private String nameBuffer = "";
 	/** Where the naming line was drawn last frame, so a click on it can be caught. */
 	private int nameLineY = -1;
+
+	/**
+	 * Set while something other than a keyboard and mouse is driving the book.
+	 * <p>
+	 * Only affects what the footer says. The hint there names the arrow keys and the wheel, which
+	 * is exactly wrong advice for a player holding a controller, and the alternative — printing
+	 * both — is a book that always tells half its readers about a device they are not using.
+	 * Whoever is driving is responsible for offering its own hint; see the Controlify compat layer,
+	 * which draws one in the controller's own glyphs.
+	 */
+	private boolean controllerDriven;
 
 	/** Drag tracking, shared by the tree's pan and the plate's turntable. */
 	private boolean dragging;
@@ -774,7 +786,19 @@ public class FieldGuideScreen extends Screen {
 	private final List<Anchor> selfAnchors = new ArrayList<>();
 	private SpliceBranch selfHover;
 
-	private static final int FIGURE_X = 160;
+	/**
+	 * Where each branch card was last drawn, in screen coordinates.
+	 * <p>
+	 * Recorded as the plate lays itself out rather than recomputed on demand, for the same reason
+	 * {@link #titleY} is: the column the card lands in and the height it stacks to are decided in
+	 * the drawing loop, and a second copy of that arithmetic elsewhere stays right exactly until the
+	 * layout changes. Read by {@link #snapTargets()}, so a controller can step from one branch to
+	 * the next instead of having to aim at a 96-pixel box.
+	 */
+	private final List<ScreenRectangle> selfCards = new ArrayList<>();
+
+	private static final int FIGURE_X = PANEL_W / 2;
+	private static final int FIGURE_TOP = TAB_H + 32;
 
 	/**
 	 * The splice tree as an anatomy plate.
@@ -794,14 +818,14 @@ public class FieldGuideScreen extends Screen {
 		pages.add(new ArrayList<>());
 
 		selfAnchors.clear();
-		int top = TAB_H + 46;
+		int top = FIGURE_TOP;
 		// Left column reads down the body, right column likewise, so the eye tracks head to foot.
-		selfAnchors.add(new Anchor(SpliceBranch.DISPOSITION, FIGURE_X - 11, top + 8, true));
-		selfAnchors.add(new Anchor(SpliceBranch.LIGHT, FIGURE_X - 12, top + 34, true));
-		selfAnchors.add(new Anchor(SpliceBranch.PHYSIOLOGY, FIGURE_X - 9, top + 74, true));
-		selfAnchors.add(new Anchor(SpliceBranch.CLIMATE, FIGURE_X + 12, top + 32, false));
-		selfAnchors.add(new Anchor(SpliceBranch.HABIT, FIGURE_X + 22, top + 46, false));
-		selfAnchors.add(new Anchor(SpliceBranch.COLOUR, FIGURE_X + 12, top + 66, false));
+		selfAnchors.add(new Anchor(SpliceBranch.DISPOSITION, FIGURE_X - 17, top + 16, true));
+		selfAnchors.add(new Anchor(SpliceBranch.LIGHT, FIGURE_X - 20, top + 62, true));
+		selfAnchors.add(new Anchor(SpliceBranch.PHYSIOLOGY, FIGURE_X - 15, top + 120, true));
+		selfAnchors.add(new Anchor(SpliceBranch.CLIMATE, FIGURE_X + 18, top + 42, false));
+		selfAnchors.add(new Anchor(SpliceBranch.HABIT, FIGURE_X + 25, top + 82, false));
+		selfAnchors.add(new Anchor(SpliceBranch.COLOUR, FIGURE_X + 18, top + 126, false));
 	}
 
 	/** Draws the figure, the callouts and the leader lines between them. */
@@ -814,14 +838,16 @@ public class FieldGuideScreen extends Screen {
 		Component header = Component.literal("Gene slots " + splices.used() + " / " + slots);
 		context.text(font, header, PANEL_W - MARGIN - font.width(header), bodyTop + 8, INK_FAINT, false);
 
-		int leftY = bodyTop + 24;
-		int rightY = bodyTop + 24;
+		int leftY = bodyTop + 26;
+		int rightY = bodyTop + 26;
+		selfCards.clear();
 		for (Anchor anchor : selfAnchors) {
-			int boxW = 96;
-			int boxH = 30;
+			int boxW = 98;
+			int boxH = 40;
 			int boxX = anchor.left() ? MARGIN : PANEL_W - MARGIN - boxW;
 			int boxY = anchor.left() ? leftY : rightY;
-			if (anchor.left()) leftY += boxH + 6; else rightY += boxH + 6;
+			if (anchor.left()) leftY += boxH + 7; else rightY += boxH + 7;
+			selfCards.add(new ScreenRectangle(left + boxX, top + boxY, boxW, boxH));
 			drawCallout(context, data, splices, anchor, boxX, boxY, boxW, boxH, mx, my);
 		}
 	}
@@ -831,13 +857,13 @@ public class FieldGuideScreen extends Screen {
 	 * <p>
 	 * The figure used to be a sketch of rectangles, on the grounds that nothing here handed a GUI an
 	 * entity to render. That was wrong — {@code InventoryScreen} has done exactly that for years —
-	 * and a plate about what <i>you</i> are becoming should show you. The callout anchors are
-	 * unchanged, because the model occupies the same block of the page the sketch did.
+	 * and a plate about what <i>you</i> are becoming should show you. The taller recess lets the
+	 * reader occupy the page instead of floating as a thumbnail between the callouts.
 	 */
-	private static final int FIGURE_W = 52;
-	private static final int FIGURE_H = 86;
+	private static final int FIGURE_W = 82;
+	private static final int FIGURE_H = 164;
 	/** Roughly half the recess height, which is what the helper wants to fill it. */
-	private static final int FIGURE_SCALE = 38;
+	private static final int FIGURE_SCALE = 72;
 
 	private void box(GuiGraphicsExtractor context, int x, int y, int w, int h, int fill, int edge) {
 		context.fill(x, y, x + w, y + h, edge);
@@ -897,7 +923,7 @@ public class FieldGuideScreen extends Screen {
 					+ " of " + first.required + " studied";
 		}
 		for (String line : wrapTo(note, w - 8)) {
-			context.text(font, Component.literal(line), x + 4, y + 16,
+				context.text(font, Component.literal(line), x + 4, y + 21,
 					worn != null ? 0xFF3F7D4F : open ? INK : INK_FAINT, false);
 			break;
 		}
@@ -921,7 +947,7 @@ public class FieldGuideScreen extends Screen {
 	private void drawSelfFigure(GuiGraphicsExtractor context, int mouseX, int mouseY) {
 		if (minecraft == null || minecraft.player == null) return;
 		int cx = left + FIGURE_X;
-		int cy = top + TAB_H + 46;
+		int cy = top + FIGURE_TOP;
 		net.minecraft.client.gui.screens.inventory.InventoryScreen.extractEntityInInventoryFollowsMouse(
 				context,
 				cx - FIGURE_W / 2, cy - 4, cx + FIGURE_W / 2, cy + FIGURE_H - 4,
@@ -1291,6 +1317,193 @@ public class FieldGuideScreen extends Screen {
 		}
 	}
 
+	// ------------------------------------------------------ control surface
+
+	// Everything below is the book's input vocabulary stated once, so something other than a mouse
+	// can use it. A controller has no cursor to aim at a 28-pixel tab and no wheel to lean on, and
+	// the alternative to naming these gestures here was for the compatibility layer to reach in and
+	// duplicate the guards each one needs — which is how a second, subtly different book gets
+	// written by accident. Nothing here knows what is driving it.
+	//
+	// See dev.jsz.primordia.compat.controlify.FieldGuideScreenProcessor, its only caller today.
+
+	/** How many tabs the book has. */
+	public int sectionCount() {
+		return GuideChapters.SECTIONS.size();
+	}
+
+	/** The tab currently open. */
+	public int currentSection() {
+		return section;
+	}
+
+	/**
+	 * Opens a tab by index, as clicking it would.
+	 * <p>
+	 * Silent about an index it will not honour, rather than clamping to an end. A caller stepping
+	 * off the last tab means "go on to the next one", and there is no next one; landing back on the
+	 * tab already open would read as the button having failed rather than as the book having ended.
+	 */
+	public void selectSection(int index) {
+		if (index < 0 || index >= GuideChapters.SECTIONS.size() || index == section) return;
+		section = index;
+		buildSection();
+		if (minecraft != null && minecraft.player != null) {
+			minecraft.player.playSound(net.minecraft.sounds.SoundEvents.BOOK_PAGE_TURN, 0.4f,
+					1.0f + (float) (Math.random() * 0.2));
+		}
+	}
+
+	/** Turns {@code delta} pages, running off the end of a tab into the next as the arrow keys do. */
+	public void turnPage(int delta) {
+		if (naming) return;
+		turn(delta);
+	}
+
+	/**
+	 * Moves the view the way a drag of the same distance would.
+	 * <p>
+	 * The same body as {@link #mouseDragged}, reached without a button being held: a stick pushed
+	 * off centre is already the gesture, and asking for a click to be held as well would be asking
+	 * the reader to mime a mouse.
+	 */
+	public void nudgeView(float dx, float dy) {
+		if (naming) return;
+		if (section == GuideChapters.LINEAGE_TAB) {
+			treePanX += dx;
+			treePanY += dy;
+			clampPan();
+		} else if (section == GuideChapters.REFERENCE_TAB) {
+			plateSpin += dx * 0.02f;
+		}
+	}
+
+	/** Whether the reader is part-way through typing a species name. */
+	public boolean isNaming() {
+		return naming;
+	}
+
+	/**
+	 * Whether the open page is offering a name to be written.
+	 * <p>
+	 * Reads the line's drawn position rather than re-deriving the condition, for the reason given
+	 * on {@link #titleY}: the page decides its own layout as it lays it out.
+	 */
+	public boolean offersNaming() {
+		return !naming && nameLineY >= 0;
+	}
+
+	/** Starts writing a name, as clicking the naming line would. Returns whether it took. */
+	public boolean beginNaming() {
+		if (!offersNaming()) return false;
+		naming = true;
+		nameBuffer = "";
+		return true;
+	}
+
+	/**
+	 * Ends a name being written, sending it if there is one.
+	 * <p>
+	 * For a caller that has been collecting the letters somewhere other than this screen's own key
+	 * handler and has no Enter to hand — an on-screen keyboard, whose close button is the only
+	 * "done" it has. An empty buffer is a cancellation, which is the same rule the typed editor
+	 * follows and the reason there is no separate cancel here.
+	 */
+	public void finishNaming() {
+		if (!naming) return;
+		commitName();
+	}
+
+	/**
+	 * Where the page sits on the screen.
+	 * <p>
+	 * For an on-screen keyboard to place itself clear of the book rather than over the name it is
+	 * being used to write. The whole panel and not just the naming line, because a keyboard that
+	 * dodges one line of a page and covers the rest of it has not dodged anything.
+	 */
+	public ScreenRectangle panelBounds() {
+		return new ScreenRectangle(left, top, PANEL_W, PANEL_H);
+	}
+
+	/**
+	 * Tells the book that a controller is driving, so the footer stops naming the arrow keys.
+	 *
+	 * @see #controllerDriven
+	 */
+	public void setControllerDriven(boolean driven) {
+		this.controllerDriven = driven;
+	}
+
+	/** Whether the open tab is the family tree, which pans and zooms rather than paginating. */
+	public boolean isTreeView() {
+		return section == GuideChapters.LINEAGE_TAB;
+	}
+
+	/** Whether the open tab has more than one page to turn between. */
+	public boolean hasMultiplePages() {
+		return pages.size() > 1;
+	}
+
+	/**
+	 * Whether a specimen plate is on the open page, and so whether there is an animal to turn.
+	 * <p>
+	 * Read off the heading the plate records as it draws, for the reason given on {@link #titleY}:
+	 * the page decides its own layout as it lays it out, and a plate is exactly a page that drew a
+	 * species heading.
+	 */
+	public boolean showsSpecimen() {
+		return titleY >= 0;
+	}
+
+	/**
+	 * Everything on the page worth jumping a pointer between, in screen coordinates.
+	 * <p>
+	 * This is the book saying where its targets are, not what should be done about them. It exists
+	 * because a controller has no pointing device: a stick can be used to slide a cursor across the
+	 * page, but sliding a cursor is a mouse gesture being mimed, and what a controller actually
+	 * wants is to step between the things that can be interacted with. That stepping needs to know
+	 * where they are, and only the code that laid them out does.
+	 * <p>
+	 * Only what is genuinely on the page. Tree nodes are filtered against the same viewport the
+	 * drawing is clipped to, so nothing offers to jump to a box scrolled out of sight — reaching
+	 * those is panning, which is a different gesture.
+	 */
+	public List<ScreenRectangle> snapTargets() {
+		List<ScreenRectangle> targets = new ArrayList<>();
+		for (int i = 0; i < GuideChapters.SECTIONS.size(); i++) {
+			targets.add(new ScreenRectangle(left + i * (TAB_W + 2), top, TAB_W, TAB_H));
+		}
+
+		if (section == GuideChapters.SELF_TAB) {
+			// Hover targets rather than clickable ones — a card says what a branch is and what it
+			// still wants, and reading it is the whole interaction. Stepping onto one is therefore
+			// the only way a controller gets at any of that, since there is nothing to click.
+			targets.addAll(selfCards);
+			return targets;
+		}
+
+		if (section == GuideChapters.LINEAGE_TAB) {
+			int size = nodeSize();
+			for (Phylogeny.TreeNode node : treeNodes) {
+				int x = nodeX(node), y = nodeY(node, TAB_H);
+				if (x + size < 2 || x > PANEL_W - 2) continue;
+				if (y + size < TAB_H + HEADING_H || y > PANEL_H - 4) continue;
+				targets.add(new ScreenRectangle(left + x, top + y, size, size));
+			}
+			return targets;
+		}
+
+		// Both are recorded by drawPlate and cleared every frame, so an absent one is genuinely not
+		// on the page rather than left over from a page that had one.
+		if (titleY >= 0) {
+			targets.add(new ScreenRectangle(left + MARGIN, top + titleY, Math.max(titleW, 1), LINE_H));
+		}
+		if (nameLineY >= 0) {
+			targets.add(new ScreenRectangle(left + MARGIN, top + nameLineY, PANEL_W / 2 - MARGIN, LINE_H));
+		}
+		return targets;
+	}
+
 	// ------------------------------------------------------------------ drawing
 
 	@Override
@@ -1302,8 +1515,12 @@ public class FieldGuideScreen extends Screen {
 		context.fill(0, 0, width, height, 0xC0101018);
 		age += delta;
 		// Cleared before anything is drawn and set again only by drawPlate, so a heading can never
-		// stay clickable on a page that no longer shows one.
+		// stay clickable on a page that no longer shows one. The naming line goes with it: it was
+		// cleared inside drawPlate, which is only reached on the Reference tab, so turning to the
+		// Bloodlines tab left the line still recorded at the height it last occupied and a click
+		// there opened a name editor over the tree.
 		titleY = -1;
+		nameLineY = -1;
 		// Held still while dragged, turning again the moment it is let go — from the angle it was
 		// left at, because the angle is state rather than a function of the clock.
 		if (!(dragging && section == GuideChapters.REFERENCE_TAB)) {
@@ -1350,7 +1567,7 @@ public class FieldGuideScreen extends Screen {
 			// The tree is one continuous view, so a page count there would be a permanent "1 / 1".
 			if (section != GuideChapters.LINEAGE_TAB && pages.size() > 1) {
 				Component footer = Component.literal((page + 1) + " / " + pages.size()
-						+ "   ·   ← → or scroll");
+						+ (controllerDriven ? "" : "   ·   ← → or scroll"));
 				context.text(font, footer,
 						PANEL_W - MARGIN - font.width(footer),
 						PANEL_H - 14, INK_FAINT, false);

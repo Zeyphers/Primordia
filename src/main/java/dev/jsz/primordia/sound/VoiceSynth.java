@@ -64,7 +64,7 @@ public final class VoiceSynth {
 	private static final float MAX_SECONDS = 2.6f;
 
 	/** Hard ceiling before the 16-bit rail. The limiter keeps peaks under this. */
-	private static final float CEILING = 0.94f;
+	private static final float CEILING = 0.82f;
 
 	/** Fade applied at both ends, in seconds. Removes the click of starting mid-waveform. */
 	private static final float EDGE_FADE = 0.005f;
@@ -128,7 +128,7 @@ public final class VoiceSynth {
 		// ---- the run ----------------------------------------------------------------------------
 		final float dt = 1f / SAMPLE_RATE;
 		final float baseF0 = v.f0() * call.pitchScale * (0.97f + rng.unit() * 0.06f);
-		final float drive = 1f + call.effort * (2.0f + v.chaos() * 4.0f);
+		final float drive = 1f + call.effort * (1.35f + v.chaos() * 2.4f);
 		final float noiseMix = Mth.clamp(
 				v.aspiration() + (call == CallType.HURT ? 0.20f : 0f) + call.effort * 0.12f, 0f, 0.9f);
 		final float chaosAmt = Mth.clamp(v.chaos() * (0.45f + call.effort * 0.9f), 0f, 1f);
@@ -302,7 +302,7 @@ public final class VoiceSynth {
 		for (float x : buf) energy += x * x;
 		final float rms = (float) Math.sqrt(energy / Math.max(1, buf.length));
 
-		final float target = 0.10f + call.effort * 0.13f;
+		final float target = 0.075f + call.effort * 0.075f;
 		float scale = rms > 1e-5f ? target / rms : 0f;
 
 		float peak = 0f;

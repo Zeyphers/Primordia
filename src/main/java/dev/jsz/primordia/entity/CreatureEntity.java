@@ -356,6 +356,15 @@ public class CreatureEntity extends PathfinderMob {
 		vocalise(isBaby() ? CallType.CHIRP : CallType.AMBIENT);
 	}
 
+	/**
+	 * Procedural calls are longer and more distinctive than vanilla's short idle samples. Giving
+	 * them the default mob interval made a group turn into a nearly continuous wall of sound.
+	 */
+	@Override
+	public int getAmbientSoundInterval() {
+		return 240;
+	}
+
 	@Override
 	protected void playHurtSound(DamageSource source) {
 		vocalise(CallType.HURT);
@@ -1975,7 +1984,7 @@ public class CreatureEntity extends PathfinderMob {
 			}
 			// Snoring: the creature's own tract, barely voiced. Mostly air, which is what makes it
 			// read as breathing rather than as a quiet call.
-			if ((tickCount + getId()) % 80 == 0) {
+			if ((tickCount + getId()) % 240 == 0) {
 				vocalise(CallType.SLEEP);
 			}
 			return;

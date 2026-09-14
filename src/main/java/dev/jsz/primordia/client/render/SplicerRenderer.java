@@ -138,29 +138,49 @@ public class SplicerRenderer implements BlockEntityRenderer<SplicerBlockEntity, 
 		poseStack.translate(0.5f, 0f, 0.5f);
 		poseStack.mulPose(Axis.YP.rotationDegrees(-state.facing.toYRot()));
 		poseStack.translate(-0.5f, 0f, -0.5f);
+		submitGeometry(poseStack, collector, pose, state.lightCoords,
+				net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY);
+		poseStack.popPose();
+	}
+
+	/**
+	 * Draws the whole machine in block-local space, facing south, in the given pose.
+	 * <p>
+	 * Shared with {@link SplicerItemRenderer} so the inventory icon is this model and not a second
+	 * one approximating it: a hand-made item model drifts from the bench the moment the bench is
+	 * edited, and the old one had already drifted into five boxes sampling a mesh atlas at random.
+	 */
+	static void submitGeometry(PoseStack poseStack, SubmitNodeCollector collector, BbModel.Pose pose,
+	                           int light, int overlay) {
+		ensureLoaded();
+		if (model == null) return;
+		BbModel drawn = model;
 
 		// Hull first, then glass. Translucency has to be drawn over what it is meant to be seen
 		// against, and submitting the canopy before the body behind it is how you get a window onto
 		// the skybox.
 		for (int pass = 0; pass < 2; pass++) {
 			boolean glass = pass == 1;
-			for (int texture = 0; texture < model.textureCount(); texture++) {
+			for (int texture = 0; texture < drawn.textureCount(); texture++) {
 				if (translucent(texture) != glass) continue;
 				int index = texture;
 				collector.submitCustomGeometry(poseStack,
-						glass ? RenderTypes.entityTranslucent(model.texture(index))
-								: RenderTypes.entityCutout(model.texture(index)),
+						glass ? RenderTypes.entityTranslucent(drawn.texture(index))
+								: RenderTypes.entityCutout(drawn.texture(index)),
 						(entry, consumer) -> {
 							PoseStack local = new PoseStack();
 							local.last().pose().set(entry.pose());
 							local.last().normal().set(entry.normal());
-							model.render(local, consumer, index, pose, state.lightCoords,
-									net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY);
+							drawn.render(local, consumer, index, pose, light, overlay);
 						});
 			}
 		}
-		poseStack.popPose();
+	}
 
+	/** The pose an idle bench holds: the first frame of its cycle. */
+	static BbModel.Pose idlePose() {
+		ensureLoaded();
+		return restPose != null ? restPose : BbModel.REST;
 	}
 
 	/** Whether a sheet is drawn translucent. Out of range answers "hull", which is the safe half. */

@@ -17,6 +17,8 @@ loom {
 		client {
 			// Procedural meshing runs off-thread; give it headroom during dev.
 			vmArgs '-Xmx4G'
+			// The /primordia debug commands are off in a player's game; dev runs want them.
+			vmArg '-Dprimordia.debug=true'
 		}
 	}
 }
@@ -39,6 +41,14 @@ repositories {
 		url = 'https://api.modrinth.com/maven'
 		content {
 			includeGroup 'maven.modrinth'
+		}
+	}
+	// Controlify. Scoped for the same reason as Modrinth's above.
+	maven {
+		name = 'Xander'
+		url = 'https://maven.isxander.dev/releases'
+		content {
+			includeGroup 'dev.isxander'
 		}
 	}
 }
@@ -95,6 +105,23 @@ dependencies {
 	compileOnly "dev.yumi.commons:yumi-commons-event:${project.yumi_commons_version}"
 	compileOnly "dev.yumi.commons:yumi-commons-core:${project.yumi_commons_version}"
 
+	// Controller support, when Controlify happens to be installed. Optional in the same sense as
+	// LambDynamicLights above: the `controlify` entrypoint is only ever queried by Controlify, so
+	// with the mod absent dev.jsz.primordia.compat.controlify is never loaded and none of these
+	// types are ever asked for.
+	//
+	// Not transitive. The published pom pulls in YACL, SDL and steamdeck4j, none of which this mod
+	// names — and resolving them would put a second, differently-versioned Minecraft-adjacent tree
+	// on the compile classpath for no benefit.
+	compileOnly("dev.isxander:controlify:${project.controlify_version}") {
+		// The module is published once with a variant per loader, and none of them is the default,
+		// so the platform has to be named or resolution has nothing to pick.
+		capabilities {
+			requireCapability "dev.isxander:${project.minecraft_version}-fabric"
+		}
+		transitive = false
+	}
+
 	testImplementation platform('org.junit:junit-bom:5.10.2')
 	testImplementation 'org.junit.jupiter:junit-jupiter'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -142,6 +169,25 @@ tasks.register('editor', JavaExec) {
 	description = 'Serves the creature editor on http://127.0.0.1:8090/'
 	classpath = sourceSets.main.runtimeClasspath
 	mainClass = 'dev.jsz.primordia.editor.EditorServer'
+}
+
+// primordia-capture-task
+// Records the store-page turntable clip: scripts/capture.mjs drives the editor above through
+// headless Chromium and encodes the frames. The classpath is handed to the script so it can start
+// the server as a plain java process — a second Gradle build would just block on this one's lock.
+//
+//   ~/dev/tools/gradle-9.6.1/bin/gradle capture
+//   ~/dev/tools/gradle-9.6.1/bin/gradle capture -Pargs="--duration 8 --width 400"
+tasks.register('capture', Exec) {
+	group = 'primordia'
+	description = 'Captures build/primordia_editor.gif (+ mp4, webp) from the creature editor'
+	dependsOn 'classes'
+	workingDir = projectDir
+	doFirst {
+		environment 'PRIMORDIA_EDITOR_CP', sourceSets.main.runtimeClasspath.asPath
+		environment 'PRIMORDIA_JAVA', "${System.getProperty('java.home')}/bin/java"
+	}
+	commandLine(['node', 'scripts/capture.mjs'] + (project.findProperty('args') ?: '').toString().split(' ').findAll { it })
 }
 
 // The same trick for the voice synthesiser. Tuning a call by rebuilding the mod, launching the
@@ -222,6 +268,15 @@ tasks.register('kneeProbe', JavaExec) {
 	description = 'Reports the bend hint, sprawl and pole of every leg'
 	classpath = sourceSets.test.runtimeClasspath
 	mainClass = 'dev.jsz.primordia.anim.KneeProbe'
+}
+
+// The walking counterpart: inward-folded knees and legs passing through each other mid-stride.
+// `gradle kneeSideProbe --args="<specimens> <seed>"`.
+tasks.register('kneeSideProbe', JavaExec) {
+	group = 'primordia'
+	description = 'Counts inward knees and leg collisions over a walk, per archetype'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.jsz.primordia.anim.KneeSideProbe'
 }
 
 tasks.register('strideProbe', JavaExec) {

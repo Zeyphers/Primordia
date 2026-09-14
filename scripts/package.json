@@ -1,0 +1,14 @@
+{
+  "name": "primordia-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tooling that is not part of the mod build: gallery capture for the creature editor.",
+  "type": "module",
+  "scripts": {
+    "capture": "node capture.mjs"
+  },
+  "dependencies": {
+    "gifski": "^1.7.1",
+    "playwright": "^1.62.1"
+  }
+}

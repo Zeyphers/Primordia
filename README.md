@@ -4,8 +4,10 @@
 
 **Every creature in this mod is grown from a genome at runtime. There are no models, no textures,
 and no animation files.** A gene vector becomes a skeleton, the skeleton becomes a signed distance
-field, the field becomes a mesh, and the mesh walks on legs solved with inverse kinematics. Then
-they breed, mutate, diverge into lineages, and reshape the world they live in.
+field, the field becomes a mesh, and the mesh walks on legs solved with inverse kinematics. Its
+voice is synthesised from the same anatomy. Then they breed, mutate, diverge into lineages and
+reshape the world they live in, and once you have studied one closely enough, you can splice part
+of it into yourself.
 
 You will not meet the same animal twice.
 
@@ -20,7 +22,7 @@ You will not meet the same animal twice.
 | Minecraft | **26.2** |
 | Mod loader | **Fabric Loader 0.19.3** or newer |
 | Fabric API | **0.155.2+26.2** or newer |
-| Java | **21+** (any modern Minecraft launcher installs this for you) |
+| Java | **25+** (any modern Minecraft launcher installs this for you) |
 
 **Steps:**
 
@@ -28,7 +30,7 @@ You will not meet the same animal twice.
 2. Download **Fabric API** ([Modrinth](https://modrinth.com/mod/fabric-api) ·
    [CurseForge](https://www.curseforge.com/minecraft/mc-mods/fabric-api)) — Primordia will not
    load without it.
-3. Download `primordia-2.0.0-26.2.jar` from the [Releases page](../../releases/latest).
+3. Download the latest `primordia-<version>-26.2.jar` from the [Releases page](../../releases/latest).
 4. Put **both** jars into your `mods` folder:
    - Windows — `%APPDATA%\.minecraft\mods`
    - macOS — `~/Library/Application Support/minecraft/mods`
@@ -36,10 +38,8 @@ You will not meet the same animal twice.
    - Using the Modrinth App or Prism? Open your instance's own mods folder instead.
 5. Launch the game with the Fabric profile.
 
-That's it. Creatures generate in the world on their own — no configuration needed.
-
-> **Optional:** install [Mod Menu](https://modrinth.com/mod/modmenu) to get an in-game settings
-> screen. Without it the mod still works; you would just edit `config/primordia.json` by hand.
+On a server, install it on both the server and every client. Creatures generate in the world on
+their own; no configuration is needed.
 
 ### Something went wrong?
 
@@ -52,7 +52,7 @@ That's it. Creatures generate in the world on their own — no configuration nee
 
 ---
 
-## Your first five minutes
+## Getting started
 
 Creatures spawn naturally, but with cheats enabled you can skip the waiting:
 
@@ -63,32 +63,93 @@ Creatures spawn naturally, but with cheats enabled you can skip the waiting:
 | `/primordia info` | Full breakdown of the nearest creature — genome, body, ecology |
 | `/primordia test` | A grid of test creatures, side by side, for comparison |
 
-Craft a **Field Guide** to record what you find. Every creature you study is filed by lineage, and
-the guide fills in as you learn more about each one.
+New players are given a **Field Guide** on their first join. Every creature you study is filed in
+it by lineage, and its family tree shows parents, offspring, and the moment a lineage diverges far
+enough to count as something new. Try `/primordia breed` on two creatures, then on their offspring,
+and keep going until you see `(NEW LINEAGE)`.
 
-Then try `/primordia breed` on two creatures, and again on their offspring, and again. Watch the
-lineage drift — and eventually see `(NEW LINEAGE)` when the descendants have diverged far enough
-to count as something else.
+The **creature editor** runs in your browser. `/primordia editor` opens it, no cheats needed: drag
+any of the 88 genes and watch the body rebuild, with a description of what each gene does on hover.
 
 ---
 
-## What's new in 2.0
+## Studying creatures
 
-- **Creature voices are synthesised, not sampled.** Every call is generated from the animal's own
-  anatomy: pitch from body mass, timbre from head and neck length, growl from aggression. No
-  creature borrows a vanilla animal's sound any more.
-- **Far more variety.** The generator always offered around a thousand ornament combinations but
-  produced roughly fifteen of them; the founder draw has been rebuilt so the whole space actually
-  appears. Ornament amplitude nearly doubled, and traits that showed up on 0.4% of creatures now
-  show up on 8%.
-- **Places have their own fauna.** Body plans are now chosen from the climate and the trophic role
-  they are being founded for, so a desert's grazers are not a rainforest's, and a creature's shape
-  tells you what it eats.
-- **Feet.** Hooves, pads, splayed toes, talons, webbing, chitin tips.
-- **Creatures stand up to four blocks tall** rather than being squashed to 2.5.
-- Many mesh and animation fixes: holes at the hips, ornament dragged by leg bones, shading on
-  crouching creatures, arms growing through legs, and wading through shallow water instead of
-  swimming in it.
+In survival, knowledge comes from specimens.
+
+1. **Take a sample.** Use a **Biopsy Kit** on a living creature. A kit is good for five specimens and
+   refuses an individual you have already sampled.
+2. **Keep it cold.** Tissue degrades over time, and a degraded sample still reads, only less
+   precisely. A **Sample Cooler** slows that to a tenth of the normal rate, and keeps its contents
+   when you pick it up.
+3. **Sequence it.** Load the sample into a **Basic Gene Lab**. Reading the tissue burns furnace fuel;
+   interpreting the read draws redstone. The result is a **Genome Report**, filed into your guide.
+4. **Study more of the same species.** A species' first report is mostly `???`. Every further
+   specimen of that lineage sharpens its reports, from *Unreferenced* up to *Complete*.
+
+Recipes unlock as you progress, so the recipe book fills in as you go.
+
+---
+
+## Splicing
+
+What you study, you can take. Craft a **Splicing Bench** from a Gene Lab, a diamond, iron, glass and
+redstone, choose a lineage from your guide, and the bench isolates one block of that animal's genome
+into a **Trait Serum**. Isolating costs a heart; drinking the serum applies the splice.
+
+| Branch | What it carries |
+|---|---|
+| Physiology | Speed and stamina, and the donor's appetite with them |
+| Disposition | How wild creatures read you |
+| Climate | Tolerance for where the donor lived, and the hide it needed there |
+| Colour | Its colouring and markings; costs nothing but a slot |
+| Light | A glow in its colour, from the parts it lit |
+| Habit | Its digging and nesting |
+
+- **Strength is the donor's own value.** A lineage that has outrun predators for generations gives
+  real speed; a sedentary one gives almost nothing. Each branch in the guide names the best donor you
+  have on file.
+- **You take the whole block.** Splicing adopts a contiguous stretch of the genome, so you get
+  everything in it, costs included. The bench shows all of it before you commit.
+- **Depth is earned by finding strong examples.** Each branch opens at *Trace* and deepens to
+  *Expressed* and *Dominant* as you characterise more lineages that carry the trait strongly.
+- **Slots force a choice.** Two to start, one more for every branch taken to Dominant, up to five.
+  Reverting is free, but only at the bench.
+
+The guide's **Self** tab shows your own model with a card for each branch and the part of the body
+it changes. The reasoning behind every rule is in [`MD/SPLICING.md`](MD/SPLICING.md).
+
+---
+
+## Works with
+
+All optional; Primordia runs without any of them.
+
+- **[Mod Menu](https://modrinth.com/mod/modmenu)** — every setting below, editable in game.
+- **[LambDynamicLights](https://modrinth.com/mod/lambdynamiclights)** — bioluminescent creatures
+  light the caves they live in, and so do players carrying a Light splice.
+- **[Controlify](https://modrinth.com/mod/controlify)** — controller bindings, and a Field Guide you
+  can page, pan and navigate with a gamepad.
+
+---
+
+## What's new in 2.15
+
+- **Splicing**, above.
+- **Legs no longer pass through each other.** Knees now point away from the middle of the body, and
+  a stride can no longer carry one foot into the next. Same-side legs overlapping mid-walk fell from
+  60% of a saurian's frames to 5%.
+- **Creatures keep the colour of their biome** instead of drifting to random hues over a region's
+  history.
+- **Frills and dorsal spines mesh solid**, four-legged creatures no longer grow a third leg segment
+  that popped in and out, and about one creature in five is nocturnal rather than half of them.
+- **Quieter herds.** Idle calls and snoring are a third as frequent, and big animals no longer drown
+  out the rest.
+- **Controller support** through Controlify, and **block icons** that match the placed blocks.
+
+Earlier: 2.5 gave voices structurally different families and sized the gait from each leg's real
+reach; 2.0 replaced sampled sounds with synthesised voices and widened creature variety. Full notes
+are on the [Releases page](../../releases).
 
 ---
 
@@ -153,7 +214,9 @@ individual sliders below are for when a preset is nearly right.
 | `/primordia spawn 10` | Ten of them |
 | `/primordia spawn 5 1234` | Five, reproducibly, from seed 1234 |
 | `/primordia spawn 5 cave_crawler 1234` | Five of one archetype, from seed 1234 |
+| `/primordia spawn code <genome>` | One exact genome, pasted from the editor's **Genome code** box |
 | `/primordia test` | A grid of test creatures for visual comparison |
+| `/primordia test reload` | Rebuild that grid where it stands |
 | `/primordia test walk` / `stand` | Toggle whether the test grid animates |
 | `/primordia info` | Full breakdown of the nearest creature's genome, body and ecological state |
 | `/primordia collect 48` | File every creature within radius into your field guide |
@@ -162,13 +225,17 @@ individual sliders below are for when a preset is nearly right.
 | `/primordia mutate` | Spawn a mutated clone of the nearest creature |
 | `/primordia clear 32` | Remove creatures within 32 blocks |
 | `/primordia stats` | Mesh cache and bake queue depth |
-| `/primordia debug lava [radius]` | Sends every creature within the radius (200 by default) walking into the nearest exposed lava |
 | `/primordia editor` | Opens the creature editor — **the only one that does not need cheats** |
 
 Everything except `editor` needs gamemaster permissions (cheats on, or op). The editor is a
 modelling tool that cannot read or write the world, so it is open to anyone with the mod installed;
-it binds to `127.0.0.1`, meaning on a dedicated server the page is only reachable from the machine
+it binds to `127.0.0.1`, so on a dedicated server the page is only reachable from the machine
 hosting it.
+
+Testing tools live under `/primordia debug` and exist only when the game is launched with
+`-Dprimordia.debug=true`: `decay [ticks]` winds nearby carcasses through their stages of rot,
+`skeleton [count]` spawns remains directly, and `lava [radius]` walks every creature in range into
+the nearest exposed lava.
 
 ---
 
@@ -195,17 +262,23 @@ JAVA_HOME=/path/to/jdk-25 gradle build
 ```
 
 `build` runs `compileJava`, bundles resources, and executes the test suite before producing
-`build/libs/primordia-<version>.jar` and a matching sources jar.
+`build/libs/primordia-<version>.jar` and a matching sources jar. `gradle runClient` launches a dev
+client with the debug commands switched on.
 
-**Development tools**, none of which need the game running:
+**Development tools**, none of which need the game running. Each snapshots its classes at launch,
+so restart after a code change.
 
 | Task | What it does |
 |---|---|
 | `gradle editor` | Creature editor on `http://127.0.0.1:8090/` — tweak a genome, see the body |
 | `gradle voiceLab` | Voice synthesiser on `http://127.0.0.1:8091/` — tweak a voice, hear it |
-| `gradle diversityReport` | Samples 5000 founders and reports how much variety the generator actually produces |
-
-Each snapshots its classes at launch, so restart after a code change.
+| `gradle capture` | Records the store-page turntable clip from the editor (needs Node; see [`scripts/README.md`](scripts/README.md)) |
+| `gradle diversityReport` / `voiceDiversityReport` | How much variety the body and voice generators actually produce |
+| `gradle gaitReport` | Walks every archetype over generated terrain: reach, foot contact, cadence, body attitude |
+| `gradle gaitTrace` | One leg of one specimen, frame by frame |
+| `gradle kneeProbe` / `kneeSideProbe` | Knee bend hints in the bind pose / knee direction and leg collisions over a walk |
+| `gradle loopProbe` | Whether the walk repeats over one gait cycle; `--args=sweep` checks ten specimens per archetype |
+| `gradle skinProbe` / `strideProbe` / `voxelProbe` | Which bones drive which surfaces / fastest walk per archetype / voxel size per archetype |
 
 ## How a creature is made
 
@@ -253,37 +326,54 @@ by genome, so a herd of siblings costs one bake.
 no UV unwrap, and every creature in the world shares one flat white texture: one render layer,
 one batch, however many species are on screen.
 
+**Voices synthesised, not sampled.** Each call is generated from the creature's anatomy through a
+source-filter model: pitch from body mass, formants from head and neck length, roughness from
+temperament. Creatures are sorted into voice families by mechanism, so a whistle is not simply a
+quiet roar, and the synthesised samples are handed straight to the vanilla sound engine, so 3D
+attenuation and the volume sliders all apply.
+
 **FABRIK, not analytic IK.** Limbs have two *or* three segments depending on the genome. FABRIK
-handles both with one implementation and no trigonometry. Its one weakness (no opinion about
-which way a knee bends) is fixed by rolling the solved chain about the hip-to-foot axis until
-the mid joint lines up with the limb's pole vector.
+handles both with one implementation and no trigonometry. Its one weakness is that it has no
+opinion about which way a joint bends, so every limb records which side of its hip-to-foot line
+each joint was grown on, and the solver holds the chain in that plane and on those sides every
+frame. That is also what lets a digitigrade leg keep its knee and hock bending in opposite
+directions.
+
+**Knees point away from the middle of the body.** Front knees bend forward, hind knees back, and
+a biped's knees forward. Following the skeleton instead (elbow back, stifle forward) is
+anatomically true of joints hidden inside a real animal's body wall and wrong for the joints you
+can see, and it aimed a quadruped's knees at each other until its lower legs crossed mid-stride.
 
 **World-space foot plants.** A planted foot is stored in absolute world coordinates, so the body
 moves over a foot that genuinely does not move. This is the whole difference between a walk cycle
 and a skating animation.
 
-**Feet ease into plants; they are never assigned.** Three transitions used to be hard jumps: the
-gait phase flipping to stance before a swing had quite finished, a creature stopping mid-swing with
-a foot in mid-air, and a leg coming back into reach after being stretched straight. All three read
-as the foot snapping. Stance and stop now converge exponentially onto the plant, and IK targets are
-clamped into the leg's reach so the knee never locks in the first place.
+**Stride is sized from reach, then from the neighbours.** Each leg's reach envelope says how far
+its foot may travel before the hip can no longer hold it, and the stride is the largest every leg
+can manage. On one or two pairs of legs it is capped again by the gap to the next foot on the same
+side, charged only for the approach that pair's gait phase produces, so a foot never swings into
+its neighbour.
 
-**The ground probe rejects surfaces you could not step onto.** Returning the first solid block
-found scanning downward makes a foot latch onto the side of a wall or tree trunk as the creature
-walks past: the limb appears glued to it. A candidate surface must have clear headroom above it,
-which a wall column never does, and must be within step height of the creature's own feet. When
-neither holds, the probe reports no ground and the leg hangs naturally beside the obstacle.
+**Feet ease into plants; they are never assigned.** Stance and stop converge exponentially onto
+the plant, and IK targets are clamped into the leg's reach so the knee never locks straight and
+then snaps back.
+
+**The ground probe rejects surfaces you could not step onto.** A candidate surface must have clear
+headroom above it and be within step height of the creature's own feet, so a foot never latches
+onto the side of a wall or tree trunk as the creature walks past.
 
 **Slopes bend the spine, not just the root.** Rotating the whole creature rigidly to match the
 terrain reads as a plank tilting. 55% of the pitch is applied at the root and the rest is
-distributed along the spine, weighted toward the middle of the back, since the shoulders and hips
-are anchored by the limbs. Creatures whose legs give no front-to-rear spread to measure from
-(bipeds) sample the terrain ahead and behind instead.
+distributed along the spine, weighted toward the middle of the back.
 
 **Legs are fitted to the ground, not the other way round.** `BodyPlanBuilder` picks a hip height,
 pins the foot to y = 0, and derives bone lengths from the curve between them. A creature therefore
-*cannot* generate with legs too short to stand on. The failure mode is designed out rather than
-validated against.
+*cannot* generate with legs too short to stand on.
+
+**Blockbench models are read as they are.** The Splicing Bench is a `.bbmodel` loaded straight out
+of the resources and drawn by a block entity renderer, animated only while it has work. Its
+inventory icon goes through the same renderer as a special item model, so the file the artist edits
+is exactly what the game draws in the world and in your hand.
 
 ---
 
@@ -302,9 +392,8 @@ of creatures degrades gracefully instead of tanking the frame rate.
 
 Resolution is a *floor*, not a fixed value. `MeshBaker` raises it until sampling cells are smaller
 than the creature's thinnest limb, because a limb narrower than one cell falls between samples and
-disappears from the mesh entirely: the leg is not coarse, it is absent. The lift is capped at
-1.8× the tier value and at `MAX_RESOLUTION`, so one slender genome cannot demand a grid that takes
-seconds to bake. Worst observed near-tier mesh is ~8,600 quads.
+disappears from the mesh entirely. The lift is capped at 1.8× the tier value and at
+`MAX_RESOLUTION`, so one slender genome cannot demand a grid that takes seconds to bake.
 
 Meshes bake on daemon worker threads and are never built on the render thread. A creature that
 is still baking is simply skipped for a frame, and coarser tiers finish first so a new species
@@ -321,52 +410,37 @@ point; nothing else needs to change.
 gradle test
 ```
 
-The suite fuzzes hundreds of random genomes against the invariants that have no visual tell:
+The suite fuzzes hundreds of random genomes against the invariants that have no visual tell. A
+few of the load-bearing ones:
 
-- **`BodyPlanTest`**: every genome yields a valid skeleton: parents precede children, limbs are
-  mirrored, feet sit on the ground plane, every leg has slack for IK to bend into, development is
-  deterministic (which the mesh cache depends on).
-- **`SkeletonTest`**: a zero pose produces exactly identity skinning matrices. If this breaks,
-  every creature renders subtly deformed and it looks like the generator just made an odd animal.
-- **`FabrikTest`**: the solver reaches reachable targets, never stretches a bone, keeps the hip
-  pinned, honours the pole vector, and is stable across repeated solves.
-- **`MeshBakeTest`**: meshes are non-empty and internally consistent, skin weights sum to 1,
-  normals are unit length, and skinning at bind pose reproduces the baked mesh exactly.
-- **`GenomeTest`**: serialisation round-trips, malformed codes degrade to null rather than
-  throwing, mutation never escapes [0,1], and offspring really are closer to their parents than to
-  strangers.
-- **`JawTest`**: the mandible is a hinged bone parented to the skull, in a blend group of its
-  own, baked slightly ajar so there is a seam to open along, and it swings *down*. The sign of
-  that rotation is one character, and a jaw closing up into the braincase looks, from most camera
-  angles, merely odd. So the test measures the hinge in the skull's own frame rather than in
-  world space, where head pitch would swamp it.
-- **`ToothClippingTest`**: no tooth comes through the jaw it closes against once the mouth shuts.
-  Only observable in the closed pose: the mesh is baked with the mouth wide open, where every tooth
-  sits harmlessly in the gap. It reads baked mesh vertices rather than recomputing where teeth
-  ought to be, because an earlier version that recomputed them reported no clipping while creatures
-  were visibly full of it.
-- **`QuadWindingTest`**: quads face the way their shading normals point. Invisible in vanilla,
-  which lights entities from the vertex normal alone; shader packs branch on `gl_FrontFacing` and
-  render a mis-wound quad inside-out.
-- **`PoseWalkTest`**: a stationary creature fed a walking speed still moves its feet, which is what
-  the `/primordia test` grid depends on.
-- **`OrnamentTest`**: every horn type, tail shape and glow region is reachable from some genome
-  and meshes. These traits have no invariant of their own to break (a hornless creature is
-  perfectly valid), so the thing worth testing is that no branch of the generator is unreachable,
-  which nothing else in the suite would notice. It also pins the arachnid body plan: eight legs
-  clustered on a front segment, an abdomen behind them, and knees above the hip.
+- **`BodyPlanTest`**, **`SkeletonTest`**: every genome yields a valid, deterministic skeleton, and
+  a zero pose produces exactly identity skinning matrices.
+- **`FabrikTest`**, **`KneeStabilityTest`**: the solver reaches reachable targets without
+  stretching bones, knees keep the side they were grown on through a stride, every knee points away
+  from the middle of the body, and four-legged creatures' legs do not cross mid-walk.
+- **`LimbSeparationTest`**: separate limbs never fuse into webbing or physically intersect, and
+  every limb still joins the body.
+- **`MeshBakeTest`**, **`QuadWindingTest`**: meshes are consistent, skin weights sum to 1, bind
+  pose reproduces the bake exactly, and quads face the way their normals point (shader packs
+  render mis-wound quads inside-out).
+- **`JawTest`**, **`OrnamentTest`**: the jaw is a hinged bone that swings *down*, and every horn,
+  tail and glow region is reachable from some genome and meshes.
+- **`EditorClipLoopTest`**: the walk repeats over exactly one gait cycle, which is what lets the
+  editor's preview loop without a seam.
+- **`GenomeTest`**: serialisation round-trips, malformed codes degrade to null, mutation never
+  escapes [0,1], and offspring are closer to their parents than to strangers.
+- **`SpliceTreeTest`**, **`SplicerModelTest`**: every stat-carrying splice branch can cost the
+  player something, and the bench model ships, loads and loops its sampling cycle.
 
 ---
 
 ## Known rough edges
 
+- Six- and eight-legged creatures' neighbouring legs still touch at the knees while walking.
+  `gradle kneeSideProbe` measures it.
 - `CreatureRenderer` bundles its own `assets/primordia/textures/misc/white.png` rather than
   depending on vanilla's, after that asset moved during the 26.2 port; if a future version relocates
   or removes it again, creatures render magenta until `TEXTURE` is repointed.
-- The Preservation Case block is not in this release: its dedicated block class, container
-  behaviour, and assets were pulled from `1.0.0` and will return once finished. `SimpleContainerBlock`
-  and `SimpleContainerBlockEntity`, the generic container classes it and the (already-removed)
-  Genome Bank shared, were removed alongside it since nothing else used them.
 - Grazing feeds a herbivore but does not yet consume the block, so plant food is effectively
   infinite. Consuming it needs a regional stock to debit, which is Phase B in `MD/ECOLOGY.md`.
 - Carcasses are `CreatureEntity` instances and count against the `CREATURE` spawn cap while they

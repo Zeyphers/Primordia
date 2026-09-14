@@ -56,9 +56,9 @@ public final class BodyPlanBuilder {
 	 * near column, and both are things real animals are.
 	 */
 	/**
-	 * How much of the fore/aft bend a two-paired creature keeps. The rest of its knee direction
-	 * comes from how far the leg sprawls, which is what makes four knees read as facing outward
-	 * rather than at each other.
+	 * How much of the fore/aft bend a two-paired creature keeps, against the sideways term that
+	 * comes from how far the leg sprawls. Front knees forward and hind knees back, so this is how
+	 * strongly the four point away from each other.
 	 */
 	private static final float QUAD_FORE_AFT_SHARE = 0.40f;
 	private static final float LIMB_TAPER_MIN = 0.42f;
@@ -565,35 +565,31 @@ public final class BodyPlanBuilder {
 				Vector3f foot = new Vector3f(hip.x + s * (rAt * 0.25f + hipHeight * stance), 0f,
 						hip.z + fanBias * fanReach);
 
-				// Front limbs bend backward at the elbow, hind limbs forward at the knee. The
-				// arch component lifts the bend out of the horizontal plane, so the knee rises
-				// above the hip and the leg reaches down to the foot from a high corner.
+				// Every knee points away from the middle of the body: forward on the legs in front,
+				// backward on the legs behind, which is the way each foot already fans. The arch
+				// component lifts the bend out of the horizontal plane, so the knee rises above the
+				// hip and the leg reaches down to the foot from a high corner.
 				//
-				// That opposed convention is right for a quadruped and actively wrong for an
-				// arachnid: it bows the middle pairs of a many-legged creature *toward* each
-				// other, and at the bend scale a high arch asks for, the two bulges meet in mid
-				// air. Arched limbs therefore bow the way their foot already fans — knee forward
-				// on the legs reaching forward — so the whole set radiates instead of converging.
-				// Past two pairs the opposed convention has nothing to describe anyway: "elbow
-				// versus knee" is a fact about quadrupeds, and a creature with six or eight legs
-				// has no forelimbs and hindlimbs, just legs. Those always radiate.
-				boolean front = pair < legPairs / 2f;
-				// Past two pairs the opposed convention is not merely unhelpful, it is undefined: the
-				// middle pair of a hexapod has no fan to radiate along, so any surviving fraction of
-				// "elbow versus knee" becomes the *only* term deciding its bend, and it bows backward
-				// while the pair in front of it bows forward. Measured on a flat-legged insectoid: front
-				// pair poleZ +0.92 with the foot fanned forward, middle pair -0.77 with the foot square
-				// out to the side. Neighbouring legs bending opposite ways, for no reason in the
-				// geometry. Many-legged creatures radiate and nothing else.
-				float radial = legPairs > 2 ? 1f : MathX.clamp01(legArch);
-				// Damped on a quadruped, where the opposed convention is anatomically right and visually
-				// loud. A real elbow does point back and a real stifle does point forward, but at full
-				// strength the two read as knees aimed at each other across the belly rather than as a
-				// leg with a joint in it. Keeping the sign preserves the opposition — a digitigrade hock
-				// still bends against its own knee — while letting the lateral term below carry the
-				// silhouette, so all four knees read as facing outward.
-				float poleZ = MathX.lerp(front ? -1f : 1f, fanBias, radial)
-						* (legPairs > 2 ? 1f : QUAD_FORE_AFT_SHARE);
+				// This used to follow the skeleton instead — elbow back on the forelimbs, stifle
+				// forward on the hindlimbs — which is anatomically true and exactly wrong to draw. On
+				// a real animal those two joints sit up inside the body wall; the joints you actually
+				// see are the ones below them, the carpus and the hock, and they point the other way.
+				// Drawn at the visible level, the opposed convention aimed a quadruped's knees at each
+				// other across its belly, and the moment the front foot swung back while the hind foot
+				// reached forward the two lower legs passed through each other in an X. Measured over
+				// a flat walk: same-side legs interpenetrating on 60% of a saurian's frames and a
+				// third of a pack hunter's. Damping the fore/aft share only made the X shallower.
+				//
+				// Past two pairs the opposed convention was undefined anyway — the middle pair of a
+				// hexapod has no fan, so "elbow versus knee" became the only term deciding its bend
+				// and neighbouring legs bowed opposite ways. One rule covers every leg count now.
+				//
+				// A biped's one pair is its hindlimbs, and the knee faces forward — a human's, a
+				// bird's, a theropod's — with the hock (on a three-bone leg) bending back behind it.
+				// Its pair index used to classify it as a forelimb, which bent the knee backward and
+				// put the hock in front.
+				float poleZ = legPairs == 1 ? 1f
+						: fanBias * (legPairs > 2 ? 1f : QUAD_FORE_AFT_SHARE);
 				// How far out to the side this leg already stands, per unit of its own drop. A limb that
 				// sprawls has to bend out over its own foot, and pointing its knee fore or aft instead is
 				// what makes a long-legged creature look broken-jointed rather than sprawling.
@@ -603,7 +599,7 @@ public final class BodyPlanBuilder {
 						legArch * 1.5f,
 						poleZ);
 				// A pole that has collapsed to nothing gives the solver no bend hint at all.
-				if (pole.lengthSquared() < 1e-6f) pole.set(s * 0.2f, 0f, front ? -1f : 1f);
+				if (pole.lengthSquared() < 1e-6f) pole.set(s * 0.2f, 0f, fanBias < 0f ? -1f : 1f);
 				pole.normalize();
 
 				float phase = (pair * pairPhase + (s > 0 ? 0.5f : 0f)) % 1f;
@@ -1029,11 +1025,11 @@ public final class BodyPlanBuilder {
 		// enough, whatever curve shape the genome asked for.
 		// Solved rather than stepped, and this matters more than it looks. Arc length is monotonic
 		// in the bow, so growing the bow by a fixed factor until the limb is long enough does
-		// converge — but it overshoots, by up to that whole factor. A quadruped's front and hind
-		// limbs bow *toward* each other by convention (elbow back, knee forward), so an overshot
-		// bow closes the gap between them from both sides at once, and a first attempt that grew
-		// the bend in steps of 1.6 duly meshed a sixth of every saurian's same-side leg pairs into
-		// each other. Bisection lands on the target and takes not one millimetre more than it needs.
+		// converge — but it overshoots, by up to that whole factor. When a quadruped's front and
+		// hind limbs still bowed toward each other (elbow back, knee forward), an overshot bow
+		// closed the gap between them from both sides at once, and a first attempt that grew the
+		// bend in steps of 1.6 duly meshed a sixth of every saurian's same-side leg pairs into each
+		// other. Bisection lands on the target and takes not one millimetre more than it needs.
 		Vector3f[] joints = new Vector3f[segments + 1];
 		if (extensionOf(origin, effector, pole, bend, sCurve, segments, joints) > MAX_BIND_EXTENSION) {
 			float lo = bend;

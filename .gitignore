@@ -36,3 +36,6 @@ check_api*.ps1
 
 # python bytecode from the design scripts
 __pycache__/
+
+# node tooling for scripts/ (npm install restores it)
+scripts/node_modules/

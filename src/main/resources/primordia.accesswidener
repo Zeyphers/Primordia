@@ -33,3 +33,11 @@ accessible field net/minecraft/world/entity/Mob targetSelector Lnet/minecraft/wo
 accessible field net/minecraft/client/sounds/SoundManager soundEngine Lnet/minecraft/client/sounds/SoundEngine;
 accessible field net/minecraft/client/sounds/SoundEngine soundBuffers Lnet/minecraft/client/sounds/SoundBufferLibrary;
 accessible field net/minecraft/client/sounds/SoundBufferLibrary cache Ljava/util/Map;
+
+# The registry of special item renderers, so the Splicing Bench's inventory icon can be the bench.
+#
+# The bench is a Blockbench mesh drawn by a block entity renderer; a JSON item model can express
+# neither the mesh nor its two sheets. Vanilla solves the same problem for chests and bells with a
+# `minecraft:special` item model, and the id-to-codec table it dispatches on is private with no
+# Fabric API over it in this version. `put` itself is public — only the field is not. Client-only.
+accessible field net/minecraft/client/renderer/special/SpecialModelRenderers ID_MAPPER Lnet/minecraft/util/ExtraCodecs$LateBoundIdMapper;

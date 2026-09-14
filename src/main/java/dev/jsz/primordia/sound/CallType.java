@@ -15,19 +15,19 @@ package dev.jsz.primordia.sound;
  */
 public enum CallType {
 	/** Idle contact call. The one heard most, so it is the least strained. */
-	AMBIENT(0.85f, 1.00f, 0.30f, 1.00f, 0.00f),
+	AMBIENT(0.85f, 1.00f, 0.30f, 1.00f, 0.00f, 0.72f),
 	/** Warning before an attack: short, loud, driven hard, and pitched down to sound bigger. */
-	THREAT(0.55f, 0.88f, 1.00f, 0.85f, -0.10f),
+	THREAT(0.55f, 0.88f, 1.00f, 0.85f, -0.10f, 1.00f),
 	/** Taking damage. Abrupt onset, a rising break of pitch, and audibly noisy. */
-	HURT(0.34f, 1.18f, 0.85f, 0.55f, 0.22f),
+	HURT(0.34f, 1.18f, 0.85f, 0.55f, 0.22f, 0.92f),
 	/** Dying. The longest call and the only one that runs out of air, sagging in pitch as it goes. */
-	DEATH(1.15f, 0.95f, 0.70f, 1.30f, -0.35f),
+	DEATH(1.15f, 0.95f, 0.70f, 1.30f, -0.35f, 0.92f),
 	/** Advertising for a mate. Long, sustained, strongly vibratoed, and deliberately unlike a threat. */
-	MATING(1.35f, 1.06f, 0.45f, 1.55f, 0.12f),
+	MATING(1.35f, 1.06f, 0.45f, 1.55f, 0.12f, 0.78f),
 	/** A juvenile. Everything smaller: shorter, higher, and with no weight behind it. */
-	CHIRP(0.40f, 1.55f, 0.35f, 0.55f, 0.15f),
+	CHIRP(0.40f, 1.55f, 0.35f, 0.55f, 0.15f, 0.62f),
 	/** Breathing while asleep. Barely voiced at all — mostly air through the same tract. */
-	SLEEP(1.00f, 0.80f, 0.05f, 0.70f, -0.08f);
+	SLEEP(1.00f, 0.80f, 0.05f, 0.70f, -0.08f, 0.34f);
 
 	/** Seconds of one syllable, before the profile's own syllable length scales it. */
 	public final float syllableScale;
@@ -39,13 +39,17 @@ public enum CallType {
 	public final float lengthScale;
 	/** Fractional pitch change across the call. Positive rises, negative sags. */
 	public final float sweep;
+	/** Relative playback level after synthesis; frequent calls sit below urgent ones. */
+	public final float volumeScale;
 
-	CallType(float syllableScale, float pitchScale, float effort, float lengthScale, float sweep) {
+	CallType(float syllableScale, float pitchScale, float effort, float lengthScale, float sweep,
+	         float volumeScale) {
 		this.syllableScale = syllableScale;
 		this.pitchScale = pitchScale;
 		this.effort = effort;
 		this.lengthScale = lengthScale;
 		this.sweep = sweep;
+		this.volumeScale = volumeScale;
 	}
 
 	public static final CallType[] VALUES = values();

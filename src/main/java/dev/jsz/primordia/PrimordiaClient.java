@@ -18,19 +18,13 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.item.v1.ItemTooltipCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
-import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.PictureInPictureRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.MenuScreens;
-import net.minecraft.client.KeyMapping;
-import com.mojang.blaze3d.platform.InputConstants;
-import org.lwjgl.glfw.GLFW;
 
 public class PrimordiaClient implements ClientModInitializer {
-	private static KeyMapping settingsKey;
-
 	private static dev.jsz.primordia.lab.GuideData clientGuideData = dev.jsz.primordia.lab.GuideData.empty();
 
 	public static dev.jsz.primordia.lab.GuideData getClientGuideData() {
@@ -102,6 +96,11 @@ public class PrimordiaClient implements ClientModInitializer {
 		net.fabricmc.fabric.api.client.rendering.v1.BlockEntityRendererRegistry.register(
 				dev.jsz.primordia.registry.PrimordiaBlockEntities.SPLICER,
 				dev.jsz.primordia.client.render.SplicerRenderer::new);
+		// The inventory icon is the same model, through a special item renderer. Registered here,
+		// during client init, because item models are decoded on the first resource load right after.
+		net.minecraft.client.renderer.special.SpecialModelRenderers.ID_MAPPER.put(
+				dev.jsz.primordia.Primordia.id("splicer"),
+				dev.jsz.primordia.client.render.SplicerItemRenderer.Unbaked.MAP_CODEC);
 		// A resource reload may bring an edited model, and the renderer caches the parsed one.
 		net.fabricmc.fabric.api.resource.ResourceManagerHelper.get(
 						net.minecraft.server.packs.PackType.CLIENT_RESOURCES)
@@ -143,14 +142,8 @@ public class PrimordiaClient implements ClientModInitializer {
 
 		PrimordiaConfig.get();
 
-		settingsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-				"key.primordia.settings",
-				InputConstants.Type.KEYSYM,
-				GLFW.GLFW_KEY_UNKNOWN,
-				KeyMapping.Category.MISC));
-
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
-			while (settingsKey.consumeClick()) {
+			while (dev.jsz.primordia.client.PrimordiaKeys.SETTINGS.consumeClick()) {
 				client.setScreenAndShow(new PrimordiaConfigScreen(client.gui.screen()));
 			}
 		});

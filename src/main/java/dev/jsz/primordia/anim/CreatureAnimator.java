@@ -100,6 +100,12 @@ public final class CreatureAnimator {
 	 * their own reach.
 	 */
 	private static final float MIN_EXCURSION = 0.06f;
+	/**
+	 * Shortest the same-side clearance rule may make a stride, as a fraction of what the reach
+	 * envelope allows. Cadence rises as stride falls, so this bounds it at double; past that the
+	 * legs blur, and a brief graze between feet is the lesser fault.
+	 */
+	private static final float MIN_NEIGHBOUR_STRIDE = 0.5f;
 	/** Ceiling on step frequency. Small animals really do scurry; past this it reads as a blur. */
 	private static final float MAX_STEP_FREQUENCY = 6f;
 	/** Cadence up to which the torso's bob is drawn at full size, in steps per second. */
@@ -277,9 +283,10 @@ public final class CreatureAnimator {
 			tightest = Math.min(tightest,
 					Math.min(excursionFwd[i] - centre, excursionBack[i] + centre));
 		}
+		float reachStride = Math.max(0.06f, 2f * STRIDE_MARGIN * tightest);
 		this.strideLength = legCount == 0
 				? Math.max(0.25f, plan.hipHeight)
-				: Math.max(0.06f, 2f * STRIDE_MARGIN * tightest);
+				: Math.max(reachStride * MIN_NEIGHBOUR_STRIDE, Math.min(reachStride, neighbourStrideCap()));
 
 		this.spineBones = collect(plan, "spine");
 		this.neckBones = collect(plan, "neck");
@@ -356,6 +363,77 @@ public final class CreatureAnimator {
 			excursionSide[i] = Math.max(floor, sx - Math.abs(bx));
 		}
 		return Math.max(0f, drop);
+	}
+
+	/**
+	 * Longest stride at which no foot swings into the next foot along on the same side.
+	 * <p>
+	 * The reach envelope says how far each leg can carry the body on its own, and says nothing
+	 * about the leg in front of it. A short-bodied, long-legged animal can reach much further than
+	 * the gap between its front and hind feet, so at the end of a stride the front foot trailing
+	 * back and the hind foot reaching forward occupied the same place and the two lower legs passed
+	 * straight through each other: a third of a saurian's walking frames, and the worst pairs on
+	 * every many-legged archetype.
+	 * <p>
+	 * How close two feet come depends on their phase, not just the stride. Feet on the same side
+	 * moving together never gain on each other; feet half a cycle apart meet head-on. So each pair
+	 * is charged only for the approach its own phase difference produces, and a pair standing wide
+	 * enough of each other to pass side by side is not charged at all.
+	 * <p>
+	 * Two pairs of legs at most. On six and eight, adjacent feet are already fanned apart and what
+	 * touches is the knees, high up where stride has no say: capping it there moved an arachnid's
+	 * overlap from 61% of frames to 54% for a shorter, busier step, and the quicker cadence took
+	 * its walk off a clean one-cycle loop, which is what the editor's preview plays.
+	 */
+	private float neighbourStrideCap() {
+		float cap = Float.MAX_VALUE;
+		LimbChain[] legs = plan.legs;
+		if (legs.length > 4) return cap;
+		for (int i = 0; i < legs.length; i++) {
+			for (int j = 0; j < legs.length; j++) {
+				if (i == j || legs[i].side != legs[j].side) continue;
+				float front = legs[i].restEffector.z + strideCentre[i];
+				float rear = legs[j].restEffector.z + strideCentre[j];
+				if (front <= rear) continue;
+
+				float clearance = footRadius(legs[i]) + footRadius(legs[j]) + plan.blendRadius;
+				if (Math.abs(legs[i].restEffector.x - legs[j].restEffector.x) > clearance) continue;
+
+				float approach = worstApproach(legs[i].gaitPhase, legs[j].gaitPhase);
+				// A pair already overlapping at rest is a body-plan fault no stride can fix, and
+				// charging for it would pin cadence at its ceiling for nothing.
+				float room = front - rear - clearance;
+				if (approach > 1e-4f && room > 0f) cap = Math.min(cap, room / approach);
+			}
+		}
+		return cap;
+	}
+
+	private float footRadius(LimbChain leg) {
+		return plan.bones[leg.bones[leg.bones.length - 1]].radiusTail;
+	}
+
+	/**
+	 * Most the rear foot of a pair gains on the front one over a gait cycle, in strides.
+	 * <p>
+	 * Uses the idealised foot path the gait follows: planted, a foot drifts back past its hip by
+	 * the duty factor's share of a stride; swinging, it returns. The swing's own easing and
+	 * overshoot are small beside that and are left out.
+	 */
+	private static float worstApproach(float frontPhase, float rearPhase) {
+		float worst = 0f;
+		for (int k = 0; k < 64; k++) {
+			float t = k / 64f;
+			worst = Math.max(worst, footOffset((t + rearPhase) % 1f) - footOffset((t + frontPhase) % 1f));
+		}
+		return worst;
+	}
+
+	/** Fore/aft position of a foot relative to its rest position, in strides, at a point in its cycle. */
+	private static float footOffset(float phase) {
+		if (phase < DUTY_FACTOR) return DUTY_FACTOR * 0.5f - phase;
+		float s = (phase - DUTY_FACTOR) / (1f - DUTY_FACTOR);
+		return DUTY_FACTOR * (MathX.smoothstep(s) - 0.5f);
 	}
 
 	public Skeleton skeleton() {

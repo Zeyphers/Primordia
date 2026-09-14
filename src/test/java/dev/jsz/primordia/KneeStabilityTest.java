@@ -184,22 +184,19 @@ class KneeStabilityTest {
 	}
 
 	/**
-	 * On a creature with more than two pairs of legs, every knee bends the way its own foot fans.
+	 * On any creature with more than one pair of legs, every knee bends the way its own foot fans.
 	 * <p>
-	 * "Elbow forward, knee back" is a fact about quadrupeds. A hexapod has no forelimbs and
-	 * hindlimbs, just legs, and applying the opposed convention to it bows the middle pairs toward
-	 * each other. Worse, the middle pair of an odd-numbered set has no fan at all, so whatever
-	 * fraction of the quadruped rule survives becomes the <i>only</i> term deciding its bend: it was
-	 * measured bowing backward at -0.77 while the pair in front of it bowed forward at +0.92, with
-	 * its own foot planted square out to the side. Neighbouring legs bending opposite ways, which is
-	 * what "some legs look different from the others" turns out to mean.
+	 * This started as a rule for hexapods, which have no forelimbs and hindlimbs to apply "elbow
+	 * back, knee forward" to: the middle pair of an odd-numbered set has no fan at all, and it was
+	 * measured bowing backward at -0.77 while the pair in front of it bowed forward at +0.92.
 	 * <p>
-	 * The rule is that the knee radiates with the foot, and a leg whose foot does not fan bends
-	 * straight out to the side rather than picking a direction from a convention that does not
-	 * apply to it.
+	 * It now covers quadrupeds too. The opposed convention is anatomically true of the joints
+	 * inside a quadruped's body wall and wrong for the joints anyone sees, and drawn that way it
+	 * aimed the front and hind knees at each other until the lower legs crossed mid-stride. A leg
+	 * whose foot does not fan bends straight out to the side rather than committing either way.
 	 */
 	@Test
-	void manyLeggedCreaturesRadiateTheirKnees() {
+	void kneesRadiateAwayFromTheMiddleOfTheBody() {
 		StringBuilder wrong = new StringBuilder();
 		for (dev.jsz.primordia.genome.Archetype archetype
 				: dev.jsz.primordia.genome.Archetype.VALUES) {
@@ -207,7 +204,7 @@ class KneeStabilityTest {
 				Random random = new Random(4242L + seed * 7919L + archetype.ordinal());
 				BodyPlan plan = BodyPlanBuilder.build(archetype.create(random));
 				int pairs = plan.legs.length / 2;
-				if (pairs <= 2) continue;
+				if (pairs < 2) continue;
 				for (LimbChain leg : plan.legs) {
 					float fan = leg.restEffector.z - leg.origin.z;
 					float poleZ = new Vector3f(leg.poleDirection).normalize().z;
@@ -228,6 +225,71 @@ class KneeStabilityTest {
 			}
 		}
 		assertTrue(wrong.isEmpty(), "knees bending against their own foot fan:" + nl2() + wrong);
+	}
+
+	/**
+	 * A biped stands on its hindlimbs, and its knees face forward.
+	 * <p>
+	 * Its one pair used to be classified by pair index as forelimbs, which bent the knee backward
+	 * and, on a three-bone leg, put the hock in front of it — the reverse of every real biped.
+	 */
+	@Test
+	void bipedKneesFaceForward() {
+		int checked = 0;
+		for (int seed = 0; seed < 40; seed++) {
+			BodyPlan plan = BodyPlanBuilder.build(
+					dev.jsz.primordia.genome.Archetype.BIPED.create(new Random(9100L + seed)));
+			if (plan.legs.length != 2) continue;
+			for (LimbChain leg : plan.legs) {
+				checked++;
+				assertTrue(leg.poleDirection.z > 0.5f,
+						"seed " + seed + ": a biped knee bends " + leg.poleDirection.z + " fore/aft");
+			}
+		}
+		assertTrue(checked > 0, "no bipeds were generated to check");
+	}
+
+	/**
+	 * Walked, not posed: a quadruped's legs on one side do not pass through each other.
+	 * <p>
+	 * The bind pose was never where this showed. Standing still, front and hind legs are well
+	 * apart; it is the end of a stride, the front foot trailing back as the hind foot reaches
+	 * forward, where they met. Measured over a flat walk before the fix, same-side legs overlapped
+	 * on 60% of a saurian's frames. Two things closed it: knees that point away from each other,
+	 * and a stride that cannot carry one foot into the next.
+	 */
+	@Test
+	void quadrupedLegsDoNotCrossMidStride() {
+		StringBuilder wrong = new StringBuilder();
+		for (dev.jsz.primordia.genome.Archetype archetype : new dev.jsz.primordia.genome.Archetype[]{
+				dev.jsz.primordia.genome.Archetype.SAURIAN, dev.jsz.primordia.genome.Archetype.GRAZER,
+				dev.jsz.primordia.genome.Archetype.PACK_HUNTER, dev.jsz.primordia.genome.Archetype.SPRINTER}) {
+			float sum = 0f;
+			int n = 12;
+			for (int k = 0; k < n; k++) {
+				BodyPlan plan = BodyPlanBuilder.build(archetype.create(new Random(5150L + k * 7919L)));
+				sum += dev.jsz.primordia.anim.KneeSideProbe.measure(plan, 1.6f, 3f)[3];
+			}
+			float mean = sum / n;
+			if (mean > 0.15f) {
+				wrong.append(String.format("%s: same-side legs overlap on %.0f%% of frames%n",
+						archetype, mean * 100f));
+			}
+		}
+		assertTrue(wrong.isEmpty(), "legs passing through each other mid-stride:" + nl2() + wrong);
+	}
+
+	/** And a biped's knees never fold in under its own body while it walks. */
+	@Test
+	void bipedKneesStayOutsideTheHips() {
+		for (int k = 0; k < 12; k++) {
+			BodyPlan plan = BodyPlanBuilder.build(
+					dev.jsz.primordia.genome.Archetype.BIPED.create(new Random(6160L + k * 7919L)));
+			float[] m = dev.jsz.primordia.anim.KneeSideProbe.measure(plan, 1.6f, 3f);
+			assertTrue(m[1] < 0.02f, "specimen " + k + ": knees tucked inside the hips on "
+					+ m[1] * 100f + "% of joint-frames");
+			assertEquals(0f, m[2], 1e-6f, "specimen " + k + ": the left and right legs collided");
+		}
 	}
 
 	private static String nl2() {

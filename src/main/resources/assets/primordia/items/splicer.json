@@ -1,6 +1,9 @@
 {
   "model": {
-    "type": "minecraft:model",
-    "model": "primordia:item/splicer"
+    "type": "minecraft:special",
+    "base": "primordia:item/splicer",
+    "model": {
+      "type": "primordia:splicer"
+    }
   }
 }
